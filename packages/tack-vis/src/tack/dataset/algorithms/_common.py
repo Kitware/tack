@@ -214,17 +214,20 @@ def _measure_unit(data):
     return None if k is None else units.derived((data.unit, k))
 
 
-def _time_unit(data, velocity):
-    """The unit of time a particle moved by ``velocity`` (a field or its name) keeps:
-    the spatial unit over the velocity's, or ``None`` if either is unknown. Over a
-    partitioned dataset, every rank's pieces'."""
+def _time_unit(data, velocity, fields=None):
+    """The unit of time a particle moved by ``velocity`` (a field argument) keeps: the
+    spatial unit over the velocity's, or ``None`` if either is unknown. Over a
+    partitioned dataset, every rank's pieces' (``fields``, each piece's velocity, when
+    the caller has resolved them already)."""
     from tack.dataset import units
     from tack.dataset.partitioned import PartitionedDataSet
 
     if isinstance(data, PartitionedDataSet):
-        from tack.dataset.partitioned import fields_of
+        if fields is None:
+            from tack.dataset.partitioned import fields_of
 
-        every = data.world._allgather([f.unit for f in fields_of(data, velocity, "advection")])
+            fields = fields_of(data, velocity, "advection")
+        every = data.world._allgather([f.unit for f in fields])
         speed = units.common("the pieces' velocity", [u for part in every for u in part])
         return units.derived(_spatial_unit(data), (speed, -1))
     return units.derived(data.unit, (_field(data, velocity).unit, -1))
@@ -365,3 +368,25 @@ def _csr_rows(offsets, connectivity, cells):
     at = (np.arange(starts[-1], dtype=np.int64) - np.repeat(starts[:-1], sizes)
           + np.repeat(offsets[cells], sizes))
     return connectivity[at], sizes
+
+
+def _stand_in(data, origin):
+    """For a rank that holds none of ``data``'s pieces (a ``PartitionedDataSet``), a
+    piece of nothing that lets it take part in an exchange over the pieces: no
+    point and no cell (so its block's box holds nothing), of the pieces' float
+    type, spatial unit and time, at ``origin``, on the default device; ``None`` on
+    a rank with pieces. Collective: every rank of ``data.world`` asks, in turn."""
+    import numpy as np
+
+    from tack.dataset.algorithms._extract import _vertices
+
+    pieces = list(data)
+    mine = None if not pieces else (pieces[0].dtype, pieces[0].unit, pieces[0].time,
+                                    pieces[0].time_unit)
+    given = next((m for m in data.world._allgather(mine) if m is not None), None)
+    if pieces:
+        return None
+    dtype, unit, time, time_unit = given if given is not None else (
+        tack.get_default_float(), None, None, None)
+    return _vertices(np.zeros((0, 3)), None, dtype=dtype, origin=origin, unit=unit,
+                     time=time, time_unit=time_unit)

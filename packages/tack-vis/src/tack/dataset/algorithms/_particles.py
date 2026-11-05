@@ -43,7 +43,7 @@ from tack.dataset.algorithms._advection import (
 )
 from tack.dataset.algorithms._common import _time_unit
 from tack.dataset.algorithms._extract import _vertices
-from tack.dataset.dataset import DataSet, Field, is_field_key
+from tack.dataset.dataset import DataSet, Field
 from tack.dataset.ghosts import Ghosts, visible
 from tack.dataset.locator import cached_locator
 from tack.dataset.partitioned import PartitionedDataSet, common_origin, fields_of
@@ -132,11 +132,11 @@ def advect_pieces(data, field, seeds, step_size, steps, integrator="rk4", unit="
 
     ``seeds`` are this rank's, an ``(n, 3)`` array; across MPI ranks each rank
     passes its own, numbered after the ranks before it."""
-    blocks, pieces, finished, _ = _rounds(data, field, seeds, step_size, steps, integrator,
-                                          record=False, unit=unit, neighbors=neighbors,
-                                          adaptive=adaptive)
+    blocks, pieces, fields, finished, _ = _rounds(data, field, seeds, step_size, steps,
+                                                  integrator, record=False, unit=unit,
+                                                  neighbors=neighbors, adaptive=adaptive)
     out = []
-    for g, piece in zip(blocks.local, pieces):
+    for g, piece, own in zip(blocks.local, pieces, fields):
         done = finished[g]
         order = np.argsort(done.seed, kind="stable")
         done = done.take(order)
@@ -147,7 +147,7 @@ def advect_pieces(data, field, seeds, step_size, steps, integrator="rk4", unit="
             vertices.fields["steps"] = Field(points, tack.array(done.steps, tack.i32))
             vertices.fields["time"] = Field(points, tack.array(
                 done.time.astype(piece.dtype.numpy_dtype), piece.dtype),
-                _time_unit(piece, field))
+                _time_unit(piece, own))
             vertices.fields["status"] = Field(points, tack.array(done.status, tack.i32))
             vertices.fields["seed"] = Field(points, tack.array(done.seed, tack.i64))
         out.append(vertices)
@@ -165,11 +165,11 @@ def streamlines_pieces(data, field, seeds, step_size, steps, integrator="rk4", u
     copy marks ``DUPLICATEPOINT``, so each path's points are owned once."""
     from tack.dataset.polyhedra import PolylineTopology
 
-    blocks, pieces, _, traced = _rounds(data, field, seeds, step_size, steps, integrator,
-                                        record=True, unit=unit, neighbors=neighbors,
-                                        adaptive=adaptive)
+    blocks, pieces, fields, _, traced = _rounds(data, field, seeds, step_size, steps,
+                                                integrator, record=True, unit=unit,
+                                                neighbors=neighbors, adaptive=adaptive)
     out = []
-    for g, piece in zip(blocks.local, pieces):
+    for g, piece, own in zip(blocks.local, pieces, fields):
         stretches = sorted(traced[g], key=lambda s: (s[0], s[1]))
         positions, times, marks, offsets, members, seed, segment = [], [], [], [0], [], [], []
         count = 0
@@ -202,25 +202,25 @@ def streamlines_pieces(data, field, seeds, step_size, steps, integrator="rk4", u
                                                        tack.i32))
             lines.fields["time"] = Field(Values(lines, "points"), tack.array(
                 (np.concatenate(times) if times else np.zeros(0)).astype(dtype),
-                piece.dtype), _time_unit(piece, field))
+                piece.dtype), _time_unit(piece, own))
         out.append(lines)
     return PartitionedDataSet(out, world=blocks.world)
 
 
 def _rounds(data, field, seeds, step_size, steps, integrator, record, unit="time",
             neighbors=False, adaptive=None):
-    """The rounds: ``(blocks, pieces, finished, traced)``, the particles each piece
-    finished with, and with ``record`` each piece's stretches ``(seed, segment,
+    """The rounds: ``(blocks, pieces, fields, finished, traced)``: the pieces without
+    their hidden cells, each one's ``field`` (resolved once a piece, ``fields_of``),
+    the particles each piece finished with, and with ``record`` each piece's stretches ``(seed, segment,
     positions, times)``."""
     if int(steps) < 1:
         raise ValueError(f"steps must be at least 1, not {steps!r}")
-    if not is_field_key(field):
-        raise TypeError("advection of a PartitionedDataSet takes a field's name")
-    fields_of(data, field, "advection")
-    pieces = []
-    for piece in data:                       # each piece's work on its own device
-        with piece.device:
-            pieces.append(visible(piece, field)[0])
+    pieces, fields = [], []
+    for piece, own in zip(data, fields_of(data, field, "advection")):
+        with piece.device:                   # each piece's work on its own device
+            piece, own = visible(piece, own)
+        pieces.append(piece)
+        fields.append(own)
     blocks = tc.Blocks([piece.device for piece in pieces], data.world)
     locators = {}
     for g, piece in zip(blocks.local, pieces):
@@ -243,14 +243,16 @@ def _rounds(data, field, seeds, step_size, steps, integrator, record, unit="time
                         break
         for g in blocks.local:
             finished[g].append(outside[g])
-            pending[g], done = _advance(pieces[g - blocks.local.start], field,
+            pending[g], done = _advance(pieces[g - blocks.local.start],
+                                        fields[g - blocks.local.start],
                                         arrived[g], step_size, steps, integrator, record,
                                         traced[g], unit, neighbors,
                                         adaptive or {})
             finished[g].append(done)
     else:
         raise RuntimeError("particles were still in flight after a round per step")
-    return blocks, pieces, {g: _Particles.joined(finished[g]) for g in blocks.local}, traced
+    return (blocks, pieces, fields, {g: _Particles.joined(finished[g]) for g in blocks.local},
+            traced)
 
 
 def _boxes(blocks, pieces, locators):

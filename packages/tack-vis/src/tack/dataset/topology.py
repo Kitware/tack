@@ -273,10 +273,11 @@ class _Topology:
     _locator = None
     #: The `PointLocator` it keeps (`point_locator.cached_point_locator`).
     _point_locator = None
-    #: The boundary `extract_surface` found from the cells alone
-    #: (`extract_surface._fresh_boundary`): the surface's topology and each of
-    #: its faces' cells, so that a repeated call only carries the fields; and the
-    #: surface's geometry with the geometry it was taken from (`_on_boundary`).
+    #: The boundary `extract_surface` found, from the cells alone
+    #: (`extract_surface._fresh_boundary`) or from the derived faces: the
+    #: surface's topology and the maps that carry fields onto it, so that a
+    #: repeated call only carries the fields; and the surface's geometry with the
+    #: geometry it was taken from (`_on_boundary`).
     _boundary = None
     #: Its 2D cells' sides matched by their points, for contour lines
     #: (`contour._sides`): a side of any number of cells, unlike `faces()`.

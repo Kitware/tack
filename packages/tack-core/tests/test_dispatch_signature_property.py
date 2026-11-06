@@ -83,7 +83,11 @@ def _arrays():
             lambda: tack.zeros((4,), tack.mat2()), lambda: tack.zeros((4,), tack.vec4()),
             lambda: tack.zeros((4,), tack.vec3(), layout="soa"),
             lambda: tack.zeros((4,), tack.vec2(), layout="soa"),
-            lambda: tack.zeros((4,), tack.mat2(), layout="soa")]
+            lambda: tack.zeros((4,), tack.mat2(), layout="soa"),
+            # Views (``a[i:j]``): rows of a longer array, of the shapes above.
+            lambda: tack.zeros((9,))[2:6], lambda: tack.zeros((4, 3))[1:3],
+            lambda: tack.zeros((6,), tack.vec3())[1:5],
+            lambda: tack.zeros((6,), tack.vec3(), layout="soa")[2:6]]
 
 
 _SCALARS = (1, 7, 2**40, -1, True, False, 1.0, 2.5, np.int32(1), np.int64(2**40),

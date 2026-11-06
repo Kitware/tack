@@ -132,6 +132,98 @@ class DeviceBuffer:
     def nbytes(self) -> int:
         raise NotImplementedError
 
+    def _view_fields(self, start: int, count: int) -> dict:
+        """What a buffer over scalar elements ``[start, start + count)`` of this
+        one's storage sets differently from it (`view_buffer`): the shifted
+        pointer and the shorter size, in this class's own attributes. A backend
+        whose buffers can be viewed overrides it."""
+        raise BufferError(f"{self.backend_name or type(self).__name__} arrays have no "
+                          f"views; copy the elements instead")
+
+
+class _View:
+    """What a buffer over a stretch of another buffer's storage (`view_buffer`,
+    behind ``array[i:j]``) does differently from that buffer, its root.
+
+    Each view is of a subclass of its root's own class (`_view_class`), so
+    binding it to a kernel, reading, writing and filling it run the root
+    class's code over the view's shifted pointer and size. What concerns the
+    allocation rather than the stretch stays with the root: the view frees
+    nothing (the root does, once no view holds it), never starts zeroed, and
+    shares the root's write count (`DeviceBuffer.version`, so a write through
+    any view of an allocation changes the revision of every view of it) and
+    its being handed outside Tack (``_shared``: a launch over any part of
+    shared memory completes before returning)."""
+
+    starts_zeroed = False
+    _owned = False
+
+    @property
+    def version(self):
+        return self._root.version
+
+    @version.setter
+    def version(self, value):
+        self._root.version = value
+
+    @property
+    def _shared(self):
+        return getattr(self._root, "_shared", False)
+
+    @_shared.setter
+    def _shared(self, value):
+        self._root._shared = value
+
+    def export_memory(self):
+        raise BufferError("a view has no allocation of its own to export; export the "
+                          "array it views, or a copy of this one")
+
+    def __del__(self):
+        pass
+
+
+#: Per root buffer class, its view class (`_view_class`).
+_VIEW_CLASSES: dict = {}
+
+#: A root's attributes a view does not take: what `_View` keeps with the root
+#: (the write count, being shared), what frees or recycles the allocation, and
+#: values cached for the root's own pointer.
+_NOT_VIEWED = frozenset({"version", "_shared", "_owned", "_pool", "_capacity", "_export_buf",
+                         "_address", "_span", "starts_zeroed"})
+
+
+def _view_class(root_class):
+    cls = _VIEW_CLASSES.get(root_class)
+    if cls is None:
+        cls = type(f"{root_class.__name__}View", (_View, root_class),
+                   {"__module__": root_class.__module__, "__doc__": _View.__doc__})
+        _VIEW_CLASSES[root_class] = cls
+    return cls
+
+
+def pointer_view_fields(buffer, start, count, as_pointer=int):
+    """`DeviceBuffer._view_fields` for a buffer over a device pointer
+    (``_device_ptr``, its ``address`` as an int) with ``_numpy_dtype``,
+    ``_shape`` and ``_nbytes``: CUDA's, HIP's and Level Zero's. The pointer is
+    kept as ``as_pointer`` makes it, the type the backend's calls take."""
+    size = buffer._numpy_dtype.itemsize
+    return {"_shape": (count,), "_nbytes": count * size,
+            "_device_ptr": as_pointer(buffer.address + start * size)}
+
+
+def view_buffer(buffer: DeviceBuffer, start: int, count: int) -> DeviceBuffer:
+    """A buffer over scalar elements ``[start, start + count)`` of ``buffer``'s
+    storage, which it keeps alive. A view of a view is a view of their root."""
+    root = getattr(buffer, "_root", buffer)
+    start += getattr(buffer, "_start", 0)
+    fields = root._view_fields(start, count)
+    cls = _view_class(type(root))
+    view = object.__new__(cls)
+    view.__dict__.update((k, v) for k, v in vars(root).items() if k not in _NOT_VIEWED)
+    view.__dict__.update(fields)
+    view._root, view._start = root, start
+    return view
+
 
 class NumpyBuffer(DeviceBuffer):
     """CPU backend buffer — just a numpy array, uninitialized when new."""
@@ -154,6 +246,9 @@ class NumpyBuffer(DeviceBuffer):
 
     def fill(self, value):
         self._data.fill(value)
+
+    def _view_fields(self, start, count):
+        return {"_data": self._data.reshape(-1)[start:start + count]}
 
     @property
     def nbytes(self) -> int:
@@ -491,7 +586,12 @@ class Array:
         transfer of that element, so many elements are read with
         ``numpy()``. Arrays are not written this way; see ``tack.copyto``
         and ``fill``.
+
+        A slice of the first dimension, ``a[i:j]``, is a view: an array of
+        those rows over the same storage, as in NumPy (see `_rows`).
         """
+        if isinstance(index, slice):
+            return self._rows(index)
         shape = self.shape
         indices = index if isinstance(index, tuple) else (index,)
         if len(indices) != len(shape) or not all(
@@ -503,8 +603,8 @@ class Array:
             else:
                 wanted = f"{len(shape)} integer indices"
             raise TypeError(
-                f"an array of shape {shape} takes {wanted} on the host, not {index!r}; "
-                f"to read many elements use numpy()")
+                f"an array of shape {shape} takes {wanted} on the host, or a[i:j] for a "
+                f"view of rows, not {index!r}; to read many elements use numpy()")
         flat = 0
         for i, extent in zip(indices, shape, strict=True):
             i = int(i)
@@ -526,6 +626,34 @@ class Array:
     def __iter__(self):
         raise TypeError(
             "an array is not iterated by element from the host; iterate over numpy()")
+
+    def _rows(self, rows: slice) -> 'Array':
+        """``a[i:j]``: rows ``i`` to ``j`` of the first dimension as an array over
+        the same storage, which it keeps alive. Bounds are as Python's and
+        NumPy's (negative from the end, clamped); a step other than 1 is refused,
+        since a view is one contiguous stretch. Kernels, copies, reductions and
+        DLPack take it as any array; writes through it are writes to this
+        array, counted as such (`DeviceBuffer.version`), and it is read-only
+        if this array is. An empty range gives a new empty array."""
+        shape = self.shape
+        if not shape:
+            raise TypeError("a zero-dimensional array has no rows to slice")
+        start, stop, step = rows.indices(shape[0])
+        if step != 1:
+            raise ValueError(
+                f"a view is one contiguous stretch of rows, so a[i:j] takes no step, not "
+                f"{rows.step!r}; tack.arrays.Strided reads every k-th element")
+        count = max(stop - start, 0)
+        new_shape = (count, *shape[1:])
+        if count == 0:
+            return empty(new_shape, self.dtype, device=self._backend)
+        per_row = int(math.prod(self._host_shape[1:]))
+        buffer = view_buffer(self._buffer, start * per_row, count * per_row)
+        out = _array_view(self.dtype, new_shape, buffer, self._writable, self._device)
+        hold = getattr(self, '_dlpack_hold', None)
+        if hold is not None:
+            out._dlpack_hold = hold
+        return out
 
     def _scalar_view(self):
         """A flat scalar view for storage-level copy, reductions and interop."""
@@ -680,6 +808,12 @@ class SoaArray(Array):
         return reduce_numpy([c._reduce(op) for c in self._components], op)
 
     def __getitem__(self, index):
+        if isinstance(index, slice):
+            if not self.shape:
+                raise TypeError("a zero-dimensional array has no rows to slice")
+            # Each component's rows: a view of each, so the SOA array of them is
+            # a view of this one.
+            return SoaArray(tuple(c[index] for c in self._components), self.dtype.shape)
         values = [c[index] for c in self._components]
         return np.array(values, dtype=self.scalar_dtype.numpy_dtype).reshape(self.dtype.shape)
 

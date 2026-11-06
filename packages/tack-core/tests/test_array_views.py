@@ -181,7 +181,7 @@ def test_views_of_one_array_in_one_kernel(backend):
 
 def test_disjoint_views_are_disjoint_for_the_cpu():
     """The CPU's noalias variant needs the views' byte ranges, not their root's."""
-    a = _floats(9)
+    a = tack.array(np.arange(9, dtype=np.float32), device="cpu")
     ir = _add.get_ir({}, template_args=None, texture_arrays={}).functions[0]
     assert arrays_disjoint(ir, [a[0:3], a[3:6], a[6:9]])
     assert not arrays_disjoint(ir, [a[0:3], a[3:6], a[5:8]])

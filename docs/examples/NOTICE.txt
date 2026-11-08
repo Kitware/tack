@@ -9,10 +9,31 @@ The original mpm88 example is by Yuanming Hu. The Physarum example credits
 Sage Jenson's model and visual work. Each file and its tutorial link to
 the original source and describe the changes made for teaching.
 
-nbody.py adapts NVIDIA Warp's tile N-body example, Copyright (c) 2022
-NVIDIA CORPORATION & AFFILIATES, licensed under Apache License 2.0.
+nbody.py adapts NVIDIA Warp's tile N-body example, Copyright (c) 2025
+NVIDIA CORPORATION & AFFILIATES. All rights reserved., licensed under Apache License 2.0.
 The tiled algorithm is described by Lars Nyland, Mark Harris and Jan Prins
 in GPU Gems 3, chapter 31, Fast N-Body Simulation with CUDA.
 
 Apache-2.0 files retain that license; its text accompanies the examples in
 LICENSE-APACHE-2.0.txt. They are not relicensed under Tack's BSD license.
+
+Upstream verification
+
+The source links below pin the revisions checked for these notices. They
+record the verification baseline, not an inferred original import revision.
+Keep upstream license files and notice blocks verbatim, including dates,
+spacing and line breaks; put adaptation credits separately.
+
+https://github.com/NVIDIA/warp/blob/b9e69963845fe3816b9f19589be4970204e4d016/LICENSE.md
+https://github.com/NVIDIA/warp/blob/b9e69963845fe3816b9f19589be4970204e4d016/warp/examples/tile/example_tile_nbody.py
+https://github.com/taichi-dev/taichi/blob/ba0e81dce559fb63a5958bf82feb1d00c55c02fe/LICENSE
+https://github.com/taichi-dev/taichi/blob/ba0e81dce559fb63a5958bf82feb1d00c55c02fe/python/taichi/examples/simulation/stable_fluid.py
+https://github.com/taichi-dev/taichi/blob/ba0e81dce559fb63a5958bf82feb1d00c55c02fe/python/taichi/examples/simulation/mpm88.py
+https://github.com/taichi-dev/taichi/blob/ba0e81dce559fb63a5958bf82feb1d00c55c02fe/python/taichi/examples/simulation/physarum.py
+https://github.com/taichi-dev/taichi/blob/ba0e81dce559fb63a5958bf82feb1d00c55c02fe/python/taichi/examples/algorithm/marching_squares.py
+
+LICENSE-APACHE-2.0.txt matches Taichi LICENSE byte for byte.
+LICENSE-WARP.txt matches Warp LICENSE.md byte for byte, including its
+repository-level 2022 copyright; the N-body source itself carries 2025.
+The four Taichi sources have no per-file copyright/license header; their
+original author and reference blocks are retained in the adaptations.

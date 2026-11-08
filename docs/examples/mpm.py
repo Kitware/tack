@@ -9,6 +9,8 @@ Apache-2.0; see LICENSE-APACHE-2.0.txt.
 Source: https://github.com/taichi-dev/taichi/blob/master/python/taichi/examples/simulation/mpm88.py
 """
 
+# MPM-MLS in 88 lines of Taichi code, originally created by @yuanming-hu
+
 import argparse
 
 import numpy as np

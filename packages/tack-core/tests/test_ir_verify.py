@@ -287,6 +287,65 @@ def test_verifier_runs_only_when_templates_and_variants_are_new(monkeypatch, no_
     np.testing.assert_array_equal(wider.numpy(), np.full(8, 3))
 
 
+@pytest.mark.usefixtures("no_debug")
+def test_outside_debug_mode_only_the_lowered_and_final_stages_run(monkeypatch, no_disk_cache):
+    import tack.lang.ir_verify as verifier
+
+    tack.set_default_device("cpu")
+
+    @tack.kernel
+    def fill(out):
+        for i in range(out.shape[0]):
+            out[i] = 3
+
+    calls = []
+    original = verifier.verify_ir
+
+    def record(func, stage):
+        calls.append(stage)
+        return original(func, stage)
+
+    monkeypatch.setattr(verifier, 'verify_all', False)
+    monkeypatch.setattr(verifier, 'verify_ir', record)
+    monkeypatch.setattr('tack.lang.kernel.verify_ir', record)
+    fill(tack.empty((8,)))
+    assert calls == ['lowered', 'typed']
+    tack.set_debug(True)
+    try:
+        fill(tack.empty((8,), tack.i64))
+    finally:
+        tack.set_debug(False)
+    assert calls[2:] == ['lowered', 'resolved', 'inferred', 'localized', 'optimized', 'typed']
+
+
+@pytest.mark.usefixtures("no_debug")
+def test_a_corrupt_pass_is_caught_by_the_final_stage_alone(monkeypatch):
+    import tack.lang.ir_verify as verifier
+    import tack.runtime.kernel_utils as kernel_utils
+
+    tack.set_default_device("cpu")
+
+    @tack.kernel
+    def fill(out):
+        for i in range(out.shape[0]):
+            out[i] = 1
+
+    original = kernel_utils._localize_outer_scalars
+
+    def corrupt(func, *args):
+        original(func, *args)
+        func.body[0].body.append(ir.IRContinue())
+
+    monkeypatch.setattr(verifier, 'verify_all', False)
+    monkeypatch.setattr(kernel_utils, '_localize_outer_scalars', corrupt)
+    compile_calls = []
+    monkeypatch.setattr('tack.runtime.cpu._compile_kernel', lambda f: compile_calls.append(f))
+    with pytest.raises(RuntimeError, match='invalid IR after typed') as error:
+        fill(tack.zeros((4,)))
+    assert isinstance(error.value.__cause__, IRVerificationError)
+    assert not compile_calls
+
+
 def test_inspection_localizes_assigned_scalar_parameters():
     from tack.lang.inspect_kernel import _prepare_ir
     from tack.lang.ir_traversal import walk_ir

@@ -6,13 +6,30 @@
 This verifies the tree and the annotations needed by the next pass. It is
 not a proof of memory safety, definite assignment, or barrier uniformity.
 Verification runs when building a template/variant, never on a cache hit.
+
+The pipeline checks every lowered template and every variant's final IR
+(``typed``, which repeats the checks of every stage before it but
+``packed``'s). The stages between (``verify_stage``) run in debug mode or
+with ``TACK_VERIFY_ALL`` set, as the test suite sets it: they name the pass
+that broke an invariant, and on a cold compile they were a sixth of the time.
 """
 
 from tack.lang import ir
 from tack.lang.ir_traversal import CHILD_FIELDS, LIST_ROLES, child_fields
 from tack.lang.types import ScalarType, i32
+from tack.runtime import dispatch
 
 STAGES = ('lowered', 'resolved', 'inferred', 'localized', 'optimized', 'packed', 'typed')
+
+#: Whether every stage is verified outside debug mode (``TACK_VERIFY_ALL``).
+verify_all = dispatch.env_flag("TACK_VERIFY_ALL")
+
+
+def verify_stage(function: ir.IRFunction, stage: str):
+    """``verify_ir`` at a stage between lowering and the final ``typed`` one:
+    only in debug mode or with ``verify_all`` set."""
+    if verify_all or dispatch._debug:
+        verify_ir(function, stage)
 EXPRS = {
     ir.IRIfExp, ir.IRBinOp, ir.IRUnaryOp, ir.IRCompare, ir.IRBoolOp,
     ir.IRArrayLoad, ir.IRConstant, ir.IRName, ir.IRAttribute, ir.IRCall,

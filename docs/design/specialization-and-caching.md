@@ -333,7 +333,7 @@ are dictionary reads.
 | build the key, look up the variant | ✓ | ✓ |
 | look up the variant in the disk cache, and load it on a disk hit | | ✓ |
 | `clone_ir`, resolve, infer, check, localize, atomic/workgroup analysis, optimize (on a disk miss) | | ✓ |
-| `verify_ir` at each boundary | | ✓ |
+| `verify_ir` on the final IR (every boundary in debug mode or with `TACK_VERIFY_ALL`) | | ✓ |
 | GPU clone and scalar packing, `annotate_types`, codegen, native compile | | ✓ |
 | `check_workgroup_launch` (collective kernels), `check_atomic_alignment`, `check_writable_arrays` | ✓ | ✓ |
 | evaluate the launch range, `check_launch_size` (GPU), update pack buffers and queue the launch under the variant's lock (CUDA, HIP) | ✓ | ✓ |

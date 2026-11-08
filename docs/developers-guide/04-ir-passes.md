@@ -55,7 +55,11 @@ measures copying cost, not total cold compilation or GPU performance.
 
 ## Verification (`ir_verify.py`)
 
-The production pipeline calls `verify_ir()` at these boundaries:
+The pipeline verifies the IR at these boundaries. Outside debug mode only
+`lowered` and `typed` run (`typed` repeats every earlier stage's checks but
+`packed`'s); the others go through `verify_stage`, which runs them in debug
+mode or with `TACK_VERIFY_ALL` set, as the test suite sets it, so a failure
+names the pass that broke the invariant:
 
 | Stage | Checks added to structural and loop checks |
 |-------|--------------------------------------------|

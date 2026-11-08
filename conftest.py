@@ -66,6 +66,10 @@ import pytest
 # hide a test that patches the compiler. test_disk_cache.py turns the cache
 # on for itself; `TACK_CACHE=write pytest` runs the suite through it.
 os.environ.setdefault("TACK_CACHE", "off")
+# Verify the IR at every stage of the pipeline, not only the lowered and the
+# final one as compiles outside debug mode do: a pass that breaks an
+# invariant is then named in the failure (lang/ir_verify.py).
+os.environ.setdefault("TACK_VERIFY_ALL", "1")
 
 import tack
 

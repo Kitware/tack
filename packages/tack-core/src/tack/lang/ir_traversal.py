@@ -107,6 +107,16 @@ def clone_ir(root):
         clone = None
 
 
+def shallow_copy(node):
+    """A new node of ``node``'s kind with the same attributes, as ``copy.copy``
+    makes it: IR nodes are plain attribute containers (``clone_ir`` relies on it
+    too), so this skips the generic copy protocol, which cost a third of
+    renaming a kernel's bindings for a GPU."""
+    new = object.__new__(type(node))
+    new.__dict__.update(node.__dict__)
+    return new
+
+
 def child_fields(node):
     """Return the declared structural fields, rejecting unregistered nodes."""
     try:
@@ -197,7 +207,7 @@ def substitute_ir(root, replace):
                 new = visit(child)
                 if new is not child:
                     if copied is None:
-                        copied = copy.copy(node)
+                        copied = shallow_copy(node)
                     setattr(copied, name, new)
             return node if copied is None else copied
         finally:
@@ -228,7 +238,7 @@ def transform_ir(root, rewrite, *, copy_nodes=False):
                 return [visit(item) for item in node]
             fields = child_fields(node)
             if copy_nodes:
-                node = copy.copy(node)
+                node = shallow_copy(node)
             for name, _ in fields:
                 setattr(node, name, visit(getattr(node, name)))
             return rewrite(node)

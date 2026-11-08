@@ -22,10 +22,15 @@ holding only literals was an f32 local, and f64 data computed with its
 rounded value.
 """
 
-import copy
-
 from tack.lang import ir
-from tack.lang.ir_traversal import child_fields, clone_ir, substitute_ir, transform_ir, walk_ir
+from tack.lang.ir_traversal import (
+    child_fields,
+    clone_ir,
+    shallow_copy,
+    substitute_ir,
+    transform_ir,
+    walk_ir,
+)
 
 _ARITHMETIC = {'+', '-', '*', '/', '//', '%', '**'}
 _CONSTANT_ONLY = (ir.IRConstant, ir.IRBinOp, ir.IRUnaryOp, ir.IRCompare, ir.IRBoolOp,
@@ -228,6 +233,6 @@ def _replace_names(stmt, mapping: dict):
         new = substitute_ir(child, replace_name)
         if new is not child:
             if copied is None:
-                copied = copy.copy(stmt)
+                copied = shallow_copy(stmt)
             setattr(copied, name, new)
     return stmt if copied is None else copied

@@ -22,3 +22,9 @@
   it are not required, and a name bound only there is unbound. Half of the
   streamlines kernel's IR on AhmedML was such arms: its cold compile went
   from 1.9 s to 1.3 s, and the analysis sweep's from 11.8 s to 10.8 s.
+- Generating GPU source is faster, the source unchanged: renaming a kernel's
+  bindings encodes each name where it meets it and copies nodes without
+  `copy.copy`'s generic protocol (CUDA, HIP, Level Zero and Metal), and the
+  MSL generator finds stores in sequential loops in one walk and checks
+  workgroup participation only for kernels with collectives. MSL for the
+  301 kernels of AhmedML's sweep: 0.54 s from 0.86.

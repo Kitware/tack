@@ -37,7 +37,7 @@ def check_workgroup_support(ir_func, *, supports_workgroups, backend_label,
     """
     if supports_workgroups:
         return
-    features = getattr(ir_func, '_workgroup_features', None) if cache_features else None
+    features = ir_func._workgroup_features if cache_features else None
     if features is None:
         features = workgroup_features(ir_func)
         if cache_features:

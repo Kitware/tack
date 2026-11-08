@@ -168,7 +168,8 @@ An `Array` records its backend (`_device`; `a.device`, `a.to_device()`, `device=
 shared allocations, barriers, thread IDs and block reductions before variant
 construction; public inspection and direct LLVM generation also reject them.
 `lang/workgroup_support.py` discovers nested/inlined requirements, memoized
-only on immutable frontend templates. Direct LLVM generation scans mutable
+only on immutable frontend templates (recorded by lowering, which needs them
+to flatten collective kernels). Direct LLVM generation scans mutable
 IR afresh. GPU targets bypass this rejection check. Local arrays, ordinary
 atomics and host array reductions remain supported on CPU. This flag does
 not itself prove participation or atomic type/scope support. GPU collectives
@@ -461,7 +462,7 @@ The IR is a simple tree of nodes:
 
 **Other**: `IRAssign`, `IRReturn`, `IRPrint` (kernel debugging)
 
-Metadata that passes set on nodes (`IRParam._is_array`, `_is_texture`, `_texture_shape`, `_is_scalar_pack`; `IRFunction.disjoint_arrays`, `bounds_sites`, `held_arrays`; `IRAssign._resolved_type`; `IRCompare._operand_type`; `IRDimSize.index_count`) is declared on its class in `ir.py`, with the value it has until set, and read directly, never through `getattr` with a default of the reader's own (`_is_array` had three). `_is_array` is None until type inference; code generators given hand-built IR treat None as an array.
+Metadata that passes set on nodes (`IRParam._is_array`, `_is_texture`, `_texture_shape`, `_is_scalar_pack`; `IRFunction.disjoint_arrays`, `bounds_sites`, `held_arrays`, `_workgroup_features`; `IRAssign._resolved_type`; `IRCompare._operand_type`; `IRDimSize.index_count`) is declared on its class in `ir.py`, with the value it has until set, and read directly, never through `getattr` with a default of the reader's own (`_is_array` had three). `_is_array` is None until type inference; code generators given hand-built IR treat None as an array.
 
 ### IR passes
 

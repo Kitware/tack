@@ -147,7 +147,10 @@ class KernelTransformer(
         function.held_arrays = dict(getattr(node, '_tack_held_arrays', {}))
         if self._debug:
             function.bounds_sites = tuple(self._bounds_sites)
-        if workgroup_features(function):
+        # Kept on the template, so dispatch's check of it walks the tree no
+        # more (check_workgroup_support's cache_features).
+        function._workgroup_features = workgroup_features(function)
+        if function._workgroup_features:
             # Workgroup collectives assume one-dimensional groups.
             parallel_dims.flatten(parallel_dims.parallel_loop(function))
         self._check_names_bound(function)

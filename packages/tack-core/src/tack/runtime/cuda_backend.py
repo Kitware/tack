@@ -807,15 +807,20 @@ _NVRTC_OPTIONS = [b"--ftz=false", b"--prec-div=true", b"--prec-sqrt=true",
                   b"--fmad=false", b"--extra-device-vectorization"]
 
 
-def _compile_ptx(cuda_source: str, func_name: str) -> bytes:
-    """Compile CUDA C source to PTX via NVRTC."""
+def _compile_ptx(cuda_source: str, func_name: str, arch: bytes | None = None) -> bytes:
+    """Compile CUDA C source via NVRTC: PTX, which the driver compiles for the device
+    when it loads it, or with ``arch`` (``b"sm_89"``) the device's own code (CUBIN),
+    which it loads as it is. Cold they cost the same -- NVRTC does the driver's
+    work -- but a CUBIN in the disk cache loads with no compile at all (49 of the
+    AhmedML sweep's kernels: 7 ms, against 2.1 s of the driver's, on jura)."""
     _warn_if_old_nvrtc()
     src = cuda_source.encode("utf-8")
     err, prog = nvrtc.nvrtcCreateProgram(src, f"{func_name}.cu".encode(), 0, None, None)
     _check(err)
 
     # cuda-python marshals a list of bytes; a ctypes array can be misread.
-    compile_result = _compile_keeping_thread_locale(prog, _NVRTC_OPTIONS)
+    options = _NVRTC_OPTIONS if arch is None else [*_NVRTC_OPTIONS, b"-arch=" + arch]
+    compile_result = _compile_keeping_thread_locale(prog, options)
     compile_err = compile_result[0] if isinstance(compile_result, tuple) else compile_result
 
     if compile_err != nvrtc.nvrtcResult.NVRTC_SUCCESS:
@@ -828,24 +833,36 @@ def _compile_ptx(cuda_source: str, func_name: str) -> bytes:
             f"Source:\n{cuda_source}"
         )
 
-    err, ptx_size = nvrtc.nvrtcGetPTXSize(prog)
+    get_size, get = ((nvrtc.nvrtcGetPTXSize, nvrtc.nvrtcGetPTX) if arch is None
+                     else (nvrtc.nvrtcGetCUBINSize, nvrtc.nvrtcGetCUBIN))
+    err, size = get_size(prog)
     _check(err)
-    ptx = b" " * ptx_size
-    _check(nvrtc.nvrtcGetPTX(prog, ptx))
+    image = b" " * size
+    _check(get(prog, image))
     nvrtc.nvrtcDestroyProgram(prog)
-    return ptx
+    return image
 
 
-def _load_kernel(ptx: bytes, kernel_name: str, param_types, param_is_array,
+@functools.cache
+def _cubin_arch(major: int, minor: int) -> bytes | None:
+    """``b"sm_<major><minor>"`` where NVRTC can make that device's code, else None (a
+    device newer than the NVRTC: PTX, which the driver compiles)."""
+    err, archs = nvrtc.nvrtcGetSupportedArchs()
+    _check(err)
+    arch = 10 * major + minor
+    return f"sm_{arch}".encode() if arch in archs else None
+
+
+def _load_kernel(image: bytes, kernel_name: str, param_types, param_is_array,
                  param_is_texture) -> "CompiledCUDAKernel":
-    """A kernel from its PTX, loaded into the current context."""
-    err, module = driver.cuModuleLoadData(ptx)
+    """A kernel from its PTX or CUBIN, loaded into the current context."""
+    err, module = driver.cuModuleLoadData(image)
     _check(err)
     err, func = driver.cuModuleGetFunction(module, kernel_name.encode())
     _check(err)
     compiled = CompiledCUDAKernel(module, func, kernel_name, param_types,
                                   param_is_array, param_is_texture)
-    compiled.ptx = ptx
+    compiled.image = image
     return compiled
 
 
@@ -963,7 +980,7 @@ class CompiledCUDAKernel:
         self._param_types = param_types
         self._param_is_array = param_is_array
         self._param_is_texture = param_is_texture or [False] * len(param_types)
-        self.ptx = None     # what NVRTC made, kept for the disk cache
+        self.image = None   # what NVRTC made (PTX or CUBIN), kept for the disk cache
 
     def __call__(self, kernel_args: list, loop_end: int, extents=(), limits=None,
                  stream=None):
@@ -1265,17 +1282,35 @@ class CUDABackend(GPUBackend):
         """Compile Tack IR → CUDA C → PTX → CUfunction."""
         kernel_name = kernel_entry_name(ir_func.name)
         cuda_source = generate_cuda_source(ir_func)
-        ptx = _compile_ptx(cuda_source, kernel_name)
+        image = _compile_ptx(cuda_source, kernel_name, self._arch())
         param_types = [p.type_annotation for p in ir_func.params]
         param_is_array = [p._is_array for p in ir_func.params]
         param_is_texture = [p._is_texture for p in ir_func.params]
-        return _load_kernel(ptx, kernel_name, param_types, param_is_array, param_is_texture)
+        return _load_kernel(image, kernel_name, param_types, param_is_array, param_is_texture)
 
-    # ── The disk cache: PTX, loaded by the driver ──────────────────────
-    # The driver compiles PTX for the device at load, so the stored artifact
-    # is portable across devices of one architecture family, and the target
-    # names what that compilation depends on: the device, the driver that
-    # compiles it, and the NVRTC and options that made the PTX.
+    def _capability(self):
+        """The device's compute capability, ``(major, minor)``."""
+        err, major = driver.cuDeviceGetAttribute(
+            driver.CUdevice_attribute.CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR,
+            self._device)
+        _check(err)
+        err, minor = driver.cuDeviceGetAttribute(
+            driver.CUdevice_attribute.CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR,
+            self._device)
+        _check(err)
+        return major, minor
+
+    def _arch(self):
+        """The architecture NVRTC compiles this device's code for (CUBIN), or None for
+        PTX, which the driver compiles at load."""
+        return _cubin_arch(*self._capability())
+
+    # ── The disk cache: the device's code (CUBIN), or PTX ─────────────
+    # Where NVRTC knows the device's architecture it makes the device's code,
+    # which loads with no compile; else PTX, which the driver compiles at
+    # load. The target names what the artifact depends on: the device and its
+    # architecture, the driver, the NVRTC and options that made it, and which
+    # of the two it is.
 
     _target = None
 
@@ -1284,28 +1319,23 @@ class CUDABackend(GPUBackend):
             err, name = driver.cuDeviceGetName(128, self._device)
             _check(err)
             device_name = bytes(name).split(b"\0", 1)[0].decode(errors="replace")
-            err, major = driver.cuDeviceGetAttribute(
-                driver.CUdevice_attribute.CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR,
-                self._device)
-            _check(err)
-            err, minor = driver.cuDeviceGetAttribute(
-                driver.CUdevice_attribute.CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR,
-                self._device)
-            _check(err)
+            major, minor = self._capability()
+            arch = self._arch()
             err, driver_version = driver.cuDriverGetVersion()
             _check(err)
             err, nvrtc_major, nvrtc_minor = nvrtc.nvrtcVersion()
             _check(err)
             options = " ".join(o.decode() for o in _NVRTC_OPTIONS)
             self._target = (f"{device_name} sm_{major}{minor}; driver {driver_version}; "
-                            f"nvrtc {nvrtc_major}.{nvrtc_minor}; {options}")
+                            f"nvrtc {nvrtc_major}.{nvrtc_minor}; {options}; "
+                            + (f"cubin {arch.decode()}" if arch else "ptx"))
         return self._target
 
     def variant_artifact(self, payload):
         compiled, pack_info, _ = payload
-        if compiled.ptx is None:
-            raise ValueError("no PTX was kept for this kernel")
-        return {"ptx": compiled.ptx, "name": compiled._func_name,
+        if compiled.image is None:
+            raise ValueError("no PTX or CUBIN was kept for this kernel")
+        return {"image": compiled.image, "name": compiled._func_name,
                 "param_types": compiled._param_types,
                 "param_is_array": compiled._param_is_array,
                 "param_is_texture": compiled._param_is_texture,
@@ -1313,7 +1343,7 @@ class CUDABackend(GPUBackend):
 
     def load_variant(self, ir_func, artifact, effective_args):
         from tack.runtime.kernel_utils import _create_pack_arrays
-        compiled = _load_kernel(artifact["ptx"], artifact["name"], artifact["param_types"],
+        compiled = _load_kernel(artifact["image"], artifact["name"], artifact["param_types"],
                                 artifact["param_is_array"], artifact["param_is_texture"])
         pack_info = artifact["pack_info"]
         # The scalar pack buffers are device memory of this process, made
@@ -1378,8 +1408,8 @@ class CUDABackend(GPUBackend):
             "max": "reduce_max_f32",
         }
         src = _REDUCE_CUDA[op]
-        ptx = _compile_ptx(src, func_names[op])
-        err, module = driver.cuModuleLoadData(ptx)
+        image = _compile_ptx(src, func_names[op], self._arch())
+        err, module = driver.cuModuleLoadData(image)
         _check(err)
         err, func = driver.cuModuleGetFunction(module, func_names[op].encode())
         _check(err)

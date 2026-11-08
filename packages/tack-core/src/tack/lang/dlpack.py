@@ -465,6 +465,13 @@ def dlpack_to_array(source, writable=True, device=None):
 
     capsule = _request_capsule(source)
 
+    # Python 3.11 and 3.12 have no types.CapsuleType to test against.
+    if type(capsule).__name__ != "PyCapsule":
+        raise TypeError(
+            f"expected an object with __dlpack__ or a DLPack capsule, got "
+            f"{type(source).__module__}.{type(source).__qualname__}, which "
+            f"has no __dlpack__ method")
+
     capsule_ptr = ctypes.cast(id(capsule), ctypes.c_void_p)
     if _PyCapsule_IsValid(capsule_ptr, b"dltensor_versioned"):
         name, used_name = b"dltensor_versioned", b"used_dltensor_versioned"
@@ -472,10 +479,16 @@ def dlpack_to_array(source, writable=True, device=None):
     elif _PyCapsule_IsValid(capsule_ptr, b"dltensor"):
         name, used_name = b"dltensor", b"used_dltensor"
         struct = DLManagedTensor
+    elif (_PyCapsule_IsValid(capsule_ptr, b"used_dltensor_versioned")
+          or _PyCapsule_IsValid(capsule_ptr, b"used_dltensor")):
+        raise ValueError(
+            "this DLPack capsule has already been taken by another consumer; "
+            "a capsule can be imported once. Call __dlpack__() again for a "
+            "new one, or pass the producing object itself")
     else:
         raise ValueError(
-            "expected an unconsumed DLPack capsule; this one has already "
-            "been taken by another consumer")
+            "expected a DLPack capsule (named 'dltensor_versioned' or "
+            "'dltensor'); this capsule is something else")
 
     managed_ptr = _PyCapsule_GetPointer(capsule_ptr, name)
     managed = ctypes.cast(managed_ptr, ctypes.POINTER(struct)).contents

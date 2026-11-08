@@ -112,8 +112,11 @@ The zero-copy path is `dlpack_to_array(source, writable=True, device=None)`:
    predates DLPack 1.0. Asking for the versioned form first matters: NumPy
    refuses to export a read-only array over the legacy protocol. A bare
    capsule is used as given.
-2. **Check it is unconsumed.** A capsule not named `"dltensor_versioned"`
-   or `"dltensor"` has already been taken: `ValueError`.
+2. **Check it is unconsumed.** A source with no `__dlpack__` that is not
+   a capsule raises `TypeError` naming its type. A capsule named
+   `"used_dltensor_versioned"` or `"used_dltensor"` has already been
+   taken, and any other capsule that is not `"dltensor_versioned"` or
+   `"dltensor"` is not a tensor: both raise `ValueError`.
 3. **Honor read-only.** A versioned tensor with the read-only flag makes
    the array non-writable, overriding the default. Host writes to it raise
    `RuntimeError`, and a dispatch that binds it where the kernel may store

@@ -419,6 +419,31 @@ def test_a_metal_tensor_is_refused_before_wrap_ptr(monkeypatch):
     assert dlpack.kDLMetal not in dlpack._DEVICE_BACKENDS
 
 
+def test_an_object_without_dlpack_is_named_not_called_a_used_capsule():
+    """Anything without __dlpack__ was reported as a capsule another
+    consumer had taken, which sent a VTK user looking for a second
+    consumer that did not exist."""
+
+    class NoProtocol:
+        pass
+
+    with pytest.raises(TypeError, match="NoProtocol, which has no __dlpack__"):
+        tack.from_dlpack(NoProtocol())
+
+
+def test_a_capsule_imported_twice_says_it_was_taken():
+    capsule = np.arange(4, dtype=np.float32).__dlpack__(max_version=(1, 0))
+    tack.from_dlpack(capsule)
+    with pytest.raises(ValueError, match="already been taken"):
+        tack.from_dlpack(capsule)
+
+
+def test_a_capsule_that_is_not_a_tensor_says_so():
+    capsule = dlpack._PyCapsule_New(1, b"not_a_tensor", None)
+    with pytest.raises(ValueError, match="this capsule is something else"):
+        tack.from_dlpack(capsule)
+
+
 def test_unsupported_dtype_is_rejected_clearly():
     """A dtype with no DLPack equivalent must say so, not produce garbage."""
     array = _array(np.zeros(4, dtype=np.float32), tack.f32)

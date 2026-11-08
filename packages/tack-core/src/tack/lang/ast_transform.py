@@ -19,6 +19,7 @@ from tack.lang.ir_names import fresh_name
 from tack.lang.lowering.arrays import ArrayAccess
 from tack.lang.lowering.bounds import BoundsChecks
 from tack.lang.lowering.checks import LoweringChecks
+from tack.lang.lowering.constant_conditions import constant_truth
 from tack.lang.lowering.inlining import Inlining
 from tack.lang.lowering.local_arrays import LocalArrays
 from tack.lang.lowering.loops import Loops, _launch_bounds_from_arguments, _mark_outermost_continues
@@ -242,12 +243,23 @@ class KernelTransformer(
 
     def visit_If(self, node: ast.If) -> ir.IRIf:
         condition = self._scalar_condition(node, "if", self.visit(node.test))
+        decided = constant_truth(condition)
+        if decided is not None:
+            # Constants decide it: the arm they pick, in place, and the other
+            # never lowered (constant_conditions).
+            return self._visit_body(node.body if decided else node.orelse)
         then_body = self._visit_body(node.body)
         else_body = self._visit_body(node.orelse)
         return ir.IRIf(condition=condition, then_body=then_body, else_body=else_body)
 
     def visit_IfExp(self, node: ast.IfExp) -> ir.IRIfExp:
         condition, before = self._visit_expression(node.test)
+        decided = constant_truth(condition)
+        if decided is not None:
+            self._pre_stmts.extend(before)
+            value, stmts = self._visit_expression(node.body if decided else node.orelse)
+            self._pre_stmts.extend(stmts)
+            return value
         then_value, then_stmts = self._visit_expression(node.body)
         else_value, else_stmts = self._visit_expression(node.orelse)
         self._pre_stmts.extend(before)

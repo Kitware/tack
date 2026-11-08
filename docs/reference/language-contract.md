@@ -919,7 +919,9 @@ in its usual kernel `RuntimeError`; inspection and direct generation raise
 `NotImplementedError` directly.
 
 This is a structural requirement, including nested branches and inlined
-device functions, even if the primitive would be unreachable at runtime.
+device functions, even if the primitive would be unreachable at runtime;
+only an arm that constants decide against is not lowered, and so not
+required (see Specialization and compilation identity).
 CPU does not emulate workgroups. Use `local_array` or `local_array_like`
 for private scratch arrays; these remain supported on CPU, as do ordinary
 scalar kernels, host array reductions and supported atomic operations.
@@ -1014,7 +1016,8 @@ Private/shared arrays, textures, scalar arguments, and targets that cannot
 be traced uniquely to a global array parameter are rejected. Field-pointer
 copies introduced by device-function inlining are traced to that parameter.
 The checker runs before optimization, including structurally unreachable
-operations and empty grids. Public inspection in every mode enforces the
+operations (but not an arm that constants decide against, which is not
+lowered) and empty grids. Public inspection in every mode enforces the
 same target domain. Direct generators check mutable IR afresh and do not
 trust stale atomic dtype annotations. Unsupported operations/types/targets
 raise `TypeError` naming the kernel, target, operation and reason.
@@ -1114,6 +1117,21 @@ patterns, distinguishing signed zeros and making NaN cache keys stable.
 Different classes with identical names can have different methods, and
 adding a runtime attribute changes the parameter
 layout even when its value is not a compilation constant.
+
+**Branches that constants decide.** An `if` statement or a conditional
+expression whose condition is decided by integer and Boolean constants
+alone (literals, `tack.constant`s and a device class's constants, combined
+with comparisons, `not`, `&`, `|`, `^`, `and` and `or`; an `and` with a
+false operand or an `or` with a true one, whatever the others are) is
+resolved when the kernel is lowered: the arm it selects is lowered in its
+place, and the other is not lowered at all. That arm's source is still
+validated (unsupported syntax is reported), but its device functions are
+not inlined, and the workgroup primitives and atomics in it are not required
+of the backend, as in C++'s `if constexpr`. A variable bound only in the
+arm not taken is unbound. Floating-point conditions are decided as the
+kernel runs, since a literal's f32 value can compare differently from
+Python's. A large kernel specialized by its classes' constants (the
+streamlines kernel on AhmedML's mesh) had half its IR in such arms.
 
 Debug mode is part of the identity: a kernel lowered with bounds checks
 never shares IR or compiled code with the same kernel lowered without.

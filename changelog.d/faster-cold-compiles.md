@@ -13,3 +13,12 @@
   walking the body, and copy propagation is one walk that copies only what it
   changes. AhmedML's analysis sweep (244 kernels, cold, CPU) compiles in
   11.8 s, from 15.5 (#322).
+- An `if` or conditional expression whose condition integer and Boolean
+  constants decide (a device class's constants, `tack.constant`s,
+  literals; comparisons, `not`, `&`, `|`, `^`, `and`, `or`) is resolved
+  while lowering: only the arm it selects is lowered, as C++'s
+  `if constexpr`. The other arm's source is still validated, but its
+  device functions are not inlined, the workgroup primitives and atomics in
+  it are not required, and a name bound only there is unbound. Half of the
+  streamlines kernel's IR on AhmedML was such arms: its cold compile went
+  from 1.9 s to 1.3 s, and the analysis sweep's from 11.8 s to 10.8 s.

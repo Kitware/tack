@@ -153,7 +153,10 @@ its source when the source is never rebound in the containing block.
 Assignment counts include nested control flow, loop-variable bindings, and
 local/shared array bindings.
 Assignments remain in place, reads before the assignment are unchanged,
-and rewritten sequential loops retain their step.
+and rewritten sequential loops retain their step. It is one walk: each
+statement's own expressions take the copies known where it stands, from the
+enclosing blocks and its own block's earlier statements, and its bodies
+inherit them.
 
 This is useful after `@tack.func` inlining, which creates assignments such
 as `__func_x_0__ = x`. Array aliases can then use the original parameter:

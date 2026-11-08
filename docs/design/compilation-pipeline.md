@@ -576,6 +576,10 @@ unregistered kind:
 - `transform_ir(root, rewrite, copy_nodes=False)` rewrites children in
   postorder, in place. With `copy_nodes=True` it shallow-copies each node
   first, which is how `rename_gpu_bindings` makes its codegen-only copy.
+- `substitute_ir(root, replace)` changes nothing in place: a node with no
+  replacement below it is returned as it is, one with a replacement below is
+  a shallow copy with new children. Copy propagation and the weak-literal
+  rewrite use it.
 
 ## Inspection
 

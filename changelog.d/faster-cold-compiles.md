@@ -28,3 +28,8 @@
   MSL generator finds stores in sequential loops in one walk and checks
   workgroup participation only for kernels with collectives. MSL for the
   301 kernels of AhmedML's sweep: 0.54 s from 0.86.
+- A CPU kernel's wrapper for the thread pool is compiled in the kernel's own
+  module and stored with it in the disk cache, rather than JIT'd as a module
+  of its own at the kernel's first fan-out in every process (2-3 ms each,
+  about 0.7 s over AhmedML's sweep). First calls with a warm cache: slice
+  0.33 s from 0.43, clip 0.30 from 0.42; warm calls unchanged.

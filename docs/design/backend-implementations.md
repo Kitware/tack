@@ -130,10 +130,15 @@ over `[__loop_start__, __loop_end__)`. `CompiledKernel` builds a
 `bind()` marshals the array addresses (`NumpyBuffer.address`, computed once
 per array) and scalars once per dispatch; `call_range()` then runs each
 chunk with its own bounds, because chunks run concurrently. The JIT'd pool
-does not call through ctypes at all: `cpu_pool.chunk_wrapper` JITs, once per
-compiled kernel and under a lock, a `__tack_chunk(pack, start, end)` that
-loads the arguments from 8-byte slots (`pack_args`) and calls the kernel at
-its address.
+does not call through ctypes at all: it runs the kernel's
+`<entry>__chunk(pack, start, end)`, which loads the arguments from 8-byte
+slots (`pack_args`) and calls the kernel. `cpu_pool.add_chunk_wrapper` puts it
+in the kernel's own module, the kernel kept out of line (`noinline`), so it is
+compiled with the kernel and stored with its object code. Each wrapper had been
+a JIT module of its own, made at the kernel's first fan-out in every process:
+2-3 ms each, about 0.7 s over AhmedML's analysis sweep, which the disk cache
+did not hold. `chunk_wrapper` still builds one apart, once and under a lock,
+for object code stored without it.
 
 **Disk cache.** `set_object_cache` captures the object code MCJIT emits, and
 `variant_artifact` stores it after a header and the entry's unique name

@@ -131,7 +131,7 @@ Tack is a Python-first GPU compute framework inspired by Taichi. Kernels are dec
 |---------|---------|-------------------|----------|
 | CPU | `llvm_gen.py` → LLVM IR | llvmlite JIT | ctypes function call |
 | Metal | `msl_gen.py` → MSL source | Metal API (pyobjc) | compute pipeline |
-| CUDA | `cuda_gen.py` → CUDA C source | NVRTC → PTX | cuLaunchKernel |
+| CUDA | `cuda_gen.py` → CUDA C source | NVRTC → CUBIN (PTX on a device NVRTC does not know) | cuLaunchKernel |
 | HIP | `hip_gen.py` → HIP C source (extends CUDA) | hipRTC → code object | hipModuleLaunchKernel |
 | Level Zero | `opencl_gen.py` → OpenCL C source (extends CUDA) | libocloc → SPIR-V | zeCommandListAppendLaunchKernel |
 | Warp (prototype) | `warp_gen.py` → `@wp.kernel` Python source | Warp | `wp.launch` on Warp's current stream |
@@ -323,9 +323,13 @@ stale entry runs. Backends opt into `.variant` with `cache_target()`,
 The target must name everything the artifact depends on besides the IR
 and argument types (device, compiler and driver versions, compile options,
 kept in module constants such as `_NVRTC_OPTIONS` that the compiler and
-the target both read), or a stale binary loads. The CPU's target also says when it has no f64 (the tests' stand-in for Metal), which refuses an f64 kernel only as it builds, so it must not load what a CPU with f64 stored. Artifacts (CPU: MCJIT object code; Metal: MSL; CUDA: PTX, loaded with
+the target both read), or a stale binary loads. The CPU's target also says when it has no f64 (the tests' stand-in for Metal), which refuses an f64 kernel only as it builds, so it must not load what a CPU with f64 stored. Artifacts (CPU: MCJIT object code; Metal: MSL; CUDA: the device's code
+(CUBIN), which NVRTC makes where it supports the device's architecture
+(`_cubin_arch`), else PTX, which the driver compiles at load; loaded with
 `cuModuleLoadData`, its target naming the device and compute capability,
-the driver that compiles the PTX, NVRTC and its options; HIP: the code
+the driver, NVRTC and its options, and which of the two it is (a cached
+CUBIN loads with no compile, where PTX cost the driver 2.1 s for 49
+kernels whenever its own cache was cold); HIP: the code
 object, loaded with `hipModuleLoadData`, its target naming the device and
 `gcnArchName` with its feature flags, the ROCm runtime and driver, hipRTC,
 hip-python and the hipRTC options; Level Zero: the

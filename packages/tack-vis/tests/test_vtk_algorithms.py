@@ -1142,6 +1142,35 @@ def test_higher_order_nodes_on_another_device_and_integers_refused():
     assert ids.Update() == 0 and "integers" in str(ids.error)
 
 
+@pytest.mark.parametrize("origin", [(0.0, 0.0, 0.0), (5.0e5, -3.0e5, 1.0e4)])
+def test_an_image_runs_on_a_device_without_f64(origin):
+    """VTK keeps an image's origin and spacing in doubles, so its geometry converts to
+    f64, which a device without f64 (Metal) refuses: there a filter takes the image's
+    geometry in f32, relative to the origin an f32 conversion takes, so an image far
+    from zero keeps its precision and goes back to VTK where it was."""
+    from test_dataset_devices import _NoF64CPU
+
+    from tack.runtime import dispatch
+
+    no_f64 = dispatch.as_device(_NoF64CPU())
+    image = _wavelet()()
+    image.SetOrigin(origin)
+    expected = ta.Contour(field="RTData", value=150.0)(image)
+    contour = ta.Contour(field="RTData", value=150.0, device=no_f64)
+    out = contour(image)
+    assert contour.error is None, contour.error
+    assert out.number_of_cells == expected.number_of_cells
+    # f32 at 5e5 is 0.03 apart: only positions relative to a near origin come this close.
+    np.testing.assert_allclose(np.asarray(out.points.data), np.asarray(expected.points.data),
+                               rtol=0, atol=1e-4)
+    elevation = ta.Elevation(low_point=origin, high_point=np.add(origin, (16, 0, 0)),
+                             name="e", device=no_f64)
+    kept = elevation(image)
+    assert elevation.error is None, elevation.error
+    assert isinstance(kept, vtk.vtkImageData) and kept.origin == image.origin
+    assert kept.spacing == image.spacing
+
+
 def test_temporal_statistics_on_higher_order_cells():
     statistics = ta.RunningStatistics(fields=["e"])
     for t in (0.0, 1.0):

@@ -369,15 +369,12 @@ def rewrite_templates(kernel_ast, template_args, python_func=None):
     # Reserve source names in both the caller and template methods before
     # allocating synthetic parameters. Attribute expansion must not merge a
     # user's binding with an array/scalar reference in the rewritten AST.
-    sources = [funcdef]
+    used_names = {n.id if isinstance(n, ast.Name) else n.arg for n in ast.walk(funcdef)
+                  if isinstance(n, (ast.Name, ast.arg))}
     for _, obj in template_args.values():
         for _, node in template_tree(obj):
-            sources.extend(method._funcdef for method in
-                           template_func_methods(type(node)).values())
-    used_names = {n.id for source in sources for n in ast.walk(source)
-                  if isinstance(n, ast.Name)}
-    used_names.update(n.arg for source in sources for n in ast.walk(source)
-                      if isinstance(n, ast.arg))
+            for method in template_func_methods(type(node)).values():
+                used_names.update(method.source_names())
 
     # The source spelling of each held array's synthetic parameter, for
     # diagnostics; lowering keeps it on the IR (`IRFunction.held_arrays`).

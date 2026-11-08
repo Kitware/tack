@@ -144,6 +144,8 @@ class LoweringChecks:
         path, so `assign it before the loop` is always a valid fix.
         """
         def read(expr, stale):
+            if not stale:           # no loop has ended yet here: nothing to look for
+                return
             for n in walk_ir(expr):
                 if isinstance(n, ir.IRName) and n.name in stale:
                     raise self._loop_variable_error(function, n)

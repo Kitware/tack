@@ -9,6 +9,11 @@ Source: https://github.com/taichi-dev/taichi/blob/master/python/taichi/examples/
 Model and visual inspiration: Sage Jenson, https://sagejenson.com/physarum
 """
 
+# Original upstream description (verbatim):
+"""Physarum simulation example.
+
+See https://sagejenson.com/physarum for the details."""
+
 import argparse
 
 import numpy as np

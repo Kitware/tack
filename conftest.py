@@ -46,7 +46,11 @@ Options
     one), before ``--shard`` deals them, so the shares divide the selection.
     A run that selects nothing passes rather than failing as pytest's "no
     tests collected". CI writes FILE from the test map
-    (``tools/testmap.py select``) for a pull request's changes.
+    (``tools/testmap.py select``) for a pull request's changes. Write it as
+    one argument, ``--select=FILE``: pytest reads its arguments before this
+    file defines the option, so ``--select FILE`` makes FILE look like a test
+    path, and one outside the repository moves the rootdir away from this
+    conftest.
 
 A test that names one of these runs once per matching backend, so which
 backends exist is a property of the machine and never of the test file.

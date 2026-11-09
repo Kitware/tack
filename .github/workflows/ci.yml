@@ -372,7 +372,7 @@ jobs:
             set -- -p testmap_plugin
           fi
           uv run pytest -q -m "not slow and not timing" --shard "$SHARD" \
-            --select "$RUNNER_TEMP/selection.txt" "$@"
+            --select="$RUNNER_TEMP/selection.txt" "$@"
 
       - name: Keep the share's record of what each test file runs
         if: matrix.python-version == '3.13' && needs.changes.outputs.selected == 'all'
@@ -539,7 +539,7 @@ jobs:
         run: |
           printf '%s\n' "$SELECTION" > "$RUNNER_TEMP/selection.txt"
           uv run pytest -q --ids=i64 --shard ${{ matrix.shard }}/4 \
-            --select "$RUNNER_TEMP/selection.txt" packages/tack-vis/tests
+            --select="$RUNNER_TEMP/selection.txt" packages/tack-vis/tests
 
   # ── The dataset tests with L2 cell-fastest ─────────────────────────
   #
@@ -586,7 +586,7 @@ jobs:
         run: |
           printf '%s\n' "$SELECTION" > "$RUNNER_TEMP/selection.txt"
           TACK_L2_LAYOUT=cells uv run pytest -q -n 4 --shard ${{ matrix.shard }}/2 \
-            --select "$RUNNER_TEMP/selection.txt" packages/tack-vis/tests
+            --select="$RUNNER_TEMP/selection.txt" packages/tack-vis/tests
 
   # ── Warp ───────────────────────────────────────────────────────────
   # The prototype Warp backend (tack.device("warp")) and tack.interop.warp,
@@ -953,8 +953,8 @@ jobs:
           assert get_backend().name == "metal"
           print("Required hardware backend: metal", flush=True)
           raise SystemExit(pytest.main(["-q", "-rs", "-m", "not slow and not timing",
-                                        "--shard", os.environ["SHARD"], "--select",
-                                        os.path.join(os.environ["RUNNER_TEMP"], "selection.txt")]))
+                                        "--shard", os.environ["SHARD"], "--select="
+                                        + os.path.join(os.environ["RUNNER_TEMP"], "selection.txt")]))
           EOF
 
   # ── The required check ─────────────────────────────────────────────

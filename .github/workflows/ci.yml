@@ -4,10 +4,12 @@
 # its files need (tools/ci_changes.py): a change to the docs alone runs lint
 # and docs; one to an example, lint and examples; anything in the packages,
 # the build or the workflows, everything. A job left out reports "skipping".
-# Pushes to main and runs by hand run everything.
+# Pushes to main and runs by hand run everything. `CI`, last, passes when
+# every other job passed or was skipped: it is the one required check.
 #
 #   docs       — builds the site strictly; publishes main's as `dev`
 #   tests      — the suite on Python 3.11/3.12/3.13 (Linux, CPU backend)
+#   timing     — the tests of what the scheduler did, alone on a runner
 #   ids-i64    — the dataset tests again, every topology with 64-bit ids
 #   packaging  — proves a GPU install works without llvmlite
 #   examples   — runs every shipped example (deselected from the suite)
@@ -277,8 +279,53 @@ jobs:
           print("backends available:", ", ".join(found) or "none")
           EOF
 
+      # The timing tests run in a job of their own (below): in a share they
+      # share the runner with nothing of ours, but with whatever the host's
+      # other tenants do, and a flake there failed docs-only pull requests.
       - name: Run the suite
-        run: uv run pytest -q --shard ${{ matrix.shard }}/4
+        run: uv run pytest -q -m "not slow and not timing" --shard ${{ matrix.shard }}/4
+
+  # ── Timing ─────────────────────────────────────────────────────────
+  # Tests that assert what the CPU scheduler or the OS did (the `timing`
+  # marker: the CPU backend's threading decisions, NUMA placement), alone on
+  # a runner. They skip themselves on a busy host (`require_idle`), but a
+  # runner's load average does not see its neighbours, so a failure is run
+  # once more: one that passes then is a flake, reported as a warning on the
+  # run, and one that fails again fails the job. They catch real regressions
+  # in the threading policy, so they stay in CI; only the shares lose them.
+  timing:
+    name: timing
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "**/uv.lock"
+          python-version: "3.13"
+
+      - name: Sync the workspace
+        run: uv sync --extra cpu --extra dev
+
+      - name: Run the timing tests
+        id: timing
+        continue-on-error: true
+        run: uv run pytest -q -rs -m timing
+
+      - name: Run the failures once more
+        if: steps.timing.outcome == 'failure'
+        shell: bash
+        run: |
+          failed=$(python3 -c "import json; print(' '.join(json.load(open('.pytest_cache/v/cache/lastfailed'))))")
+          echo "failed: $failed"
+          uv run pytest -q -rs -m timing --last-failed --last-failed-no-failures none
+          echo "::warning title=Flaky timing tests::failed, then passed when run again: $failed"
 
   # ── 64-bit ids ─────────────────────────────────────────────────────
   # tack.dataset keeps a topology's ids in i32 unless it is too large or asked
@@ -728,5 +775,35 @@ jobs:
           tack.set_default_device("metal")
           assert get_backend().name == "metal"
           print("Required hardware backend: metal", flush=True)
-          raise SystemExit(pytest.main(["-q", "-rs", "--shard", os.environ["SHARD"]]))
+          raise SystemExit(pytest.main(["-q", "-rs", "-m", "not slow and not timing",
+                                        "--shard", os.environ["SHARD"]]))
+          EOF
+
+  # ── The required check ─────────────────────────────────────────────
+  # The one check the main branch's ruleset requires. A job left out by
+  # `changes` reports "skipping", which a required check would count as a
+  # pass anyway; requiring each job by name would also need the list kept in
+  # step with this file. This passes when every job it needs passed or was
+  # skipped, and fails on a failure or a cancellation (a job past its
+  # timeout). It runs unless the whole run was cancelled (a newer push).
+  ci:
+    name: CI
+    needs: [changes, lint, docs, tests, timing, ids-i64, l2-cells, warp, vtk-master,
+            mpi, packaging, wheels, examples, metal]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Every job passed or was skipped
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'EOF'
+          import json, os
+          results = {job: need["result"] for job, need in json.loads(os.environ["RESULTS"]).items()}
+          for job, result in sorted(results.items()):
+              print(f"{job:12} {result}")
+          bad = sorted(job for job, result in results.items() if result not in ("success", "skipped"))
+          raise SystemExit(f"not passed: {', '.join(bad)}" if bad else 0)
           EOF

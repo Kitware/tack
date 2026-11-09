@@ -606,6 +606,32 @@ def contour(data, field, value, merge_points=True, fields=None, dimension=None,
                         field.unit)
 
 
+def plane_cut(data, function, value, fields=None):
+    """``slice`` of an image or a rectilinear grid by a ``Plane``
+    (``_flying_edges.cuts``): ``contour`` of the plane's distance at ``value``, as
+    ``slice`` makes it, by flying edges over the rows' stretches near the plane,
+    the distance computed where it is read rather than stored for every point.
+    The same triangles, points and values as the general path, up to order."""
+    from tack.dataset import units
+    from tack.dataset.algorithms import _flying_edges
+    from tack.dataset.algorithms._common import _has_quantity
+
+    if _has_quantity(value):            # as contour of a field without a unit takes it
+        value = units.magnitude(value, None, "contour's value")
+    several = np.ndim(value) > 0
+    host = np.asarray(value, data.dtype.numpy_dtype).reshape(-1)
+    if not host.size:
+        raise ValueError("contour needs at least one value")
+    levels, nlevels = tack.array(host), int(host.size)
+    points, edges, weights, rows, sources, which, count, triangles, odt = (
+        _flying_edges.cut(data, function, levels, nlevels))
+    types, tri_offsets = uniform_cells(shapes.TRIANGLE, triangles, odt)
+    surface = UnstructuredTopology(types, tri_offsets, rows, num_points=count)
+    return _with_levels(carry(data, surface, points=Interpolate(edges, weights),
+                              cells=Pieces(sources), geometry=Field(H1(surface), points),
+                              fields=fields), levels, which, several, None)
+
+
 def _structured_contour(data, field, levels, nlevels, several, fields):
     """``contour`` of a structured grid by flying edges (``_flying_edges``): the
     general path's triangles and points, numbered along the grid's rows, with no

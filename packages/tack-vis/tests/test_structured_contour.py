@@ -11,6 +11,13 @@ triangles -- the same triangles of the same cells, the same crossings to the
 bit, the same values carried -- so each case here contours a grid both ways
 (the general path by switching flying edges off) and compares the triangles
 in the general path's order: by cell, then value, then in the case table's.
+
+``slice`` of an image or a rectilinear grid by a ``Plane`` goes by the plane
+cutter (``_flying_edges.cut``): flying edges over each row's stretch near the
+plane, the distance computed where read. It must give the general
+``slice_plane``'s output in the same sense, for planes through grid points,
+along and across the rows, of either sign, several at once, and missing the
+grid.
 """
 
 import numpy as np
@@ -163,3 +170,85 @@ def test_what_flying_edges_does_not_take_goes_the_general_way(backend):
     # Unmerged points go the general way too: each triangle its own.
     out = td.contour(image, "s", 4.5, merge_points=False)
     assert out.num_points == 3 * out.num_cells
+
+
+# ── The plane cutter: slice of images and rectilinear grids by a Plane ──
+
+def _general_slice(monkeypatch, *args, **kwargs):
+    with monkeypatch.context() as m:
+        m.setattr(_flying_edges, "cuts", lambda data, function: False)
+        m.setattr(_flying_edges, "serves", lambda data, field: False)
+        return td.slice_plane(*args, **kwargs)
+
+
+def _check_cut(monkeypatch, data, origin, normal, value=0.0):
+    assert _flying_edges.cuts(data, td.Plane(origin, normal))
+    data.fields["cell"] = td.Field(td.Constant(data), tack.array(
+        np.arange(data.num_cells, dtype=np.int64), tack.i64))
+    x = data.geometry.values.numpy()
+    data.fields["p"] = td.Field(td.H1(data), tack.array(np.sin(x).astype(data.dtype.numpy_dtype),
+                                                       tack.vec(3, data.dtype)))
+    fast = td.slice_plane(data, origin, normal, value=value)
+    slow = _general_slice(monkeypatch, data, origin, normal, value=value)
+    assert fast.num_cells == slow.num_cells and fast.num_points == slow.num_points
+    if fast.num_cells:
+        a, fa = _triangles(fast, ["p", "cell"])
+        b, fb = _triangles(slow, ["p", "cell"])
+        assert _same(a, b) and _same(fa["p"], fb["p"]) and _same(fa["cell"], fb["cell"])
+    return fast
+
+
+@pytest.mark.parametrize("plane", [
+    ((4.3, 3.1, 2.2), (0.2, 0.3, 1.0)),             # tilted
+    ((3.0, 0.0, 0.0), (1.0, 0.0, 0.0)),             # through grid points, across the rows
+    ((0.0, 2.0, 0.0), (0.0, 1.0, 0.0)),             # through grid points, along the rows
+    ((2.0, 2.0, 2.0), (-1.0, 0.5, -0.25)),          # a negative normal
+])
+def test_a_plane_cuts_an_image_as_the_general_path_does(backend, monkeypatch, plane):
+    for dtype in _dtypes():
+        image = td.uniform_grid((20, 17, 15), spacing=(0.5, 0.4, 0.3), dtype=dtype)
+        assert _check_cut(monkeypatch, image, *plane).num_cells > 0
+
+
+def test_planes_cut_rotated_far_and_rectilinear_grids_alike(backend, monkeypatch):
+    rng = np.random.default_rng(3)
+    rotation = np.array([[np.cos(0.4), -np.sin(0.4), 0.0], [np.sin(0.4), np.cos(0.4), 0.0],
+                         [0.0, 0.0, 1.0]])
+    for dtype in _dtypes():
+        rotated = td.uniform_grid((12, 11, 10), spacing=(0.5, 0.4, 0.3), direction=rotation,
+                                  origin=(1.0, 2.0, 3.0), dtype=dtype)
+        _check_cut(monkeypatch, rotated, (3.0, 4.0, 4.0), (0.3, -0.2, 1.0))
+        far = td.uniform_grid((12, 11, 10), origin=(1e4, -2e3, 5e2), spacing=(0.25, 0.5, 1.0),
+                              dtype=dtype)
+        _check_cut(monkeypatch, far, (1e4 + 1.3, -2e3 + 2.1, 5e2 + 4.0), (0.1, 0.7, 0.3))
+        axes = [np.cumsum(rng.uniform(0.1, 1.0, n)) for n in (14, 12, 11)]
+        grid = td.rectilinear_grid(*axes, dtype=dtype)
+        _check_cut(monkeypatch, grid, [a.mean() for a in axes], (0.4, -0.3, 0.8))
+        _check_cut(monkeypatch, grid, (axes[0][5], 0.0, 0.0), (1.0, 0.0, 0.0))
+        _check_cut(monkeypatch, grid, (0.0, axes[1][4], 0.0), (0.0, 1.0, 0.0))
+
+
+def test_parallel_planes_in_one_pass_and_a_plane_missing_the_grid(backend, monkeypatch):
+    image = td.uniform_grid((20, 17, 15), spacing=(0.5, 0.4, 0.3))
+    several = _check_cut(monkeypatch, image, (4.3, 3.1, 2.2), (0.2, 0.3, 1.0),
+                         value=[-1.0, 0.0, 0.7])
+    assert len(np.unique(several.fields["contour_value"].values.numpy())) == 3
+    assert _check_cut(monkeypatch, image, (100.0, 0.0, 0.0), (1.0, 0.2, 0.0)).num_cells == 0
+
+
+def test_what_the_cutter_does_not_take_goes_the_general_way(backend):
+    plane = td.Plane((1.0, 1.0, 1.0), (0.3, 0.2, 1.0))
+    image = td.uniform_grid((5, 4, 3))
+    assert _flying_edges.cuts(image, plane)
+    curvilinear = td.DataSet(image.topology, tack.array(image.geometry.values.numpy(),
+                                                       tack.vec(3, tack.f32)))
+    hidden = td.uniform_grid((5, 4, 3))
+    marks = np.zeros(hidden.num_cells, np.uint8)
+    marks[0] = td.Ghosts.HIDDENCELL
+    hidden.ghosts = td.Ghosts(cells=tack.array(marks, tack.u8))
+    for data, function in ((curvilinear, plane), (hidden, plane), (td.tetrahedralize(image), plane),
+                           (image, td.Sphere((1.0, 1.0, 1.0), 1.0)), (td.uniform_grid((5, 4)), plane)):
+        assert not _flying_edges.cuts(data, function)
+    # A hidden cell is left out, as the general path leaves it out.
+    out = td.slice_plane(hidden, (1.0, 1.0, 1.0), (0.3, 0.2, 1.0))
+    assert out.num_cells > 0

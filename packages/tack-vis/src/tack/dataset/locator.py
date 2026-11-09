@@ -3,7 +3,11 @@
 
 """Finding the cell a point lies in, and probing fields there.
 
-``CellLocator(data)`` bins the cells' bounding boxes on a two-level grid over
+``CellLocator(data)`` of an image or a rectilinear grid (``structured``) builds
+nothing: a point's candidate cells come from its index coordinates, or a
+binary search of each axis (``by_id._GridSearch``), and are tested and ranked
+as the bins' are, so the answers are the same bit for bit. Of any other
+dataset, or given ``levels``, ``CellLocator(data)`` bins the cells' bounding boxes on a two-level grid over
 the dataset's bounds, as Viskores' CellLocatorTwoLevel does: a coarse uniform
 grid of about 32 cells a bin, each bin a uniform grid of leaves sized by its
 count (about 8 cells a leaf), so a body's cells in a large far field are not
@@ -601,7 +605,13 @@ def _face_neighbors(sides, per_cell, neighbors):
 
 
 class CellLocator:
-    """Locates points in ``data``'s cells; build once, ``find`` many times. ``density``
+    """Locates points in ``data``'s cells; build once, ``find`` many times. Of an
+    image (``UniformCoordinates``) or a rectilinear grid (``CartesianProduct``,
+    its axes increasing) of solid or sheet cells it builds nothing and finds
+    cells by arithmetic (``structured``; VTK's ``vtkImageData::FindCell``,
+    Viskores' ``CellLocatorUniformGrid`` and ``CellLocatorRectilinearGrid``), the
+    same cells and coordinates, bit for bit, as the bins; ``levels`` asks for the
+    bins anyway. Elsewhere it bins the cells. ``density``
     is the bins per cell of the uniform grid a search from the cells buckets
     the points in; the search from the points reads the cell bins
     (``cell_bins``): with ``levels=2`` (the default) a two-level grid, as
@@ -622,16 +632,20 @@ class CellLocator:
     `wrap_ptr` -- need a new locator."""
 
     @on_inputs_device
-    def __init__(self, data, density=1.0, levels=2):
+    def __init__(self, data, density=1.0, levels=None):
         from tack.dataset.dataset import DataSet
 
-        if levels not in (1, 2):
+        if levels not in (None, 1, 2):
             raise ValueError(f"a cell locator has 1 or 2 levels of bins, not {levels!r}")
-        self.levels = levels
         #: Cells with no reference element -- polyhedra, polygons, polylines --
         #: have no parametric coordinates: points are located in a piece of each
         #: cell's fan (a polyline's segment), which ``find`` says (``tets``).
         self.polyhedral = not getattr(data.topology, "reference_cells", True)
+        #: An image's or a rectilinear grid's layout (``_Structured``), whose cells
+        #: are found by arithmetic (``by_id._GridSearch``), with no boxes or bins;
+        #: ``None`` elsewhere, or with ``levels`` given, which asks for the bins.
+        self.structured = _structured(data) if levels is None else None
+        self.levels = levels = 2 if levels is None else levels
         #: The cells and their positions, without the fields: what the bins and
         #: searches read, held by a locator a topology keeps.
         self.data = DataSet(data.topology, data.geometry, **data._frame())
@@ -640,8 +654,11 @@ class CellLocator:
         self._revision = arrays._revision(self._geometry)
         n = data.num_cells
         dtype = data.dtype
-        self.lo = tack.empty((n,), tack.vec(3, dtype))
-        self.hi = tack.empty((n,), tack.vec(3, dtype))
+        #: Each cell's box (``None`` for a structured locator until something asks
+        #: for them: ``_boxes``).
+        self.lo = self.hi = None
+        if self.structured is None:
+            self._boxes()
         #: ``None``, or ``(starts, weights)`` where it moved polyhedra's cell points:
         #: a polyhedron not star-shaped from the mean of its points (snappyHexMesh's
         #: concave cells at walls) is fanned from a point of its kernel instead, the
@@ -680,9 +697,11 @@ class CellLocator:
                     "(the mean of their points), or have no area: locating points in "
                     "them needs another inside test, not built yet")
             for_each(_polyhedral_boxes, data, "cells", self.lo, self.hi)
-        elif n:
+        elif n and self.structured is None:
             for_each(_cell_boxes, data, "cells", self.lo, self.hi)
-        if n:
+        if self.structured is not None:
+            low, high = self.structured.bounds
+        elif n:
             # On the device: reading the boxes back to take their bounds there
             # was 1.0 of the M6's 1.4 s build on an M1 Max's GPU (NumPy's
             # strided reductions, and the copy, over PCIe elsewhere).
@@ -725,6 +744,18 @@ class CellLocator:
         sides = max(int(live.sum()), 1)
         root = float(np.prod(widths[live])) ** (1.0 / sides) if live.any() else 1.0
         self._units = (*map(float, widths / root), float(sides))
+
+    def _boxes(self):
+        """Make the cells' boxes (``lo``, ``hi``) if a structured locator has not:
+        the bins and the search from the cells need them. Filled by the caller
+        for polyhedra."""
+        if self.lo is None:
+            n = self.data.num_cells
+            dtype = self.data.dtype
+            self.lo = tack.empty((n,), tack.vec(3, dtype))
+            self.hi = tack.empty((n,), tack.vec(3, dtype))
+            if n and self.structured is not None:
+                for_each(_cell_boxes, self.data, "cells", self.lo, self.hi)
 
     def _moved(self):
         """The arguments of the kernels that take a cell's point (``_cell_point``):
@@ -784,6 +815,7 @@ class CellLocator:
         sized by its count (``leaves``); with one, the uniform grid of about
         ``density`` bins a cell, each bin one leaf. Made on first use and kept."""
         if "_cell_bins" not in self.__dict__:
+            self._boxes()
             data = self.data
             n = data.num_cells
             grid = self._coarse_grid()
@@ -898,8 +930,8 @@ class CellLocator:
         # the same answer.
         first = not self.__dict__.get("_found_before")
         self._found_before = True
-        worth_bins = ("_cell_bins" in self.__dict__ or not first
-                      or 4 * m >= data.num_cells)
+        worth_bins = (self.structured is not None or "_cell_bins" in self.__dict__
+                      or not first or 4 * m >= data.num_cells)
         search = self._search() if worth_bins else None
         if search is not None:
             # From the points: one launch, each point searching its bin's cells.
@@ -935,6 +967,7 @@ class CellLocator:
             if tets is not None:
                 tets.fill(-1)
         if m and data.num_cells:
+            self._boxes()
             nbins = int(np.prod(self.dims))
             keys = tack.empty((m,), tack.i32)
             _point_bins(points, *self._grid(), float(self.slack), keys)
@@ -962,6 +995,85 @@ class CellLocator:
         if self.polyhedral:
             return Locations(ids.as_ids(found, data.id_dtype), pcs, tets), held
         return Locations(ids.as_ids(found, data.id_dtype), pcs), held
+
+
+class _Structured(NamedTuple):
+    """An image's or a rectilinear grid's layout, for ``by_id._GridSearch``: the
+    cells along each axis as ``by_id._GridCells`` numbers them; a rectilinear
+    grid's ``axes`` (``None`` for an image); how far from a point along each
+    axis a cell that holds it, or comes within its tolerance, can be (``reach``:
+    in index units for an image, the geometry's for a rectilinear grid); an
+    image's ``origin`` and the matrix taking a position less it to index
+    coordinates (``to_index``); and the cells' ``bounds``, as the boxes'."""
+
+    cells: tuple
+    axes: object
+    reach: tuple
+    origin: tuple
+    to_index: tuple
+    bounds: tuple
+
+
+def _structured(data):
+    """``data``'s ``_Structured`` layout if it is an image (``UniformCoordinates``) or
+    a rectilinear grid (``CartesianProduct``, its axes increasing) of solid or sheet
+    cells, along every axis it has more than one point; else ``None``."""
+    from tack.dataset.spaces import H1
+    from tack.dataset.topology import StructuredTopology
+
+    topology, geometry = data.topology, data.geometry
+    if not isinstance(topology, StructuredTopology) or not data.num_cells:
+        return None
+    point_dims = tuple(topology.point_dims)
+    if len(point_dims) not in (2, 3) or min(point_dims) < 2:
+        return None
+    if not isinstance(geometry.space, H1) or geometry.space.order != 1:
+        return None
+    values = geometry.values
+    dims = point_dims + (1,) * (3 - len(point_dims))
+    cells = (dims[0] - 1, max(dims[1] - 1, 1), max(dims[2] - 1, 1))
+    live = np.array([d > 1 for d in dims])
+    eps = float(np.finfo(data.dtype.numpy_dtype).eps)
+    real = data.dtype.numpy_dtype
+    if type(values) is arrays.UniformCoordinates and tuple(values.dims) == dims:
+        # Index axis a's step is column a of ``edges``; its inverse takes a
+        # position to index coordinates.
+        edges = values._matrix @ np.diag(values._spacing)
+        try:
+            to_index = np.linalg.inv(edges)
+        except np.linalg.LinAlgError:
+            return None
+        origin = np.asarray(values._origin, float)
+        ends = np.array([[0, 0, 0], [1, 1, 1]]) * (np.asarray(dims) - 1)
+        corners = np.array([[ends[a][0], ends[b][1], ends[c][2]] for a in (0, 1)
+                            for b in (0, 1) for c in (0, 1)], float)
+        world = (origin + corners @ edges.T).astype(real).astype(float)
+        low, high = world.min(axis=0), world.max(axis=0)
+        # A cell's tolerance (a share of its box's diagonal), and how far that,
+        # holding within HOLD_TOLERANCE, and rounding take a point in index units.
+        diagonal = float(np.linalg.norm(np.abs(edges[:, live]).sum(axis=1)))
+        tolerance = _TOLERANCE * diagonal * (1.0 + 1e-6)
+        rows = np.linalg.norm(to_index, axis=1)
+        rounding = 64.0 * eps * (rows * (np.linalg.norm(origin) + np.linalg.norm(high - low))
+                                 + np.asarray(dims))
+        reach = float(HOLD_TOLERANCE) + rows * tolerance + rounding
+        return _Structured(cells, None, tuple(map(float, reach)), tuple(map(float, origin)),
+                           tuple(tuple(map(float, row)) for row in to_index), (low, high))
+    if type(values) is arrays.CartesianProduct and tuple(values.dims) == dims:
+        axes = [arrays.to_host(a).astype(float).reshape(-1)
+                for a in (values.xs, values.ys, values.zs)]
+        if any(len(a) > 1 and not np.all(np.diff(a) > 0) for a in axes):
+            return None
+        steps = np.array([np.diff(a).max() if len(a) > 1 else 0.0 for a in axes])
+        tolerance = _TOLERANCE * float(np.linalg.norm(steps)) * (1.0 + 1e-6)
+        rounding = np.array([64.0 * eps * float(np.abs(a).max()) for a in axes])
+        reach = tolerance + float(HOLD_TOLERANCE) * steps + rounding
+        low = np.array([a.min() for a in axes])
+        high = np.array([a.max() for a in axes])
+        return _Structured(cells, (values.xs, values.ys, values.zs), tuple(map(float, reach)),
+                           (0.0, 0.0, 0.0), ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+                           (low, high))
+    return None
 
 
 @on_inputs_device

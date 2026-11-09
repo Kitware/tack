@@ -1,0 +1,33 @@
+# The tests that failed in CI lately, and which of them look flaky
+# (tools/ci_failures.py): weekly, and by hand with the days to read. The
+# report goes to the run's summary; nothing here writes to the repository.
+
+name: CI failures
+
+on:
+  schedule:
+    - cron: "0 7 * * 1"     # Mondays
+  workflow_dispatch:
+    inputs:
+      days:
+        description: Days of CI runs to read
+        default: "7"
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  report:
+    name: report
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Report the failing tests
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          DAYS: ${{ inputs.days || '7' }}
+        run: python3 tools/ci_failures.py --days "$DAYS" >> "$GITHUB_STEP_SUMMARY"

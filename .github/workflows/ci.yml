@@ -49,14 +49,27 @@ jobs:
   # The groups a pull request's files need, as outputs the jobs below test:
   # `code` (every test job, packaging and Metal), `docs`, `examples`. A path
   # no rule of tools/ci_changes.py names is code. Lint needs no group.
+  #
+  # Then which test files a pull request's changes reach, from main's latest
+  # test map (tools/testmap.py select; the test-map job below makes it):
+  # `selected` is `all`, `some` or `none`, and `selection` the files, one a
+  # line, or `all`. The suite's jobs pass it to conftest's --select, so their
+  # shares divide the selection, and skip when it is `none`. Pushes to main,
+  # runs by hand, and a pull request without a map from main run everything.
   changes:
     name: what changed
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # Reading main's runs and their test-map artifact.
+    permissions:
+      actions: read
+      contents: read
     outputs:
       code: ${{ steps.classify.outputs.code }}
       docs: ${{ steps.classify.outputs.docs }}
       examples: ${{ steps.classify.outputs.examples }}
+      selected: ${{ steps.select.outputs.selected }}
+      selection: ${{ steps.select.outputs.selection }}
 
     steps:
       - uses: actions/checkout@v7
@@ -75,6 +88,51 @@ jobs:
             printf 'code=true\ndocs=true\nexamples=true\n' >> "$GITHUB_OUTPUT"
           fi
           cat "$GITHUB_OUTPUT"
+
+      - name: Select the test files the changes reach
+        id: select
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CODE: ${{ steps.classify.outputs.code }}
+        run: |
+          selection=all
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && [ "$CODE" = true ]; then
+            # main's latest push run that kept a map (a run can fail
+            # elsewhere and still have made one).
+            found=
+            for run in $(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --branch main \
+                           --event push --limit 10 --json databaseId --jq '.[].databaseId'); do
+              if gh run download "$run" --repo "$GITHUB_REPOSITORY" --name test-map --dir map 2>/dev/null; then
+                found=$run
+                break
+              fi
+            done
+            if [ -n "$found" ]; then
+              echo "test map from main's run $found"
+              selection=$(git diff --name-status HEAD^1 HEAD | python3 tools/testmap.py select map/test-map.json)
+            else
+              echo "::notice title=Test selection::no test map from main; every test runs"
+            fi
+          fi
+          if [ "$selection" = all ]; then selected=all
+          elif [ -z "$selection" ]; then selected=none
+          else selected=some; fi
+          {
+            echo "selected=$selected"
+            echo "selection<<EOF_SELECTION"
+            echo "${selection:-}"
+            echo "EOF_SELECTION"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### Test selection: $selected"
+            if [ "$selected" = some ]; then
+              echo
+              echo "$(printf '%s\n' "$selection" | wc -l) test files:"
+              echo
+              printf -- '- `%s`\n' $selection
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # ── Lint ───────────────────────────────────────────────────────────
   # Cheapest job here and the one most likely to catch something before a
@@ -213,7 +271,7 @@ jobs:
   tests:
     name: tests (py${{ matrix.python-version }}, ${{ matrix.shard }}/4)
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.selected != 'none'
     runs-on: ubuntu-latest
     # The suite in four shares (conftest's --shard, by test-durations.json), each
     # serial: whole, it took 25-35+ min by 2026-10-29 (35 cancelled #212's py3.11
@@ -285,12 +343,15 @@ jobs:
       # 3.13's shares also record which repository files each test file
       # runs (tools/testmap_recorder, a pytest plugin, and a sitecustomize
       # for subprocesses); the test-map job below merges the shares'
-      # records. 3.13 because it has VTK and MFEM, so the most tests run.
+      # records. 3.13 because it has VTK and MFEM, so the most tests run; and
+      # only a run of every test, since a selection's record is partial.
       - name: Run the suite
         env:
           SHARD: ${{ matrix.shard }}/4
-          RECORD: ${{ matrix.python-version == '3.13' }}
+          RECORD: ${{ matrix.python-version == '3.13' && needs.changes.outputs.selected == 'all' }}
+          SELECTION: ${{ needs.changes.outputs.selection }}
         run: |
+          printf '%s\n' "$SELECTION" > "$RUNNER_TEMP/selection.txt"
           if [ "$RECORD" = true ]; then
             # A directory per share: records are named by process id, which
             # fresh runners repeat, and the shares' records are merged.
@@ -298,10 +359,11 @@ jobs:
             export PYTHONPATH="$GITHUB_WORKSPACE/tools/testmap_recorder"
             set -- -p testmap_plugin
           fi
-          uv run pytest -q -m "not slow and not timing" --shard "$SHARD" "$@"
+          uv run pytest -q -m "not slow and not timing" --shard "$SHARD" \
+            --select "$RUNNER_TEMP/selection.txt" "$@"
 
       - name: Keep the share's record of what each test file runs
-        if: matrix.python-version == '3.13'
+        if: matrix.python-version == '3.13' && needs.changes.outputs.selected == 'all'
         uses: actions/upload-artifact@v4
         with:
           name: testmap-${{ matrix.shard }}
@@ -312,12 +374,13 @@ jobs:
   # ── The test map ───────────────────────────────────────────────────
   # Which repository files each test file runs, merged from 3.13's shares
   # into one map (tools/testmap.py), kept as this run's `test-map` artifact.
-  # main's latest is the map a pull request's test selection will read (the
-  # wiki's CI test management plan, step 5); a pull request's own is
-  # recorded too, so a change that breaks the recorder fails here.
+  # main's latest is the map a pull request's test selection reads (the
+  # wiki's CI test management plan, step 5). A pull request that runs every
+  # test records one too, so a change that breaks the recorder fails here.
   test-map:
     name: test map
-    needs: tests
+    needs: [changes, tests]
+    if: needs.changes.outputs.selected == 'all'
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -394,7 +457,7 @@ jobs:
   ids-i64:
     name: dataset tests with 64-bit ids (${{ matrix.shard }}/4)
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.selected != 'none'
     runs-on: ubuntu-latest
     # In four shares (conftest's --shard): whole, 17.5-45 min by 2026-10-29 (30
     # cancelled #212's run); in three shares, 17-25+ min a share by 2026-11-02
@@ -424,7 +487,12 @@ jobs:
           echo "TACK_REQUIRE_MFEM=1" >> "$GITHUB_ENV"
 
       - name: Run the dataset tests with i64 ids
-        run: uv run pytest -q --ids=i64 --shard ${{ matrix.shard }}/4 packages/tack-vis/tests
+        env:
+          SELECTION: ${{ needs.changes.outputs.selection }}
+        run: |
+          printf '%s\n' "$SELECTION" > "$RUNNER_TEMP/selection.txt"
+          uv run pytest -q --ids=i64 --shard ${{ matrix.shard }}/4 \
+            --select "$RUNNER_TEMP/selection.txt" packages/tack-vis/tests
 
   # ── The dataset tests with L2 cell-fastest ─────────────────────────
   #
@@ -436,7 +504,7 @@ jobs:
   l2-cells:
     name: dataset tests with L2 cell-fastest (${{ matrix.shard }}/2)
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.selected != 'none'
     runs-on: ubuntu-latest
     # In two shares (conftest's --shard): whole, on four workers, it ran 13 min by
     # 2026-10-29, and #213's run (more compiled kernels a worker) lost its runner
@@ -466,9 +534,12 @@ jobs:
           echo "TACK_REQUIRE_MFEM=1" >> "$GITHUB_ENV"
 
       - name: Run the dataset tests with every tensor L2 field cell-fastest
-        run: >-
-          TACK_L2_LAYOUT=cells uv run pytest -q -n 4 --shard ${{ matrix.shard }}/2
-          packages/tack-vis/tests
+        env:
+          SELECTION: ${{ needs.changes.outputs.selection }}
+        run: |
+          printf '%s\n' "$SELECTION" > "$RUNNER_TEMP/selection.txt"
+          TACK_L2_LAYOUT=cells uv run pytest -q -n 4 --shard ${{ matrix.shard }}/2 \
+            --select "$RUNNER_TEMP/selection.txt" packages/tack-vis/tests
 
   # ── Warp ───────────────────────────────────────────────────────────
   # The prototype Warp backend (tack.device("warp")) and tack.interop.warp,
@@ -773,7 +844,7 @@ jobs:
   metal:
     name: metal (${{ matrix.shard }}/4)
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.selected != 'none'
     runs-on: macos-latest
     # The suite in four shares (conftest's --shard), one process each: whole, it
     # took 42 min of a 45 min limit when macOS runners were short (2026-10-29),
@@ -822,7 +893,9 @@ jobs:
       - name: Run the suite with Metal required
         env:
           SHARD: ${{ matrix.shard }}/4
+          SELECTION: ${{ needs.changes.outputs.selection }}
         run: |
+          printf '%s\n' "$SELECTION" > "$RUNNER_TEMP/selection.txt"
           uv run python - <<'EOF'
           import os
           import pytest
@@ -833,7 +906,8 @@ jobs:
           assert get_backend().name == "metal"
           print("Required hardware backend: metal", flush=True)
           raise SystemExit(pytest.main(["-q", "-rs", "-m", "not slow and not timing",
-                                        "--shard", os.environ["SHARD"]]))
+                                        "--shard", os.environ["SHARD"], "--select",
+                                        os.path.join(os.environ["RUNNER_TEMP"], "selection.txt")]))
           EOF
 
   # ── The required check ─────────────────────────────────────────────

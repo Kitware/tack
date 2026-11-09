@@ -162,9 +162,12 @@ that then passes is reported as a flake.
 On a pull request CI runs the jobs its files need (`tools/ci_changes.py`): a
 change to the docs alone runs lint and the docs build, one to an example lint
 and the examples; a change to the packages, the build or the workflows runs
-everything. The jobs left out report "skipping". Pushes to `main` run
-everything. The check a pull request needs is `CI`, which passes when every
-other job passed or was skipped.
+everything. The jobs left out report "skipping". Of the test suite, a pull
+request runs the test files its changes reach, by a map of which files each
+test file ran on `main` (`tools/testmap.py`); a change to the build, to CI or
+to a file no test ran runs them all. Pushes to `main` run everything. The
+check a pull request needs is `CI`, which passes when every other job passed
+or was skipped.
 
 ## The thing to know about the tests
 

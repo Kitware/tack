@@ -155,7 +155,18 @@ add a test module for a new area, mark it quick if it runs in under ten seconds.
 `-n` comes from pytest-xdist, in the `dev` extra; each worker is a process with
 its own backends, so GPU memory grows with the worker count. The `timing` tests
 skip themselves on a busy host, so a parallel run skips them; run `-m timing`
-alone when they matter. CI runs the suite serially (`uv run pytest`).
+alone when they matter. CI runs the suite serially (`uv run pytest`), the
+`timing` tests in a job of their own, where a failure is run once more and one
+that then passes is reported as a flake.
+
+On a pull request CI runs the jobs its files need (`tools/ci_changes.py`): a
+change to the docs alone runs lint and the docs build, one to an example lint
+and the examples; a change to the packages, the build or the workflows runs
+everything. The jobs left out report "skipping". The suite runs in full on
+Python 3.13, with VTK and MFEM; 3.11 and 3.12 run the quick tier (`-m quick`).
+Pushes to `main` run everything, every version in full. The check a pull
+request needs is `CI`, which passes when every other job passed or was
+skipped.
 
 ## The thing to know about the tests
 

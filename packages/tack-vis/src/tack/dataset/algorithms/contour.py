@@ -460,6 +460,15 @@ def contour(data, field, value, merge_points=True, fields=None, dimension=None,
     vertices): the surface stops at the cells that hold numbers, and no point
     is placed on an edge to a missing value.
 
+    A structured grid of solid cells -- an image, a rectilinear grid or a
+    curvilinear one -- with a point field and positions on the points is
+    contoured by flying edges, as VTK's ``vtkFlyingEdges3D`` and Viskores' flying
+    edges: crossings counted along the grid's rows, numbered by a scan and
+    written once, with no per-corner arrays and no sort. Its triangles, points
+    and carried values are the ones the general path makes, up to their order
+    (``algorithms._flying_edges``). On an 11M-cell image at ten values it peaked
+    at 0.32 GB above the input against the general path's 2.24 (CPU, M1 Max).
+
     With ``merge_points``, triangles share their points: by global edge when
     the field and the geometry are both continuous (an ``H1`` field, or one of a
     space that declares itself ``continuous``), so the surface is watertight; otherwise only within each cell, so a DG field's surface
@@ -521,6 +530,10 @@ def contour(data, field, value, merge_points=True, fields=None, dimension=None,
     if not space.interpolated or space.on not in ("cells", "points"):
         raise TypeError(f"contour needs a field with a basis on the cells, not {space!r}")
     per_cell = 0 if space.continuous and isinstance(data.geometry.space, H1) else 1
+    from tack.dataset.algorithms import _flying_edges
+
+    if merge_points and _flying_edges.serves(data, field):
+        return _structured_contour(data, field, levels, nlevels, several, fields)
     groups = [g for g in data.launch_groups("cells", [field])
               if g.count and g.shape.CONTOUR_TRIANGLES]
     n_cells = data.num_cells
@@ -591,6 +604,21 @@ def contour(data, field, value, merge_points=True, fields=None, dimension=None,
                               cells=Pieces(triangle_cells), geometry=Field(H1(surface), points),
                               fields=fields), levels, triangle_levels, several,
                         field.unit)
+
+
+def _structured_contour(data, field, levels, nlevels, several, fields):
+    """``contour`` of a structured grid by flying edges (``_flying_edges``): the
+    general path's triangles and points, numbered along the grid's rows, with no
+    sort."""
+    from tack.dataset.algorithms import _flying_edges
+
+    points, edges, weights, rows, sources, which, count, triangles, odt = (
+        _flying_edges.surface(data, field, levels, nlevels))
+    types, tri_offsets = uniform_cells(shapes.TRIANGLE, triangles, odt)
+    surface = UnstructuredTopology(types, tri_offsets, rows, num_points=count)
+    return _with_levels(carry(data, surface, points=Interpolate(edges, weights),
+                              cells=Pieces(sources), geometry=Field(H1(surface), points),
+                              fields=fields), levels, which, several, field.unit)
 
 
 @tack.func

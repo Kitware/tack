@@ -257,6 +257,12 @@ def _checks_ids():
     return debug_enabled()
 
 
+def lines_only(topology):
+    """Whether ``topology`` is unstructured or structured with lines its
+    highest-dimensional cells, whose ``faces()`` (points) are not derived."""
+    return isinstance(topology, _Topology) and topology.dimension == 1
+
+
 class _Topology:
     """What both kinds share: the derived faces and edges, made once and kept.
 
@@ -356,7 +362,7 @@ class _Topology:
         dimension -- polygons of a 3D mesh, edges of a 2D one. Derived on first
         use and kept."""
         if self._faces is None:
-            if self.dimension == 1:
+            if lines_only(self):
                 # Lines declare no faces (a line's would be its end points),
                 # and deriving none made a line mesh's boundary empty.
                 raise NotImplementedError(

@@ -222,7 +222,10 @@ def _time_unit(data, velocity):
     from tack.dataset.partitioned import PartitionedDataSet
 
     if isinstance(data, PartitionedDataSet):
-        every = data.world._allgather([piece.fields[velocity].unit for piece in data])
+        # A piece without the field is refused where the pieces are checked, on
+        # every rank: raising here, on one, would leave the others in the gather.
+        every = data.world._allgather([piece.fields[velocity].unit for piece in data
+                                       if velocity in piece.fields])
         speed = units.common("the pieces' velocity", [u for part in every for u in part])
         return units.derived(_spatial_unit(data), (speed, -1))
     return units.derived(data.unit, (_field(data, velocity).unit, -1))

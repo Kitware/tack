@@ -15,7 +15,7 @@ from tack.dataset.dataset import DataSet
 from tack.dataset.ghosts import Ghosts
 from tack.dataset.global_ids import GlobalIds
 from tack.dataset.partitioned import PartitionedDataSet, common_origin
-from tack.dataset.topology import StructuredTopology
+from tack.dataset.topology import StructuredTopology, lines_only
 
 __all__ = ["generate_global_ids"]
 
@@ -149,9 +149,19 @@ def _point_owners(blocks, pieces, marks, tolerance=0.0, every=False):
     ids from their owners, and which of its points another piece also holds.
     Only boundary points are matched, unless pieces have copies marked (points,
     or cells, whose points are copies too) or ``every`` point is to be."""
-    duplicates = every or blocks.all_reduce(
-        {g: int((marks[g][1] & Ghosts.DUPLICATEPOINT).any()
-                or (marks[g][0] & Ghosts.DUPLICATECELL).any()) for g in blocks.local}, "max")
+    duplicates = every
+    if not every:
+        # Whether pieces have copies marked, and whether one is a mesh of lines,
+        # whose faces are not derived: every rank refuses it if they are needed.
+        duplicates, lines = blocks.all_reduce(
+            {g: np.array([int((marks[g][1] & Ghosts.DUPLICATEPOINT).any()
+                              or (marks[g][0] & Ghosts.DUPLICATECELL).any()),
+                          int(lines_only(piece.topology))])
+             for g, piece in zip(blocks.local, pieces)}, "max")
+        if lines and not duplicates:
+            raise NotImplementedError("generate_global_ids of pieces without ghosts matches "
+                                      "their boundaries' points, and the faces of a mesh "
+                                      "of lines are not derived")
     entries = {}
     for g, piece in zip(blocks.local, pieces):
         if duplicates:
@@ -266,8 +276,11 @@ def _numbered(blocks, pieces, owned, plan, what):
         ids[g] = tack.array(host, tack.i64, device=blocks.device(g))
     if plan is not None:
         plan.run(ids)
-    for g in blocks.local:
-        if n_missing := int((ids[g].numpy() < 0).sum()):
-            raise ValueError(f"piece {g - blocks.local.start}: {n_missing} {what} have no "
-                             f"owner to number them")
+    # Every rank's say, so that every rank raises, not only the one missing them.
+    missing = blocks.all_gather({g: int((ids[g].numpy() < 0).sum()) for g in blocks.local})
+    for g, n_missing in enumerate(missing):
+        if n_missing:
+            rank = blocks.rank_of(g)
+            raise ValueError(f"piece {g - blocks._starts[rank]} of rank {rank}: {n_missing} "
+                             f"{what} have no owner to number them")
     return ids

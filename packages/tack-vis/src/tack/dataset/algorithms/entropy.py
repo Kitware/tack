@@ -82,10 +82,11 @@ def entropy(data, field, bins=10, weights=None, level=None):
     if isinstance(data, PartitionedDataSet):
         from tack.dataset.algorithms.statistics import _per_piece
 
-        given = _per_piece(data, field, weights, "entropy")
-        extrema = [e for e in _over_pieces(data, lambda piece: _extrema(piece,
-                                                                        given[id(piece)][0]))
-                   if e is not None]
+        given = {}
+        extrema = [e for e in _over_pieces(
+            data, lambda piece: _extrema(piece, given[id(piece)][0]),
+            first=lambda: given.update(_per_piece(data, field, weights, "entropy")))
+            if e is not None]
         if not extrema:
             raise ValueError("entropy of no values")
         value_range = (float(np.min([e[0] for e in extrema])),

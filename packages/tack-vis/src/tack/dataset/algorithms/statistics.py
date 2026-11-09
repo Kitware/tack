@@ -12,7 +12,7 @@ import tack
 from tack.arrays import size_of, width_of
 from tack.dataset.algorithms._common import _converted, _field, _floating_dtype, _stored_field
 from tack.dataset.ghosts import owned_values
-from tack.dataset.partitioned import PartitionedDataSet, fields_of
+from tack.dataset.partitioned import PartitionedDataSet, agree, fields_of
 from tack.runtime.dispatch import on_inputs_device
 
 __all__ = ['Statistics', 'statistics']
@@ -219,14 +219,19 @@ def _merged(a, b):
             float(np.max([maxa, maxb])), total, total / n, m2, m3, m4)
 
 
-def _over_pieces(data, each):
+def _over_pieces(data, each, first=None):
     """``each(piece)`` for every piece of a partitioned dataset over every rank of its
-    world, in the pieces' global order."""
-    from tack import communication as tc
+    world, in the pieces' global order (ranks in order, each rank's pieces in
+    order), after ``first()`` if given; if either raises on any rank, every rank
+    raises (``agree``)."""
+    from tack.dataset.partitioned import agree
 
-    pieces = list(data)
-    blocks = tc.Blocks([piece.device for piece in pieces], data.world)
-    return blocks.all_gather({g: each(piece) for g, piece in zip(blocks.local, pieces)})
+    def mine():
+        if first is not None:
+            first()
+        return [each(piece) for piece in data]
+
+    return [part for parts in agree(data.world, mine) for part in parts]
 
 
 def _summary(n, weight, weight2, low, high, total, mean, m2, m3, m4):
@@ -288,10 +293,15 @@ def statistics(data, field, weights=None, level=None):
     if isinstance(data, PartitionedDataSet):
         from tack.dataset import units
 
-        given = _per_piece(data, field, weights, "statistics")
-        # Every rank's pieces' units, so a rank holding none agrees with the rest.
-        every = [pair for part in data.world._allgather(
-            [_units(piece, *given[id(piece)]) for piece in data]) for pair in part]
+        given = {}
+
+        def units_of():
+            given.update(_per_piece(data, field, weights, "statistics"))
+            return [_units(piece, *given[id(piece)]) for piece in data]
+
+        # Every rank's pieces' units, so a rank holding none agrees with the rest,
+        # and a piece without the field is refused on every rank.
+        every = [pair for part in agree(data.world, units_of) for pair in part]
         unit = units.common("statistics' pieces' field", [u for u, _ in every])
         weight_unit = units.common("statistics' pieces' weights", [w for _, w in every])
         moments = None

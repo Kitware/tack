@@ -281,16 +281,28 @@ def _probe_pieces(data, where, fields, levels=None):
     for piece in data:                       # each piece's work on its own device
         with piece.device:
             pieces.append(visible(piece))
-    origin = common_origin(data, "probe of a PartitionedDataSet")
-    # What each piece gives back (its fields' names, element types and units, from
-    # a probe of no points) and the pieces' geometry, from a rank that has pieces:
-    # every rank needs them, one without pieces too, which probes through the
-    # others' and receives their answers.
+    many = isinstance(where, PartitionedDataSet)
+    empties = []
+
+    def check():
+        # What each piece gives back, from a probe of no points, refuses a piece
+        # without the fields; a rank's targets are refused here too, so that
+        # every rank raises, not only this one.
+        for piece in pieces:
+            with piece.device:
+                empties.append(probe(piece, np.zeros((0, 3)), fields))
+        for target in (where if many else [where]):
+            if isinstance(target, DataSet) and not isinstance(target.geometry.space, H1):
+                raise TypeError("probe needs the probed points: an H1 geometry")
+
+    origin = common_origin(data, "probe of a PartitionedDataSet", check=check)
+    # What each piece gives back (its fields' names, element types and units) and
+    # the pieces' geometry, from a rank that has pieces: every rank needs them,
+    # one without pieces too, which probes through the others' and receives
+    # their answers.
     mine = None
     if pieces:
-        with pieces[0].device:
-            empty = probe(pieces[0], np.zeros((0, 3)), fields)
-        mine = [(n, f.values.dtype, f.unit) for n, f in empty.fields.items()]
+        mine = [(n, f.values.dtype, f.unit) for n, f in empties[0].fields.items()]
     given = next((m for m in data.world._allgather(mine) if m is not None), None)
     # A rank with no pieces takes part through a piece of nothing: its block holds
     # no point, and sends its targets to the pieces that do.
@@ -305,13 +317,10 @@ def _probe_pieces(data, where, fields, levels=None):
     # to the pieces' one origin.
     spatial = units.common("probe of a PartitionedDataSet's pieces' geometry",
                            [piece.unit for piece in pieces])
-    many = isinstance(where, PartitionedDataSet)
     targets = list(where) if many else [where]
     for i, target in enumerate(targets):
         if not isinstance(target, DataSet):
             targets[i] = _vertices(relative_positions(target, origin, spatial), pieces[0])
-        elif not isinstance(target.geometry.space, H1):
-            raise TypeError("probe needs the probed points: an H1 geometry")
     points = [relative_positions(t, origin, spatial) for t in targets]
     counts = [len(p) for p in points]
     first = blocks.local.start

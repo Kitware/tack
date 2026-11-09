@@ -220,13 +220,15 @@ def _time_unit(data, velocity, fields=None):
     partitioned dataset, every rank's pieces' (``fields``, each piece's velocity, when
     the caller has resolved them already)."""
     from tack.dataset import units
+    from tack.dataset.dataset import is_field_key
     from tack.dataset.partitioned import PartitionedDataSet
 
     if isinstance(data, PartitionedDataSet):
+        # A piece without the field is refused where the pieces are checked, on
+        # every rank: raising here, on one, would leave the others in the gather.
         if fields is None:
-            from tack.dataset.partitioned import fields_of
-
-            fields = fields_of(data, velocity, "advection")
+            fields = ([piece.fields[velocity] for piece in data if velocity in piece.fields]
+                      if is_field_key(velocity) else [_field(piece, velocity) for piece in data])
         every = data.world._allgather([f.unit for f in fields])
         speed = units.common("the pieces' velocity", [u for part in every for u in part])
         return units.derived(_spatial_unit(data), (speed, -1))

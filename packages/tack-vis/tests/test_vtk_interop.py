@@ -40,7 +40,16 @@ needs_vtk = pytest.mark.skipif(
 
 @pytest.fixture(autouse=True)
 def cpu():
+    """The CPU the default for each test, and the default it found put back after:
+    the device tests set a GPU (``_init_device``), which, left, made the next test
+    on their xdist worker -- of another module, CPU datasets -- allocate there
+    ("arrays on two devices" in test_mixed_cells, by the schedule)."""
+    from tack.runtime import dispatch
+
+    was = dispatch._current_backend
     tack.set_default_device("cpu")
+    yield
+    dispatch._current_backend = was
 
 
 # ── A stand-in for VTK's module ──────────────────────────────────────
@@ -368,9 +377,9 @@ def _init_device(arch):
 
 
 def _device_arches():
-    """Backends on this machine whose memory VTK can describe, and holds: a VTK whose
-    Viskores runs on the CPU alone (the nightly wheels') has DLPack but no device."""
-    from tack.runtime.dispatch import get_backend
+    """Backends on this machine whose memory VTK can describe, and, in a VTK with
+    DLPack, keeps in its device arrays (VTK master's wheels refuse every GPU's)."""
+    from tack.runtime.dispatch import as_device, get_backend
 
     found = []
     for arch, space in _VTK_SPACE_FOR.items():
@@ -378,8 +387,8 @@ def _device_arches():
             _init_device(arch)
         except (ImportError, RuntimeError, OSError, AttributeError):
             continue  # not built, no device, no driver, or no shared context
-        if get_backend().device_memory_spaces and interop._vtk_holds(
-                tack.get_default_device()):
+        if get_backend().device_memory_spaces and (
+                not HAVE_VTK_DLPACK or interop._vtk_holds(as_device(get_backend()))):
             found.append(pytest.param(arch, space, id=arch))
     tack.set_default_device("cpu")
     return found

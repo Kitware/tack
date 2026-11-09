@@ -428,13 +428,21 @@ def _catalog_pieces(data, region, mass, velocity, center, softening, G, periodic
     if not by_name and not isinstance(mass, (int, float, np.integer, np.floating)):
         raise TypeError("halo_catalog of a PartitionedDataSet takes mass by name or as a "
                         "number")
-    common_origin(data, "halo_catalog of a PartitionedDataSet")
     pieces = list(data)
+    named = [n for n in (region, mass if by_name else None, velocity) if n is not None]
+
+    def check():                             # on every rank, in the origin's gather
+        for i, piece in enumerate(pieces):
+            if not isinstance(piece.geometry.space, H1):
+                raise TypeError("halo_catalog needs the particles' positions: an H1 geometry")
+            for name in named:
+                if name not in piece.fields:
+                    raise KeyError(f"partition {i} has no field {name!r}")
+
+    common_origin(data, "halo_catalog of a PartitionedDataSet", check=check)
     blocks = tc.Blocks([piece.device for piece in pieces], data.world)
     keys, values = {}, {}
     for g, piece in zip(blocks.local, pieces):
-        if not isinstance(piece.geometry.space, H1):
-            raise TypeError("halo_catalog needs the particles' positions: an H1 geometry")
         n = piece.num_points
         labels = np.asarray(arrays.to_host(_point_values(piece.fields[region].values, n)),
                             np.int64).reshape(-1)

@@ -294,8 +294,65 @@ jobs:
       # The timing tests run in a job of their own (below): in a share they
       # share the runner with nothing of ours, but with whatever the host's
       # other tenants do, and a flake there failed docs-only pull requests.
+      # 3.13's shares also record which repository files each test file
+      # runs (tools/testmap_recorder, a pytest plugin, and a sitecustomize
+      # for subprocesses); the test-map job below merges the shares'
+      # records. 3.13 because it has VTK and MFEM, so the most tests run.
       - name: Run the suite
-        run: uv run pytest -q -m "not slow and not timing" --shard ${{ matrix.shard }}/4
+        env:
+          SHARD: ${{ matrix.shard }}/4
+          RECORD: ${{ matrix.python-version == '3.13' }}
+        run: |
+          if [ "$RECORD" = true ]; then
+            # A directory per share: records are named by process id, which
+            # fresh runners repeat, and the shares' records are merged.
+            export TESTMAP_ROOT="$GITHUB_WORKSPACE" TESTMAP_OUT="$RUNNER_TEMP/testmap/share-${{ matrix.shard }}"
+            export PYTHONPATH="$GITHUB_WORKSPACE/tools/testmap_recorder"
+            set -- -p testmap_plugin
+          fi
+          uv run pytest -q -m "not slow and not timing" --shard "$SHARD" "$@"
+
+      - name: Keep the share's record of what each test file runs
+        if: matrix.python-version == '3.13'
+        uses: actions/upload-artifact@v4
+        with:
+          name: testmap-${{ matrix.shard }}
+          path: ${{ runner.temp }}/testmap
+          retention-days: 3
+          if-no-files-found: error
+
+  # ── The test map ───────────────────────────────────────────────────
+  # Which repository files each test file runs, merged from 3.13's shares
+  # into one map (tools/testmap.py), kept as this run's `test-map` artifact.
+  # main's latest is the map a pull request's test selection will read (the
+  # wiki's CI test management plan, step 5); a pull request's own is
+  # recorded too, so a change that breaks the recorder fails here.
+  test-map:
+    name: test map
+    needs: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Fetch the shares' records
+        uses: actions/download-artifact@v4
+        with:
+          pattern: testmap-*
+          path: records
+          merge-multiple: true
+
+      - name: Merge them into the map
+        run: >-
+          python3 tools/testmap.py merge records -o test-map.json
+          --commit "$GITHUB_SHA" --least 150
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-map
+          path: test-map.json
+          retention-days: 90
 
   # ── Timing ─────────────────────────────────────────────────────────
   # Tests that assert what the CPU scheduler or the OS did (the `timing`
@@ -835,7 +892,7 @@ jobs:
   # timeout). It runs unless the whole run was cancelled (a newer push).
   ci:
     name: CI
-    needs: [changes, lint, docs, tests, tests-quick, timing, ids-i64, l2-cells, warp, vtk-master,
+    needs: [changes, lint, docs, tests, tests-quick, test-map, timing, ids-i64, l2-cells, warp, vtk-master,
             mpi, packaging, wheels, examples, metal]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest

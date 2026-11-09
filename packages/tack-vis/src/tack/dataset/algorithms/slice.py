@@ -30,8 +30,11 @@ def slice(data, function, merge_points=True, fields=None, value=0.0, subdivision
     A ``Plane`` through an image or a rectilinear grid of solid cells is cut by
     flying edges over the stretch of each row near the plane, its distance
     computed where it is read, as VTK's ``vtkFlyingEdgesPlaneCutter``: only the
-    cells near the plane are visited, and nothing is stored for the others. The
-    triangles, points and values are the general path's, up to their order."""
+    cells near the plane are visited, and nothing is stored for the others. A
+    curvilinear grid's rows are all visited, its points lying anywhere, the
+    distance still computed where read. Hidden and refined cells are left out in
+    place. The triangles, points and values are the general path's, up to their
+    order."""
     from tack.dataset.algorithms import _flying_edges
 
     if (merge_points and subdivision is None and tolerance is None

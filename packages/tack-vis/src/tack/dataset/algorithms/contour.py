@@ -468,6 +468,9 @@ def contour(data, field, value, merge_points=True, fields=None, dimension=None,
     and carried values are the ones the general path makes, up to their order
     (``algorithms._flying_edges``). On an 11M-cell image at ten values it peaked
     at 0.32 GB above the input against the general path's 2.24 (CPU, M1 Max).
+    Hidden and refined cells (an AMR box's) are left out in place, where
+    elsewhere the rest are extracted, a structured grid's into unstructured
+    cells, first.
 
     With ``merge_points``, triangles share their points: by global edge when
     the field and the geometry are both continuous (an ``H1`` field, or one of a
@@ -478,9 +481,15 @@ def contour(data, field, value, merge_points=True, fields=None, dimension=None,
     each came from.
     """
     value = _in_unit_of(_field(data, field), value, "contour's value")
+    from tack.dataset.algorithms import _flying_edges
     from tack.dataset.ghosts import visible
 
-    data, field = visible(data, field)
+    # Flying edges leaves hidden and refined cells out in place; elsewhere the
+    # rest are extracted, a structured grid's into unstructured cells.
+    if not (merge_points and dimension in (None, 3) and subdivision is None
+            and tolerance is None
+            and _flying_edges.serves(data, _with_basis(data, _field(data, field)))):
+        data, field = visible(data, field)
     field = _field(data, field)
     space = field.space
     from tack.dataset.algorithms.subdivide import subdivided_contour, subdivides

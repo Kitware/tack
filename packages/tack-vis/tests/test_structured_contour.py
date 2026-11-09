@@ -239,16 +239,74 @@ def test_parallel_planes_in_one_pass_and_a_plane_missing_the_grid(backend, monke
 def test_what_the_cutter_does_not_take_goes_the_general_way(backend):
     plane = td.Plane((1.0, 1.0, 1.0), (0.3, 0.2, 1.0))
     image = td.uniform_grid((5, 4, 3))
-    assert _flying_edges.cuts(image, plane)
     curvilinear = td.DataSet(image.topology, tack.array(image.geometry.values.numpy(),
                                                        tack.vec(3, tack.f32)))
-    hidden = td.uniform_grid((5, 4, 3))
-    marks = np.zeros(hidden.num_cells, np.uint8)
-    marks[0] = td.Ghosts.HIDDENCELL
-    hidden.ghosts = td.Ghosts(cells=tack.array(marks, tack.u8))
-    for data, function in ((curvilinear, plane), (hidden, plane), (td.tetrahedralize(image), plane),
-                           (image, td.Sphere((1.0, 1.0, 1.0), 1.0)), (td.uniform_grid((5, 4)), plane)):
+    for data in (image, curvilinear, _hidden(td.uniform_grid((5, 4, 3)), [0])):
+        assert _flying_edges.cuts(data, plane)
+    for data, function in ((td.tetrahedralize(image), plane),
+                           (image, td.Sphere((1.0, 1.0, 1.0), 1.0)),
+                           (td.uniform_grid((5, 4)), plane)):
         assert not _flying_edges.cuts(data, function)
-    # A hidden cell is left out, as the general path leaves it out.
-    out = td.slice_plane(hidden, (1.0, 1.0, 1.0), (0.3, 0.2, 1.0))
-    assert out.num_cells > 0
+
+
+# ── Hidden and refined cells, left out in place ─────────────────────
+
+def _hidden(data, cells=None, seed=6):
+    """``data`` with some cells hidden, refined, or both (left out), and some
+    duplicates (kept, their marks carried)."""
+    n = data.num_cells
+    marks = np.zeros(n, np.uint8)
+    if cells is None:
+        rng = np.random.default_rng(seed)
+        marks[rng.random(n) < 0.15] = td.Ghosts.HIDDENCELL
+        marks[rng.random(n) < 0.15] |= td.Ghosts.REFINEDCELL
+        marks[rng.random(n) < 0.1] |= td.Ghosts.DUPLICATECELL
+    else:
+        marks[cells] = td.Ghosts.HIDDENCELL
+    data.ghosts = td.Ghosts(cells=tack.array(marks, tack.u8))
+    return data
+
+
+def _cell_marks(out):
+    """The output's cell marks in the general path's order of triangles."""
+    order = np.lexsort((np.zeros(out.num_cells), out.fields["cell"].values.numpy()))
+    return out.ghosts.cells.numpy()[order]
+
+
+@pytest.mark.parametrize("kind", ["image", "rectilinear", "curvilinear"])
+def test_hidden_and_refined_cells_are_left_out_in_place(backend, monkeypatch, kind):
+    # The general path extracts the visible cells (an unstructured mesh) and
+    # contours that; flying edges skips them in place, to the same output.
+    rng = np.random.default_rng(7)
+    for dtype in _dtypes():
+        grid = td.uniform_grid((14, 12, 10), spacing=(0.5, 0.4, 0.3), dtype=dtype)
+        if kind == "rectilinear":
+            grid = td.rectilinear_grid(*[np.cumsum(rng.uniform(0.1, 0.6, n))
+                                         for n in (14, 12, 10)], dtype=dtype)
+        elif kind == "curvilinear":
+            x = grid.geometry.values.numpy().astype(float)
+            grid = td.DataSet(grid.topology, tack.array(
+                (x + 0.05 * np.sin(3 * x[:, [1, 2, 0]])).astype(dtype.numpy_dtype),
+                tack.vec(3, dtype)))
+        x = grid.geometry.values.numpy().astype(float)
+        centre = x.mean(axis=0)
+        radius = float(np.linalg.norm(x - centre, axis=1).mean())
+        data = _hidden(_with(grid, np.linalg.norm(x - centre, axis=1), dtype))
+        fast = _check(monkeypatch, data, [0.6 * radius, radius])
+        slow = _general(monkeypatch, data, "s", [0.6 * radius, radius])
+        assert _same(_cell_marks(fast), _cell_marks(slow))
+        assert (_cell_marks(fast) & td.Ghosts.DUPLICATECELL).any()
+        cut = _check_cut(monkeypatch, data, centre, (0.3, 0.2, 1.0))
+        assert _same(_cell_marks(cut), _cell_marks(_general_slice(monkeypatch, data, centre,
+                                                                  (0.3, 0.2, 1.0))))
+
+
+def test_a_plane_cuts_a_curvilinear_grid_as_the_general_path_does(backend, monkeypatch):
+    for dtype in _dtypes():
+        image = td.uniform_grid((14, 12, 10), spacing=(0.5, 0.4, 0.3), dtype=dtype)
+        x = image.geometry.values.numpy().astype(float)
+        bent = td.DataSet(image.topology, tack.array(
+            (x + 0.05 * np.sin(3 * x[:, [1, 2, 0]])).astype(dtype.numpy_dtype),
+            tack.vec(3, dtype)))
+        assert _check_cut(monkeypatch, bent, x.mean(axis=0), (0.3, 0.2, 1.0),
+                          value=[-0.2, 0.3]).num_cells > 0

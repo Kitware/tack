@@ -28,7 +28,13 @@ its points' edges is crossed, and only the windows' flags are kept (at
 ``vtkFlyingEdgesPlaneCutter``) are found from the plane's equation, the
 stretch of each row within the largest change of distance along an edge of the
 plane, so a slice visits only the cells near it, its values computed where
-they are read rather than stored for every point.
+they are read rather than stored for every point; a curvilinear grid's planes
+take whole rows, the values still computed where read.
+
+Hidden and refined cells (``Ghosts.MASKED_CELLS``, an AMR box's) make no
+triangles, and crossings only they use are dropped afterwards, as for cells
+with a NaN corner: the general path's output, which extracts the other cells
+first, without the extraction.
 """
 
 import tack
@@ -208,6 +214,9 @@ def _is_hit(flags, windows, q, i, j, k, nlevels, ny):
 _LANDED = tack.constant(64, tack.i32)
 #: The first value's flag bit saying the point's value is NaN.
 _MISSING = tack.constant(128, tack.i32)
+#: Cells left out, as ``ghosts.visible`` leaves them out: hidden or refined
+#: (``Ghosts.MASKED_CELLS``).
+_MASKED = tack.constant(40, tack.i32)
 
 
 @tack.func
@@ -342,7 +351,7 @@ def _crossed(point_counts, nlevels, v, cj, ck, ny):
 
 @tack.kernel
 def _triangle_counts(cells, u, hexa, flags, windows, point_counts, levels, nlevels, nx, ny,
-                     nz, counts):
+                     nz, marks, hidden, counts):
     # Each (row of cells, value)'s triangles.
     cx = nx - 1
     cy = ny - 1
@@ -358,6 +367,8 @@ def _triangle_counts(cells, u, hexa, flags, windows, point_counts, levels, nleve
             hi = lo - 1
         for ci in range(lo, hi + 1):
             case = _cell_case(cells, u, [ci, cj, ck], level)
+            if hidden == 1 and (tack.i32(marks[ci + cx * (cj + cy * ck)]) & _MASKED) != 0:
+                case = 0                  # a hidden or refined cell has no surface
             for t in range(hexa.contour_count(case)):
                 if _kept(flags, windows, v, nlevels, hexa, case, t, ci, cj, ck, nx, ny):
                     total += 1
@@ -445,7 +456,7 @@ def _slot(f, axis, code, hit, start, far_start):
 
 @tack.kernel
 def _triangles(cells, u, hexa, flags, windows, levels, nlevels, nx, ny, nz, point_starts,
-               triangle_starts, triangles, rows, sources, which):
+               triangle_starts, triangles, marks, hidden, rows, sources, which):
     # Each (row of cells, value)'s triangles, walking along x with the next
     # number of each of the four rows of points around it.
     cx = nx - 1
@@ -485,6 +496,8 @@ def _triangles(cells, u, hexa, flags, windows, levels, nlevels, nx, ny, nz, poin
             m3 = n3 + _emitted(_flag(flags, windows, q3, ci))
             case = _cell_case(cells, u, [ci, cj, ck], level)
             cell = ci + cx * (cj + cy * ck)
+            if hidden == 1 and (tack.i32(marks[cell]) & _MASKED) != 0:
+                case = 0
             for t in range(hexa.contour_count(case)):
                 if _kept(flags, windows, v, nlevels, hexa, case, t, ci, cj, ck, nx, ny):
                     for corner in range(3):
@@ -546,6 +559,18 @@ def serves(data, field):
     return _solid_grid(data) and isinstance(field.space, H1) and field.space.order == 1
 
 
+def _masks(data):
+    """``(marks, 1)``: the cells' ghost marks where some are hidden or refined;
+    else ``(a stand-in, 0)``."""
+    from tack.dataset.ghosts import Ghosts, _has
+
+    ghosts = data.ghosts
+    if ghosts is not None and ghosts.cells is not None and _has(ghosts.cells,
+                                                                Ghosts.MASKED_CELLS):
+        return ghosts.cells, 1
+    return tack.zeros((1,), tack.u8), 0
+
+
 def _solid_grid(data):
     from tack.dataset.spaces import H1
     from tack.dataset.topology import StructuredTopology
@@ -596,21 +621,38 @@ class _PlaneValues:
         a = (j ^ (j >> 1)) & 1
         b = (j >> 1) & 1
         d = j >> 2
+        return self.value_at((c[0] + a) + ((c[1] + b) + (c[2] + d) * self.ny) * self.nx)
+
+
+@tack.device_class
+class _PlaneValuesByIJK(_PlaneValues):
+    """``_PlaneValues`` of an image or a rectilinear grid, whose corners are read by
+    their (i, j, k), as ``get`` reads them after dividing an index: the same bits,
+    without the divisions."""
+
+    @tack.func
+    def corner_value(self, c, j):
+        a = (j ^ (j >> 1)) & 1
+        b = (j >> 1) & 1
+        d = j >> 2
         return self.function.value(self.positions.get_ijk([c[0] + a, c[1] + b, c[2] + d]))
 
 
 def cuts(data, function):
     """Whether ``slice`` of ``data`` by ``function`` can go by the plane cutter: a
-    ``Plane`` through an image or a rectilinear grid of solid cells, with no
-    hidden cells (which ``contour`` would leave out by extracting the rest)."""
-    from tack.arrays import CartesianProduct, UniformCoordinates
-    from tack.dataset.ghosts import Ghosts, _has
+    ``Plane`` through a structured grid of solid cells. On an image or a
+    rectilinear grid only the rows' stretches near the plane are visited
+    (``_plane_windows``); on a curvilinear grid every row, the distance computed
+    where read all the same. Hidden and refined cells are left out."""
     from tack.dataset.implicit import Plane
 
-    ghosts = data.ghosts
-    return (isinstance(function, Plane) and _solid_grid(data)
-            and type(data.geometry.values) in (UniformCoordinates, CartesianProduct)
-            and not (ghosts is not None and _has(ghosts.cells, Ghosts.MASKED_CELLS)))
+    return isinstance(function, Plane) and _solid_grid(data)
+
+
+def _by_arithmetic(data):
+    from tack.arrays import CartesianProduct, UniformCoordinates
+
+    return type(data.geometry.values) in (UniformCoordinates, CartesianProduct)
 
 
 @tack.func
@@ -739,8 +781,16 @@ def cut(data, function, levels, nlevels):
 
     nx, ny, nz = (int(d) for d in data.topology.point_dims)
     plane = relative_to(function, data.origin)
+    kind = _PlaneValuesByIJK if _by_arithmetic(data) else _PlaneValues
+    values = kind(data.geometry.values, plane, nx, ny)
+    if not _by_arithmetic(data):
+        # A curvilinear grid's points may lie anywhere: every row, its values
+        # computed where read, nothing stored for every point but its edges' byte.
+        windows = tack.empty((ny * nz * nlevels,), tack.vec(3, tack.i64))
+        _whole_rows(nx, windows)
+        return _surface(data, values, values, levels, nlevels, data.dtype, windows,
+                        nlevels * nx * ny * nz, contour=True)
     windows, total = _plane_windows(data, plane, levels, nlevels)
-    values = _PlaneValues(data.geometry.values, plane, nx, ny)
     return _surface(data, values, values, levels, nlevels, data.dtype, windows, total,
                     contour=False)
 
@@ -770,9 +820,11 @@ def _surface(data, values, u, levels, nlevels, weight_dtype, windows, nflags, co
     point_counts = tack.empty((nrows * nlevels,), odt)
     nans = tack.empty((nrows,), tack.i64)
     _point_counts(flags, windows, nlevels, ny, point_counts, nans)
+    # Hidden and refined cells make no triangles, as visible() leaves them out.
+    marks, hidden = _masks(data)
     triangle_counts = tack.empty((ncrows * nlevels,), odt)
     _triangle_counts(cells, u, hexa, flags, windows, point_counts, levels, nlevels, nx, ny,
-                     nz, triangle_counts)
+                     nz, marks, hidden, triangle_counts)
     count = exclusive_scan(point_counts, point_counts, nrows * nlevels)
     triangles = exclusive_scan(triangle_counts, triangle_counts, ncrows * nlevels)
     positions = tack.empty((count,), tack.vec(3, data.dtype))
@@ -786,11 +838,11 @@ def _surface(data, values, u, levels, nlevels, weight_dtype, windows, nflags, co
     which = tack.empty((triangles,), tack.i32)
     if triangles:
         _triangles(cells, u, hexa, flags, windows, levels, nlevels, nx, ny, nz, point_counts,
-                   triangle_counts, triangles, rows, sources, which)
+                   triangle_counts, triangles, marks, hidden, rows, sources, which)
     del flags, point_counts, triangle_counts
-    if count and int(nans.sum()):
-        # A crossing whose cells all have a NaN corner is in no triangle: kept out,
-        # as the general path never makes it.
+    if count and (hidden or int(nans.sum())):
+        # A crossing whose cells all have a NaN corner, or are hidden, is in no
+        # triangle: kept out, as the general path never makes it.
         used = tack.zeros((count,), tack.i32)
         if triangles:
             _mark_used(rows, used)

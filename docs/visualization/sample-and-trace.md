@@ -96,7 +96,8 @@ cells, as VTK's `vtkStaticCellLocator` is. Without one, `probe` uses the
 locator the dataset's topology keeps, so probing the same mesh again does not
 build it again. `td.CellLocator(data)` builds one you can pass to `probe`,
 `advect` and `streamlines` as `locator=`. It serves any dataset of the same
-cells and positions.
+cells and positions. An image's or a rectilinear grid's locator builds
+nothing: it finds a point's cell from the point's position along each axis.
 
 A locator follows the positions. After Tack writes them (a kernel, `fill`,
 `copyto`), the kept one is rebuilt, and one you built is refused, since its
@@ -328,7 +329,9 @@ against an NVIDIA RTX 6000 Ada (ms, warm):
 For a few seeds on a mesh that lives on a GPU, trace on a CPU copy of it,
 `data.to_device("cpu")`. The locator is built where the mesh is.
 
-**Choose the locator by the mesh.** The default locator bins the cells on two
+**Choose the locator by the mesh.** On an image or a rectilinear grid the
+locator finds cells by arithmetic, as VTK's and Viskores' do for them, with
+nothing to build. Elsewhere the default locator bins the cells on two
 levels, as Viskores' `CellLocatorTwoLevel` does, so a mesh graded toward a
 body in a large far field is not crowded into a few bins. On a small mesh of
 cells of about one size, one uniform grid of bins holds fewer candidates a
@@ -338,7 +341,9 @@ it in.
 **Walk to the neighbours.** `neighbors=True` tries the face neighbours of the
 cell a particle was last in before searching the locator. On large meshes this
 takes about half the time, for a table of face neighbours (six ids a cell)
-that the locator keeps. On surfaces and polyhedra it changes nothing.
+that the locator keeps. On surfaces and polyhedra it changes nothing, nor on
+images and rectilinear grids, whose locator finds cells by arithmetic as
+cheaply.
 
 Neither choice changes the result. Both locators find the same cells, and the
 walk finds the cell the search would, so the paths are the same, bit for bit:

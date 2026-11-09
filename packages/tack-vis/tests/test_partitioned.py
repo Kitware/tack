@@ -939,3 +939,80 @@ def test_vtks_ghost_cells_give_the_wholes_statistics():
         assert combined.mean == pytest.approx(expected.mean, rel=1e-6)
         assert combined.m2 == pytest.approx(expected.m2, rel=1e-5)
         assert td.entropy(pieces, name) == pytest.approx(td.entropy(whole, name))
+
+
+# ── Agreeing on errors over ranks (issue #364) ───────────────────────
+
+class _Ranks:
+    """This rank (``rank``) of a world whose other ranks said ``others``, in order
+    of rank, in each gather; counts the gathers."""
+
+    def __init__(self, rank, others):
+        self.rank, self.size, self.others, self.gathers = rank, len(others) + 1, others, 0
+
+    def _allgather(self, value):
+        self.gathers += 1
+        out = list(self.others)
+        out.insert(self.rank, value)
+        return out
+
+
+def test_agree_gives_every_ranks_result_in_one_gather():
+    from tack.dataset.partitioned import agree
+
+    world = _Ranks(1, [(3, None), (5, None)])
+    assert agree(world, lambda x: x + 1, 3) == [3, 4, 5]
+    assert world.gathers == 1
+
+
+def test_a_rank_whose_check_passes_raises_the_error_another_rank_found():
+    from tack.dataset.partitioned import agree
+
+    said = ("builtins", "TypeError", "advection needs a field of 3-vectors")
+    world = _Ranks(0, [(None, None), (None, said)])
+    with pytest.raises(TypeError, match="advection needs a field of 3-vectors") as caught:
+        agree(world, lambda: None)
+    assert "rank 2 of 3" in "".join(caught.value.__notes__)
+    # A KeyError's message comes back as it was, not quoted again.
+    said = ("builtins", "KeyError", "partition 0 has no field 'v'")
+    with pytest.raises(KeyError) as caught:
+        agree(_Ranks(0, [(None, said)]), lambda: None)
+    assert caught.value.args == ("partition 0 has no field 'v'",)
+
+
+def test_the_rank_that_raised_raises_its_own_error():
+    from tack.dataset.partitioned import agree
+
+    mine = ValueError("mine")
+
+    def check():
+        raise mine
+
+    world = _Ranks(1, [(None, ("builtins", "TypeError", "the first rank's"))])
+    with pytest.raises(ValueError) as caught:
+        agree(world, check)
+    assert caught.value is mine
+
+
+def test_an_error_this_rank_cannot_make_comes_as_a_runtime_error():
+    from tack.dataset.partitioned import agree
+
+    for said in (("no.such.module", "Error", "gone"), ("builtins", "len", "not a class"),
+                 ("builtins", "UnicodeDecodeError", "takes five arguments")):
+        with pytest.raises(RuntimeError, match=said[2]):
+            agree(_Ranks(0, [(None, said)]), lambda: None)
+
+
+def test_common_origin_agrees_on_its_check_in_its_own_gather():
+    from tack.dataset.partitioned import common_origin
+
+    frame = ([(0.0, 0.0, 0.0)], [""], [(None, None)])
+    world = _Ranks(0, [(*frame, None)])
+    data = td.PartitionedDataSet([], world=world)
+    ran = []
+    assert common_origin(data, "a test", check=lambda: ran.append(1)) == (0.0, 0.0, 0.0)
+    assert ran == [1] and world.gathers == 1
+    world = _Ranks(0, [(*frame, ("builtins", "KeyError", "no field 'v'"))])
+    with pytest.raises(KeyError):
+        common_origin(td.PartitionedDataSet([], world=world), "a test", check=lambda: None)
+    assert world.gathers == 1

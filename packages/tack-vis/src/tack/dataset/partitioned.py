@@ -92,19 +92,92 @@ def fields_of(data, field, what):
     return out
 
 
-def common_origin(data, what, world=None):
+def agree(world, check, *args, **kwargs):
+    """``check(*args, **kwargs)``, run on this rank, with its outcome agreed on
+    by every rank of ``world``: every rank's result, in order of rank, if it
+    raised on none, else an error on every rank. The rank that raised raises
+    its own exception; the others raise one of the same kind and message, with
+    a note naming the rank. Collective: one gather of the results, which
+    should be small, so every rank must call it.
+
+    An algorithm over pieces checks its arguments against the pieces it holds
+    (a field's kind, width and space, the pieces' cell kinds). A rank holding
+    no pieces, or pieces that pass, cannot know another's failed, and would go
+    on into the next collective and wait there forever. Checks run through
+    ``agree`` before the algorithm's first collective fail on every rank
+    instead. ``check`` must make no collective call itself."""
+    result, error, said = _attempt(check, *args, **kwargs)
+    gathered = world._allgather((result, said))
+    _agreed([s for _, s in gathered], error)
+    return [r for r, _ in gathered]
+
+
+def _attempt(check, *args, **kwargs):
+    """``(result, error, said)``: what ``check`` returned or raised, and what
+    this rank tells the others of it (``None``, or the error's module, class
+    name and message)."""
+    try:
+        return check(*args, **kwargs), None, None
+    except Exception as error:
+        kind = type(error)
+        message = (error.args[0] if len(error.args) == 1 and isinstance(error.args[0], str)
+                   else str(error))
+        return None, error, (kind.__module__, kind.__qualname__, message)
+
+
+def _agreed(said, error):
+    """Raise if any rank's check raised (``said``, gathered from ``_attempt``):
+    this rank's own ``error`` if it has one, else the first rank's, remade."""
+    if error is not None:
+        raise error
+    rank = next((r for r, s in enumerate(said) if s is not None), None)
+    if rank is not None:
+        raise _remade(*said[rank], rank, len(said))
+
+
+def _remade(module, name, message, rank, size):
+    """The exception another rank raised, of its class where this rank can import
+    it and make one from a message (else a ``RuntimeError``)."""
+    import importlib
+
+    kind = RuntimeError
+    try:
+        found = importlib.import_module(module)
+        for part in name.split("."):
+            found = getattr(found, part)
+        if isinstance(found, type) and issubclass(found, Exception):
+            kind = found
+    except Exception:
+        pass
+    try:
+        error = kind(message)
+    except Exception:
+        error = RuntimeError(message)
+    error.add_note(f"Raised on rank {rank} of {size}, whose pieces failed the check; "
+                   "every rank raises it.")
+    return error
+
+
+def common_origin(data, what, world=None, check=None):
     """The origin every piece of ``data`` has, on every rank of ``world``
     (``data.world`` by default): ``what`` (an algorithm that compares or moves
     positions between pieces) refuses pieces on two origins, in two spatial
     units, or at two times. ``(0.0, 0.0, 0.0)``
-    with no pieces anywhere."""
+    with no pieces anywhere.
+
+    ``check``, a function of no arguments, runs first and is agreed on in the
+    same gather, as ``agree`` does: checks of the pieces whose algorithm's
+    first collective is this one cost no other."""
     from tack.dataset import units
 
     world = data.world if world is None else world
+    _, error, said = (None, None, None) if check is None else _attempt(check)
     mine = sorted({piece.origin for piece in data})
     spatial = sorted({piece.unit or "" for piece in data})
     times = sorted({(piece.time, piece.time_unit) for piece in data}, key=repr)
-    gathered = world._allgather((mine, spatial, times))
+    gathered = world._allgather((mine, spatial, times, said))
+    _agreed([part for *_, part in gathered], error)
+    gathered = [g[:3] for g in gathered]
     every = sorted({o for part, _, _ in gathered for o in part})
     units.common(f"{what}'s pieces' geometry",
                  [u or None for _, part, _ in gathered for u in part])

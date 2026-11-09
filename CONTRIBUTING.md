@@ -164,9 +164,13 @@ change to the docs alone runs lint and the docs build, one to an example lint
 and the examples; a change to the packages, the build or the workflows runs
 everything. The jobs left out report "skipping". The suite runs in full on
 Python 3.13, with VTK and MFEM; 3.11 and 3.12 run the quick tier (`-m quick`).
-Pushes to `main` run everything, every version in full. The check a pull
+Of the suite, a pull request runs the test files its changes reach, by a map
+of which files each test file ran on `main` (`tools/testmap.py`); a change to
+the build, to CI or to a file no test ran runs them all. The check a pull
 request needs is `CI`, which passes when every other job passed or was
-skipped.
+skipped. Merging goes through GitHub's merge queue, which runs everything,
+every version in full, on the merge commit before `main` moves to it; a push
+to `main` then runs lint and the docs.
 
 ## The thing to know about the tests
 

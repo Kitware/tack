@@ -367,15 +367,16 @@ def _kept_dataset(data, field, copy):
     return DataSet(step.topology, step.geometry, fields=dict(step.fields), **data._frame())
 
 
-def _frame_of(data):
+def _frame_of(data, check=None):
     """A dataset's, or the first piece's, ``_frame()`` and device; over pieces, on a rank
-    with none, the others' frame on the default device (``_stand_in``: collective)."""
+    with none, the others' frame on the default device (``_stand_in``: collective),
+    with ``check`` agreed on (``common_origin``)."""
     if not isinstance(data, PartitionedDataSet):
         return data._frame(), data.device
     from tack.dataset.algorithms._common import _stand_in
     from tack.dataset.partitioned import common_origin
 
-    nothing = _stand_in(data, common_origin(data, "advection over pieces"))
+    nothing = _stand_in(data, common_origin(data, "advection over pieces", check=check))
     first = nothing if nothing is not None else next(iter(data))
     return first._frame(), first.device
 
@@ -456,8 +457,11 @@ class Advection:
         self._pending.append((points, None if time is None else float(time), sources))
 
     def _stream_time(self, data):
-        """``data``'s time in the stream's time unit (the first step's)."""
-        frame, _ = _frame_of(data)
+        """``data``'s time in the stream's time unit (the first step's). Over pieces,
+        a piece without the velocity is refused on every rank."""
+        from tack.dataset.partitioned import fields_of
+
+        frame, _ = _frame_of(data, check=lambda: fields_of(data, self.field, "advection"))
         if frame["time"] is None:
             raise ValueError("advection needs each step's time (DataSet.time)")
         if self._last is None:

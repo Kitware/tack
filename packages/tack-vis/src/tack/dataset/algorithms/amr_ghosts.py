@@ -27,7 +27,7 @@ from tack.dataset.amr import AMRDataSet
 from tack.dataset.carry import _point_values
 from tack.dataset.dataset import DataSet, Field
 from tack.dataset.ghosts import Ghosts
-from tack.dataset.partitioned import common_origin
+from tack.dataset.partitioned import agree, common_origin
 from tack.dataset.spaces import H1, Constant, Values
 from tack.dataset.topology import StructuredTopology
 
@@ -846,8 +846,9 @@ def amr_ghost_cells(amr, layers, fields):
                          "hierarchy without them")
     d = amr.dimension
     pieces = [box for _, box in amr]
-    names = _carried(pieces, fields, "ghost_cells")
-    common_origin(amr._as_pieces(), "ghost_cells of an AMRDataSet")
+    names = []
+    common_origin(amr._as_pieces(), "ghost_cells of an AMRDataSet",  # agreed in its gather
+                  check=lambda: names.extend(_carried(pieces, fields, "ghost_cells")))
     extents = []
     for level in range(amr.num_levels):
         lo, hi = amr.level_domain(level)
@@ -1046,16 +1047,30 @@ def amr_update_ghosts(amr, names):
         raise ValueError("update_ghosts needs the hierarchy ghost_cells made, which keeps "
                          "the exchanges")
     layout_boxes = [box for _, box in amr]
+    values = {name: [] for name in names}
+
+    def check():
+        kinds = {}
+        for name in names:
+            for box in layout_boxes:
+                field = box.fields[name]
+                kinds[name] = _kind(field)
+                if kinds[name] is None or not isinstance(field.values, tack.Array):
+                    raise TypeError(f"update_ghosts refreshes point and cell fields of "
+                                    f"explicit values; {name!r} is not one")
+                values[name].append(field.values)
+        return kinds
+
+    # Every rank's boxes' say: a rank without boxes takes part in the others' fills,
+    # and one whose boxes fail the check fails on every rank.
+    every = agree(amr.world, check)
     for name in names:
-        values, kind = [], None
-        for box in layout_boxes:
-            field = box.fields[name]
-            kind = _kind(field)
-            if kind is None or not isinstance(field.values, tack.Array):
-                raise TypeError(f"update_ghosts refreshes point and cell fields of explicit "
-                                f"values; {name!r} is not one")
-            values.append(field.values)
-        amr._fills[kind].run(values)
+        kinds = {k[name] for k in every if name in k}
+        if len(kinds) > 1:
+            raise TypeError(f"update_ghosts refreshes a field on one kind of entity; "
+                            f"{name!r} is on {sorted(kinds)}")
+        if kinds:
+            amr._fills[kinds.pop()].run(values[name])
 
 
 # -- fine onto coarse -----------------------------------------------------------------
@@ -1071,9 +1086,25 @@ def average_down(amr, field):
 
     if not isinstance(amr, AMRDataSet):
         raise TypeError(f"average_down takes an AMRDataSet, not {type(amr).__name__}")
-    boxes = [box for _, box in amr]
-    # Every rank's boxes' say: a rank without boxes knows nothing of the field.
-    kinds = set().union(*amr.world._allgather({_kind(box.fields[field]) for box in boxes}))
+    # The levels averaged onto, and the next finer ones.
+    used = {k for level in range(amr.num_levels - 1)
+            if len(amr._boxes[level + 1]) and len(amr._boxes[level]) for k in (level, level + 1)}
+
+    def check():
+        found = set()
+        for level, box in amr:
+            found.add(_kind(box.fields[field]))
+            array = box.fields[field].values
+            scalar = getattr(array.dtype, "scalar_dtype", array.dtype)
+            if level in used and (not isinstance(array, tack.Array)
+                                  or scalar.numpy_dtype.kind != "f"):
+                raise TypeError(f"average_down averages floating-point values of explicit "
+                                f"arrays; {field!r} is not one")
+        return found
+
+    # Every rank's boxes' say: a rank without boxes knows nothing of the field, and
+    # one whose boxes fail the check fails on every rank.
+    kinds = set().union(*agree(amr.world, check))
     if len(kinds) != 1 or None in kinds:
         raise TypeError(f"average_down averages a point or cell field; {field!r} is not one")
     kind = kinds.pop()
@@ -1086,11 +1117,6 @@ def average_down(amr, field):
         groups = _Groups(amr, amr._extents, levels=(level, level + 1))
         fill = _Fill(groups, kind, _down_parts(amr, groups, level, kind))
         values = [box.fields[field].values for box in groups.pieces]
-        for array in values:
-            scalar = getattr(array.dtype, "scalar_dtype", array.dtype)
-            if not isinstance(array, tack.Array) or scalar.numpy_dtype.kind != "f":
-                raise TypeError(f"average_down averages floating-point values of explicit "
-                                f"arrays; {field!r} is not one")
         if kind == "points":
             fill.run(values)
             continue

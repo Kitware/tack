@@ -72,6 +72,13 @@ os.environ.setdefault("TACK_CACHE", "off")
 os.environ.setdefault("TACK_VERIFY_ALL", "1")
 
 import tack
+import tack.lang.ir_verify as _ir_verify
+from tack.runtime.dispatch import env_flag as _env_flag
+
+# The module reads TACK_VERIFY_ALL when it is first imported, which may be
+# before this file runs (CI's Metal job imports tack, then calls pytest.main):
+# take the setting again here.
+_ir_verify.verify_all = _env_flag("TACK_VERIFY_ALL")
 
 _ALL_ARCHES = ["cpu", "metal", "cuda", "hip", "level_zero"]
 

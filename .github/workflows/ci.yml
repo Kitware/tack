@@ -33,6 +33,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The merge queue: every test on the merge commit, before it reaches main
+  # (the wiki's CI test management plan, step 6). A push to main whose commit
+  # passed here then runs lint and the docs alone (the changes job).
+  merge_group:
   workflow_dispatch:
 
 # Least privilege: nothing here writes to the repo.
@@ -52,11 +56,13 @@ jobs:
   # no rule of tools/ci_changes.py names is code. Lint needs no group.
   #
   # Then which test files a pull request's changes reach, from main's latest
-  # test map (tools/testmap.py select; the test-map job below makes it):
+  # test map (tools/testmap.py select; the test-map job below makes it, on
+  # the merge queue's runs and on pushes to main that run every test):
   # `selected` is `all`, `some` or `none`, and `selection` the files, one a
   # line, or `all`. The suite's jobs pass it to conftest's --select, so their
-  # shares divide the selection, and skip when it is `none`. Pushes to main,
-  # runs by hand, and a pull request without a map from main run everything.
+  # shares divide the selection, and skip when it is `none`. The merge queue,
+  # pushes to main, runs by hand, and a pull request without a map from main
+  # run everything.
   changes:
     name: what changed
     runs-on: ubuntu-latest
@@ -82,9 +88,18 @@ jobs:
       - name: Classify the changed files
         id: classify
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
             git diff --name-only HEAD^1 HEAD | python3 tools/ci_changes.py >> "$GITHUB_OUTPUT"
+          elif [ "$GITHUB_EVENT_NAME" = push ] && [ -n "$(gh run list --repo "$GITHUB_REPOSITORY" \
+                 --workflow ci.yml --event merge_group --commit "$GITHUB_SHA" --status success \
+                 --limit 1 --json databaseId --jq '.[].databaseId')" ]; then
+            # The merge queue ran every test on this very commit: lint, and the
+            # docs (whose job publishes main's site), are what is left.
+            echo "::notice title=Merge queue::every test passed on this commit in the merge queue"
+            printf 'code=false\ndocs=true\nexamples=false\n' >> "$GITHUB_OUTPUT"
           else
             printf 'code=true\ndocs=true\nexamples=true\n' >> "$GITHUB_OUTPUT"
           fi
@@ -99,11 +114,13 @@ jobs:
         run: |
           selection=all
           if [ "$GITHUB_EVENT_NAME" = pull_request ] && [ "$CODE" = true ]; then
-            # main's latest push run that kept a map (a run can fail
-            # elsewhere and still have made one).
+            # The latest map of main: from the merge queue's runs, which test
+            # every merge, or a push to main that ran every test (one merged
+            # around the queue). A run can fail elsewhere and still have made one.
             found=
-            for run in $(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --branch main \
-                           --event push --limit 10 --json databaseId --jq '.[].databaseId'); do
+            for run in $(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --limit 20 \
+                           --json databaseId,event,headBranch \
+                           --jq '.[] | select(.event == "merge_group" or (.event == "push" and .headBranch == "main")) | .databaseId'); do
               if gh run download "$run" --repo "$GITHUB_REPOSITORY" --name test-map --dir map 2>/dev/null; then
                 found=$run
                 break

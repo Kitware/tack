@@ -383,7 +383,7 @@ def integrate(data, fields=None):
     (ghost marks), and a ``PartitionedDataSet`` sums its pieces over every rank, in
     the pieces' order."""
     from tack.dataset.algorithms._common import _measure_unit
-    from tack.dataset.partitioned import PartitionedDataSet
+    from tack.dataset.partitioned import PartitionedDataSet, agree
 
     if isinstance(data, PartitionedDataSet):
         from tack.dataset.algorithms.statistics import _over_pieces
@@ -397,16 +397,21 @@ def integrate(data, fields=None):
             raise TypeError("integrate over a PartitionedDataSet takes fields by name or "
                             "as objects whose on(piece) gives the piece's: a Field belongs "
                             "to one partition's topology")
-        names = _names(pieces[0], fields) if pieces else None
-        # The names and the measure's unit as a rank with pieces finds them: a rank
-        # without any gets the same answer (the sums, and the fields' units, are every
-        # rank's).
-        mine = None if names is None else ([name for name, _ in names],
+        if not hasattr(fields, "items") and any(not is_field_key(f) for f in given):
+            raise TypeError("integrate names each Field it is given: pass {name: field}")
+
+        def mine():
+            # The names and the measure's unit as a rank with pieces finds them, every
+            # piece's fields checked, so that a piece without one fails on every rank.
+            found = [_names(piece, fields) for piece in pieces]
+            return None if not found else ([name for name, _ in found[0]],
                                            _measure_unit(pieces[0]))
-        labels, measure_unit = next((m for m in data.world._allgather(mine) if m is not None),
+
+        # A rank without pieces gets the same answer (the sums, and the fields'
+        # units, are every rank's).
+        labels, measure_unit = next((m for m in agree(data.world, mine) if m is not None),
                                     ([], None))
-        if names is None:
-            names = [(name, name) for name in labels]
+        names = _names(pieces[0], fields) if pieces else [(name, name) for name in labels]
         parts = _over_pieces(data, lambda piece: _piece(piece, names))
         measure = math.fsum(m for m, _, _ in parts)
         values = {name: np.sum([v[name] for _, v, _ in parts], axis=0) for name in labels}

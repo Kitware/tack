@@ -114,11 +114,15 @@ def _ghosted(data, radius, k, periodic, around, fields, world):
     if not isinstance(data, PartitionedDataSet):
         raise TypeError(f"ghost_points takes a PartitionedDataSet, not {type(data).__name__}")
     world = data.world if world is None else world
-    origin = common_origin(data, "ghost_points", world)
     pieces = list(data)
-    for i, piece in enumerate(pieces):
-        _check_cloud(i, piece)
-    names = _carried(pieces, fields, "ghost_points")
+    names = []
+
+    def check():                             # on every rank, in the origin's gather
+        for i, piece in enumerate(pieces):
+            _check_cloud(i, piece)
+        names.extend(_carried(pieces, fields, "ghost_points"))
+
+    origin = common_origin(data, "ghost_points", world, check)
     blocks = tc.Blocks([piece.device for piece in pieces], world)
     if blocks.count > 1 << (63 - INDEX_BITS):
         raise ValueError(f"ghost_points handles up to {1 << (63 - INDEX_BITS)} pieces")

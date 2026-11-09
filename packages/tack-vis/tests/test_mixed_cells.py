@@ -396,7 +396,11 @@ def test_threshold_of_a_mixed_mesh_is_the_shaped_meshs():
 # ── VTK ─────────────────────────────────────────────────────────────
 
 def _vtk():
-    return pytest.importorskip("tack.interop.vtk")
+    # tack.interop.vtk imports without VTK (it loads VTK on first use), so skip
+    # on VTK itself: CI's test shares run without the interop extra.
+    pytest.importorskip("vtkmodules.vtkCommonDataModel")
+    import tack.interop.vtk as vtk
+    return vtk
 
 
 @pytest.mark.parametrize("chosen", [[0, 3, 5], list(range(12))], ids=["some", "all"])

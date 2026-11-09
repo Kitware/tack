@@ -576,7 +576,8 @@ def _parameters(data, field, unit, who, step_size, tolerance=None, min_step=None
         from tack.dataset.partitioned import PartitionedDataSet
 
         if isinstance(data, PartitionedDataSet):
-            every = data.world._allgather([piece.fields[field].unit for piece in data])
+            every = data.world._allgather([piece.fields[field].unit for piece in data
+                                           if field in piece.fields])
             velocity = units.common("the pieces' velocity", [u for part in every for u in part])
         else:
             velocity = _field(data, field).unit
@@ -612,6 +613,41 @@ def _adaptive(integrator, step_size, tolerance, min_step, max_step):
     return tolerance, min_step, max_step
 
 
+def check_arguments(steps, integrator, step_size, tolerance=None, min_step=None,
+                    max_step=None, max_length=None, terminal_speed=None, unit="time"):
+    """Refuse advection's arguments, the same on every rank: ``steps``, the
+    integrator's (``_adaptive``, whose ``(tolerance, min_step, max_step)`` it
+    returns), ``max_length``, ``terminal_speed`` and ``unit``."""
+    if int(steps) < 1:
+        raise ValueError(f"steps must be at least 1, not {steps!r}")
+    adaptive = _adaptive(integrator, step_size, tolerance, min_step, max_step)
+    if max_length is not None and not float(max_length) > 0.0:
+        raise ValueError(f"max_length must be positive, not {max_length!r}")
+    if terminal_speed is not None and not float(terminal_speed) >= 0.0:
+        raise ValueError(f"terminal_speed must be at least 0, not {terminal_speed!r}")
+    if unit not in ("time", "length"):
+        raise ValueError(f"step_unit is 'time' or 'length', not {unit!r}")
+    return adaptive
+
+
+def check_piece(data, field):
+    """Refuse a dataset advection cannot move particles through by ``field``: a
+    geometry other than H1, a field other than 3-vectors of a space read by
+    cell id, polylines or lines. ``(velocity by id, positions)`` otherwise."""
+    geometry = data.geometry
+    if not isinstance(geometry.space, H1):
+        raise TypeError("advection needs an H1 geometry: positions at its nodes")
+    velocity = _velocity(data, field)
+    positions = _as_vectors(geometry.values, data.dtype)
+    from tack.dataset.polyhedra import PolylineTopology
+
+    if (isinstance(data.topology, PolylineTopology)
+            or cells_by_id(data, positions, strict=False) is None):
+        raise NotImplementedError("advection takes unstructured, polyhedral, polygonal and 2D "
+                                  "or 3D structured topologies; not polylines, nor lines")
+    return velocity, positions
+
+
 def _run(data, field, seeds, step_size, steps, integrator, locator, record, resume=None,
          handoff=False, unit="time", tolerance=None, min_step=None, max_step=None,
          max_length=None, neighbors=False, terminal_speed=None):
@@ -630,26 +666,9 @@ def _run(data, field, seeds, step_size, steps, integrator, locator, record, resu
 
     Returns ``(xs, times, steps, status, (trace, trace_times), lengths, capacity,
     (step, travelled))``."""
-    if int(steps) < 1:
-        raise ValueError(f"steps must be at least 1, not {steps!r}")
-    tol, low, high = _adaptive(integrator, step_size, tolerance, min_step, max_step)
-    if max_length is not None and not float(max_length) > 0.0:
-        raise ValueError(f"max_length must be positive, not {max_length!r}")
-    if terminal_speed is not None and not float(terminal_speed) >= 0.0:
-        raise ValueError(f"terminal_speed must be at least 0, not {terminal_speed!r}")
-    if unit not in ("time", "length"):
-        raise ValueError(f"step_unit is 'time' or 'length', not {unit!r}")
-    geometry = data.geometry
-    if not isinstance(geometry.space, H1):
-        raise TypeError("advection needs an H1 geometry: positions at its nodes")
-    velocity = _velocity(data, field)
-    positions = _as_vectors(geometry.values, data.dtype)
-    from tack.dataset.polyhedra import PolylineTopology
-
-    if (isinstance(data.topology, PolylineTopology)
-            or cells_by_id(data, positions, strict=False) is None):
-        raise NotImplementedError("advection takes unstructured, polyhedral, polygonal and 2D "
-                                  "or 3D structured topologies; not polylines, nor lines")
+    tol, low, high = check_arguments(steps, integrator, step_size, tolerance, min_step,
+                                     max_step, max_length, terminal_speed, unit)
+    velocity, positions = check_piece(data, field)
     locator = locator or cached_locator(data)
     if not locator.serves(data):
         raise ValueError("the locator was built for another topology or geometry, or "

@@ -1,10 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) Kitware Inc.
-# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """All-pairs and tiled N-body forces, adapted from NVIDIA Warp's tile example.
 
-Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. Apache-2.0;
+Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved. Apache-2.0;
 see LICENSE-APACHE-2.0.txt.
 Source: https://github.com/NVIDIA/warp/blob/main/warp/examples/tile/example_tile_nbody.py
 Algorithm: Lars Nyland, Mark Harris, Jan Prins, GPU Gems 3, chapter 31.

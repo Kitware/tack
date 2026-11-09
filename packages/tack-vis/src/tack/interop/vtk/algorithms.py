@@ -168,6 +168,7 @@ import inspect
 from vtkmodules.util.vtkAlgorithm import VTKPythonAlgorithmBase
 from vtkmodules.vtkCommonDataModel import (
     vtkDataObject,
+    vtkImageData,
     vtkMultiBlockDataSet,
     vtkMultiPieceDataSet,
     vtkOverlappingAMR,
@@ -320,8 +321,33 @@ def _as_dataset(vtk_data, device=None, world=None):
     if device is None or data.device == device:
         return data
     if device not in copies:
+        if (isinstance(vtk_data, vtkImageData) and data.dtype is tack.f64
+                and not device._backend.supports_f64):
+            data = _image_in_f32(vtk_data)
         copies[device] = data.to_device(device)
     return copies[device]
+
+
+def _image_in_f32(image):
+    """``image`` as a Tack dataset whose geometry is f32, for a device without f64
+    (Metal): VTK keeps an image's origin and spacing in doubles, so its geometry
+    converts to f64, which such a device refuses. Positions are relative to the
+    origin an f32 conversion takes (``_far_origin``), so a grid far from zero keeps
+    its precision and goes back to VTK where it was; the fields keep their types."""
+    import tack
+    from tack.arrays import UniformCoordinates
+    from tack.dataset import DataSet
+    from tack.interop.vtk import _far_origin, vtk_to_dataset
+
+    data = vtk_to_dataset(image, dtype=None, copy=False, origin=_far_origin(image))
+    wide = data.geometry.values
+    geometry = UniformCoordinates(wide.dims, wide._origin, wide._spacing, wide._matrix,
+                                  dtype=tack.f32)
+    narrow = DataSet(data.topology, geometry, fields=dict(data.fields), sets=dict(data.sets),
+                     dtype=tack.f32, ghosts=data.ghosts, global_ids=data.global_ids,
+                     **data._frame())
+    narrow._ghosts_lost = data._ghosts_lost
+    return narrow
 
 
 def _as_hierarchy(vtk_amr, device, world):

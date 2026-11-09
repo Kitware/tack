@@ -186,6 +186,25 @@ def test_preflight_reports_launch_errors(compiler_env, monkeypatch, problem):
         tools.require_clang()
 
 
+def test_a_probe_that_times_out_once_is_tried_again(compiler_env, monkeypatch):
+    """A cold runner's first compile can outlast the first limit; the second
+    try, with a longer one, decides."""
+    monkeypatch.setenv("TACK_CLANG", _driver(compiler_env))
+    limits = []
+
+    def run(command, **kwargs):
+        limits.append(kwargs["timeout"])
+        if len(limits) == 1:
+            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+        return subprocess.CompletedProcess(command, 0,
+                                           "clang version 15.0.7\n" if "--version" in command else "", "")
+
+    monkeypatch.setattr(tools.subprocess, "run", run)
+    assert tools.require_clang() == os.environ["TACK_CLANG"]
+    assert limits[:2] == list(tools._PROBE_TIMEOUTS)
+    assert set(limits[2:]) == {tools._PROBE_TIMEOUTS[0]}, "each command starts at the first limit"
+
+
 @pytest.mark.parametrize("change", ["PATH", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "SDKROOT",
                                     "CPATH", "CPLUS_INCLUDE_PATH", "LIBRARY_PATH", "DEVELOPER_DIR", "driver"])
 def test_probe_cache_tracks_execution_environment_and_driver(

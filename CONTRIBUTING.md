@@ -162,9 +162,11 @@ that then passes is reported as a flake.
 On a pull request CI runs the jobs its files need (`tools/ci_changes.py`): a
 change to the docs alone runs lint and the docs build, one to an example lint
 and the examples; a change to the packages, the build or the workflows runs
-everything. The jobs left out report "skipping". Pushes to `main` run
-everything. The check a pull request needs is `CI`, which passes when every
-other job passed or was skipped.
+everything. The jobs left out report "skipping". The suite runs in full on
+Python 3.13, with VTK and MFEM; 3.11 and 3.12 run the quick tier (`-m quick`).
+Pushes to `main` run everything, every version in full. The check a pull
+request needs is `CI`, which passes when every other job passed or was
+skipped.
 
 ## The thing to know about the tests
 

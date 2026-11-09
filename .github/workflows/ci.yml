@@ -8,7 +8,8 @@
 # every other job passed or was skipped: it is the one required check.
 #
 #   docs       — builds the site strictly; publishes main's as `dev`
-#   tests      — the suite on Python 3.11/3.12/3.13 (Linux, CPU backend)
+#   tests      — the suite on Python 3.11/3.12/3.13 (Linux, CPU backend);
+#                on a pull request 3.13 alone, with the quick tier on the others
 #   timing     — the tests of what the scheduler did, alone on a runner
 #   ids-i64    — the dataset tests again, every topology with 64-bit ids
 #   packaging  — proves a GPU install works without llvmlite
@@ -210,6 +211,14 @@ jobs:
           uv run mike deploy --push --alias-type=copy dev
 
   # ── The main gate ──────────────────────────────────────────────────
+  # On a pull request, the suite on 3.13 alone, with VTK and MFEM, and the
+  # quick tier on 3.11 and 3.12, without them (tests-quick, below); pushes to
+  # main and runs by hand run all three in full. Of the 18 pull request runs
+  # that failed from 2026-10-14 to 11-05, 5 failed on 3.11 or 3.12 and not on
+  # 3.13, and the difference there was VTK more than the version: a test that
+  # passes with VTK and fails without (test_viskores_datasets.py twice). Their
+  # files are in the quick tier, all but some of test_viskores_datasets.py's
+  # tests (the wiki's CI test management plan, step 2).
   tests:
     name: tests (py${{ matrix.python-version }}, ${{ matrix.shard }}/4)
     needs: changes
@@ -226,7 +235,9 @@ jobs:
       # and hides whether the problem is version-specific.
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: >-
+          ${{ fromJSON(github.event_name == 'pull_request'
+          && '["3.13"]' || '["3.11", "3.12", "3.13"]') }}
         shard: [1, 2, 3, 4]
 
     steps:
@@ -245,7 +256,8 @@ jobs:
       # VTK and MFEM (PyMFEM) are the references for tack.dataset: VTK for the
       # cell shapes, faces and filters, MFEM for the derived topology, the
       # spaces and order 2. One job is enough, and the wheels are large, so
-      # only 3.13 syncs the `interop` extra; its versions, and the numba
+      # only 3.13, the version a pull request runs in full, syncs the
+      # `interop` extra; its versions, and the numba
       # PyMFEM pulls in, come from the lock. TACK_REQUIRE_VTK and
       # TACK_REQUIRE_MFEM make that job fail rather than skip if either is
       # missing or will not import.
@@ -383,6 +395,41 @@ jobs:
           echo "failed: $failed"
           uv run pytest -q -rs -m timing --last-failed --last-failed-no-failures none
           echo "::warning title=Flaky timing tests::failed, then passed when run again: $failed"
+
+  # ── The quick tier on the other versions ───────────────────────────
+  # A pull request's 3.11 and 3.12: the quick tier (`-m quick`, a module per
+  # area of the code), on four workers, without VTK and MFEM, so the paths a
+  # test takes without them are checked too. What differs between versions is
+  # mostly the language and the standard library, which every area reaches;
+  # the full suite runs on them on every push to main.
+  tests-quick:
+    name: quick tests (py${{ matrix.python-version }})
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TACK_REQUIRE_CLANG: "1"
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "**/uv.lock"
+          python-version: ${{ matrix.python-version }}
+
+      - name: Sync the workspace
+        run: uv sync --extra cpu --extra dev
+
+      - name: Run the quick tier
+        run: uv run pytest -q -n 4 -m "quick and not slow and not timing"
 
   # ── 64-bit ids ─────────────────────────────────────────────────────
   # tack.dataset keeps a topology's ids in i32 unless it is too large or asked
@@ -845,7 +892,7 @@ jobs:
   # timeout). It runs unless the whole run was cancelled (a newer push).
   ci:
     name: CI
-    needs: [changes, lint, docs, tests, test-map, timing, ids-i64, l2-cells, warp, vtk-master,
+    needs: [changes, lint, docs, tests, tests-quick, test-map, timing, ids-i64, l2-cells, warp, vtk-master,
             mpi, packaging, wheels, examples, metal]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest

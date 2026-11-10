@@ -10790,6 +10790,10 @@ quadrilateral face split from its own smallest corner (a hexahedron or
 voxel in 6, a wedge in 3, a pyramid in 2), which fills a convex cell. So
 the pieces of a partitioned dataset split the faces they share alike too. Other cells are left out. The
 points are the same; cell fields go to each cell's tetrahedra.</p>
+<p>Hidden and refined cells make no tetrahedra, and the others split as they
+would without them: an AMR box's hexahedra in 5, as its finer and coarser
+neighbours'. The points stay all of <code>data</code>'s, those only hidden cells use
+included.</p>
 
 
             <details class="mkdocstrings-source">
@@ -10811,7 +10815,9 @@ points are the same; cell fields go to each cell's tetrahedra.</p>
 <span class="normal">26</span>
 <span class="normal">27</span>
 <span class="normal">28</span>
-<span class="normal">29</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">29</span>
+<span class="normal">30</span>
+<span class="normal">31</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">tetrahedralize</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Every 3D cell as tetrahedra that meet face to face: two cells sharing a face</span>
 <span class="sd">    split it along one diagonal, as VTK&#39;s vtkDataSetTriangleFilter does. A</span>
@@ -10822,10 +10828,12 @@ points are the same; cell fields go to each cell's tetrahedra.</p>
 <span class="sd">    quadrilateral face split from its own smallest corner (a hexahedron or</span>
 <span class="sd">    voxel in 6, a wedge in 3, a pyramid in 2), which fills a convex cell. So</span>
 <span class="sd">    the pieces of a partitioned dataset split the faces they share alike too. Other cells are left out. The</span>
-<span class="sd">    points are the same; cell fields go to each cell&#39;s tetrahedra.&quot;&quot;&quot;</span>
-    <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.ghosts</span><span class="w"> </span><span class="kn">import</span> <span class="n">visible</span>
+<span class="sd">    points are the same; cell fields go to each cell&#39;s tetrahedra.</span>
 
-    <span class="n">data</span> <span class="o">=</span> <span class="n">visible</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+<span class="sd">    Hidden and refined cells make no tetrahedra, and the others split as they</span>
+<span class="sd">    would without them: an AMR box&#39;s hexahedra in 5, as its finer and coarser</span>
+<span class="sd">    neighbours&#39;. The points stay all of ``data``&#39;s, those only hidden cells use</span>
+<span class="sd">    included.&quot;&quot;&quot;</span>
     <span class="k">if</span> <span class="ow">not</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">topology</span><span class="p">,</span> <span class="s2">&quot;reference_cells&quot;</span><span class="p">,</span> <span class="kc">True</span><span class="p">):</span>
         <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s2">&quot;tetrahedralize takes cells of the linear shapes&quot;</span><span class="p">)</span>
     <span class="k">return</span> <span class="n">_split</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="s2">&quot;tetrahedra&quot;</span><span class="p">,</span> <span class="n">fields</span><span class="p">)</span>
@@ -14751,8 +14759,7 @@ the pieces' order.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/algorithms/integrate.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">363</span>
-<span class="normal">364</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">364</span>
 <span class="normal">365</span>
 <span class="normal">366</span>
 <span class="normal">367</span>
@@ -14818,7 +14825,8 @@ the pieces' order.</p>
 <span class="normal">427</span>
 <span class="normal">428</span>
 <span class="normal">429</span>
-<span class="normal">430</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">430</span>
+<span class="normal">431</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">integrate</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;The measure of ``data`` -- its cells&#39; total volume, area or length -- and the</span>
 <span class="sd">    integral over it of each of ``fields`` (names; a mapping of names to field</span>

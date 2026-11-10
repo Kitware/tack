@@ -34,6 +34,7 @@ from tack.lang.types import (
     get_default_float,
     i32,
     i64,
+    integer_type_for_range,
     integer_type_for_value,
     mat,
     vec,
@@ -1264,11 +1265,28 @@ def copyto(dst: Array, src):
 def arange(start, stop=None, step=1, dtype=None, *, device=None) -> Array:
     """Evenly spaced values in ``[start, stop)``, as ``np.arange``.
 
-    Without ``dtype``, integer arguments give i32 (i64 if a value needs it)
-    and any float argument gives the default float type (`get_default_float`).
+    Without ``dtype``, integer arguments give i32 (i64, then u64, if a value
+    needs it) and any float argument gives the default float type
+    (`get_default_float`). Integers are made in their integer type, so a range
+    past 2**63 keeps every value (NumPy's own rounds through float64 there).
     """
     if stop is None:
         start, stop = 0, start
+    integral = all(isinstance(v, (int, np.integer)) and not isinstance(v, (bool, np.bool_))
+                   for v in (start, stop, step))
+    if integral and step != 0:
+        # Integers in an integer type, made in it, so none is rounded: NumPy's
+        # own arange goes through float64 for ends past i64 (2**63 and
+        # 2**63 + 1 the same), whatever the type it is told after.
+        start, stop, step = int(start), int(stop), int(step)
+        n = len(range(start, stop, step))
+        if dtype is None:
+            ends = (start, start + step * (n - 1)) if n else (start, stop)
+            dtype = integer_type_for_range(*ends)
+        dtype = as_dtype(dtype)
+        if dtype.numpy_dtype.kind in "iu":
+            return array(np.arange(start, stop, step, dtype=dtype.numpy_dtype), dtype,
+                         device=device)
     values = np.arange(start, stop, step)
     if dtype is None:
         dtype = _host_dtype(values, [start, stop, step])
@@ -1325,8 +1343,14 @@ def from_dlpack(x, *, device=None, copy: bool = False) -> Array:
         a = tack.from_dlpack(vtk_capsule)
     """
     if copy:
-        host = x if isinstance(x, np.ndarray) else np.from_dlpack(x)
-        return array(host, device=device)
+        if isinstance(x, np.ndarray) or hasattr(x, "__dlpack__"):
+            host = x if isinstance(x, np.ndarray) else np.from_dlpack(x)
+            return array(host, device=device)
+        # A raw capsule has no __dlpack__ for NumPy to call: imported as Tack
+        # imports one, then copied.
+        from tack.lang.dlpack import dlpack_to_array
+        out = dlpack_to_array(x).copy()
+        return out if device is None else out.to_device(device)
 
     from tack.lang.dlpack import dlpack_to_array
     return dlpack_to_array(x, device=device)

@@ -451,7 +451,7 @@ def test_a_mixed_mesh_goes_to_vtk_and_back(chosen):
     # the polyhedron's, outward for it.
     assert _cells_by_face(t) == _cells_by_face(data.topology)
     # The old reading, every cell a polyhedron, has the same faces.
-    every = vtk.vtk_to_dataset(grid, polyhedral=True).topology
+    every = vtk.vtk_to_dataset(grid, polyhedral="all").topology
     assert isinstance(every, td.PolyhedralTopology)
     assert {frozenset(r) for r in _face_records(t)} == {
         frozenset(int(p) for p in every.face_points.numpy()[a:b])
@@ -604,7 +604,7 @@ def test_an_algorithm_takes_mixed_cells_or_refuses_them(name):
 def test_face_algorithms_on_polygon_faces_are_the_all_polyhedra_readings():
     vtk = _vtk()
     mixed = _pentagonal_prisms()
-    every = vtk.vtk_to_dataset(vtk.dataset_to_vtk(mixed), polyhedral=True, dtype=tack.f64)
+    every = vtk.vtk_to_dataset(vtk.dataset_to_vtk(mixed), polyhedral="all", dtype=tack.f64)
     assert isinstance(every.topology, td.PolyhedralTopology)
     np.testing.assert_allclose(td.cell_geometry(mixed).measure.values.numpy(),
                                td.cell_geometry(every).measure.values.numpy(), rtol=1e-12)

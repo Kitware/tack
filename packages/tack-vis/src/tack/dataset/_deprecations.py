@@ -12,5 +12,12 @@ from tack._deprecation import deprecated
 SPLIT = deprecated(
     'vtk_to_dataset(..., polyhedral="split")', since="0.8", removed_in="0.9",
     use="the default reading, the polyhedra beside the shaped cells in one "
-        "UnstructuredTopology (polyhedral=True reads every cell as a polyhedron)",
+        'UnstructuredTopology (polyhedral="all" reads every cell as a polyhedron)',
+    package="tack-vis")
+
+#: ``polyhedral`` as a flag: ``True`` meant ``"all"`` and ``False`` the default, one
+#: option spelled two ways once ``"split"`` came (#389's review).
+POLYHEDRAL_FLAG = deprecated(
+    "vtk_to_dataset(..., polyhedral=True or False)", since="0.8", removed_in="0.9",
+    use='polyhedral="all" for True, and the default (None) for False',
     package="tack-vis")

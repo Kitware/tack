@@ -10,7 +10,7 @@ polyhedra reads as one `UnstructuredTopology` with the polyhedra beside the
 shaped cells, as VTK holds them: one numbering of points and cells, each cell on
 its own path (a hexahedron through its shape functions, a polyhedron through its
 faces), and a face a hexahedron and a polyhedron share one face with both.
-`polyhedral=True` reads every cell as a polyhedron instead, a
+`polyhedral="all"` reads every cell as a polyhedron instead, a
 `PolyhedralTopology`. A CFD mesh of 21M hexahedra and 508K polyhedra reads in
 about 10 seconds this way, with `merge_points` and `orient`; as polyhedra
 throughout, in 35. `polyhedral="split"`, two pieces over the same points, is

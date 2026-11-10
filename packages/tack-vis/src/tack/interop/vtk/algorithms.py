@@ -296,7 +296,7 @@ def _converted(vtk_data):
     from tack.interop.vtk import vtk_to_dataset
 
     faces = vtk_data.GetPolyhedronFaces() if hasattr(vtk_data, "GetPolyhedronFaces") else None
-    polyhedral = True if faces is not None and faces.GetNumberOfCells() else None
+    polyhedral = "all" if faces is not None and faces.GetNumberOfCells() else None
     return vtk_to_dataset(vtk_data, dtype=None, copy=False, polyhedral=polyhedral)
 
 

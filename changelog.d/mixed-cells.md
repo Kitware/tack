@@ -72,6 +72,9 @@
   0.9: the default reading holds polyhedra beside the shaped cells in one
   topology, without the slivers between the two pieces' surfaces where a
   hexahedron and a polyhedron share a face that is not planar.
+- `vtk_to_dataset(..., polyhedral=True)` and `polyhedral=False`, to be removed
+  in 0.9: `polyhedral="all"` and the default (`None`) say the same, now that
+  the option takes `"split"` too. Anything else is refused.
 
 ### Fixed
 
@@ -86,11 +89,11 @@
 
 - **Breaking:** `vtk_to_dataset` of a grid with polyhedra gives an
   `UnstructuredTopology` with the polyhedra beside the shaped cells, not a
-  `PolyhedralTopology`. `polyhedral=True` (or `"all"`) reads every cell as a
-  polyhedron as before; the VTK algorithm wrappers do so for grids with
+  `PolyhedralTopology`. `polyhedral="all"` reads every cell as a polyhedron as
+  before; the VTK algorithm wrappers do so for grids with
   polyhedra, so their filters keep their inputs.
 - **Breaking:** `vtk_to_dataset` of a grid or `vtkPolyData` with polygons
   (`VTK_POLYGON`, or polygons of five points or more) gives an
   `UnstructuredTopology` with the polygons beside the triangles and quads, not
   a `PolygonalTopology`, so the reader changes once, in this release, for both.
-  `polyhedral=True` (or `"all"`) reads every cell as a polygon as before.
+  `polyhedral="all"` reads every cell as a polygon as before.

@@ -1097,15 +1097,17 @@ def vtk_to_dataset(grid, dtype=_DEFAULT_FLOAT, polyhedral=None, orient=False, id
     cells on their corner points, with the geometry and point data in
     ``H1(order=p, basis="equispaced")`` (VTK's Lagrange nodes). Polyhedra stand
     beside the shapes in one ``UnstructuredTopology``, their faces matched once
-    (``_mixed_polyhedra``); with ``polyhedral=True`` (or ``"all"``) the grid becomes
+    (``_mixed_polyhedra``); with ``polyhedral="all"`` the grid becomes
     a ``PolyhedralTopology`` instead, every cell a polyhedron of its faces, and with
     ``polyhedral="split"`` a ``PartitionedDataSet``: its shaped cells one piece,
     its polyhedra another, over the same points (``_split_polyhedra``; deprecated
-    since 0.8, to be removed in 0.9: the default reading holds both). A grid of
+    since 0.8, to be removed in 0.9: the default reading holds both).
+    ``polyhedral=True`` and ``False``, ``"all"`` and the default spelled as a
+    flag, are deprecated too. A grid of
     polylines becomes a ``PolylineTopology`` (its lines two-point polylines, and
     no other cells allowed). Polygons (``VTK_POLYGON``) stand beside triangles
     and quads in one ``UnstructuredTopology``, as polyhedra beside solids (no
-    other cells allowed with them); with ``polyhedral=True`` (or ``"all"``) a
+    other cells allowed with them); with ``polyhedral="all"`` a
     grid of polygons becomes a ``PolygonalTopology`` instead, its triangles and
     quads polygons too. Its types, offsets and connectivity stay implicit where
     VTK's are (a cell type given as a number, affine offsets). Hexahedra with
@@ -1205,6 +1207,13 @@ def vtk_to_dataset(grid, dtype=_DEFAULT_FLOAT, polyhedral=None, orient=False, id
     Metal, so the dataset is on Metal throughout."""
     from tack.runtime.dispatch import get_backend
 
+    if polyhedral is True or polyhedral is False:
+        from tack.dataset._deprecations import POLYHEDRAL_FLAG
+
+        POLYHEDRAL_FLAG.warn()
+        polyhedral = "all" if polyhedral else None
+    if polyhedral not in (None, "all", "split"):
+        raise ValueError(f'polyhedral is None, "all" or "split", not {polyhedral!r}')
     if dtype is _DEFAULT_FLOAT:
         dtype = tack.get_default_float()
     if dtype is None and not get_backend().supports_f64:

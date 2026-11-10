@@ -525,7 +525,7 @@ so.
 
 | Option | Does | Use it for |
 |---|---|---|
-| `polyhedral=True` | reads every cell as a polyhedron of its faces | a mesh to treat as polyhedra throughout, or an algorithm that does not take polyhedra beside shaped cells yet |
+| `polyhedral="all"` | reads every cell as a polyhedron of its faces | a mesh to treat as polyhedra throughout, or an algorithm that does not take polyhedra beside shaped cells yet |
 | `polyhedral="split"` | gives a `PartitionedDataSet` of two pieces over the same points: the shaped cells, and the polyhedra | nothing new: [deprecated](../reference/deprecations.md) since 0.8 and removed in 0.9, now that the default reading keeps the shaped cells shaped in one topology |
 | `merge_points=True` (or a tolerance) | merges coincident points before anything else is read | a mesh written per processor and put together without merging, such as OpenFOAM's `foamToVTK` of a decomposed case |
 | `orient=True` | turns inside-out cells outward, and repairs inconsistently wound polyhedra | meshes from converters that write cells in the reverse of VTK's order |
@@ -536,7 +536,7 @@ By default a grid's polyhedra stand beside its shaped cells in one
 and a face a hexahedron and a polyhedron share is one face with both as its
 sides. Every algorithm takes such meshes but `shrink` and `subdivide`, which
 say so by name (as do spaces that need a reference element in every cell,
-`H1` above order 1 and `L2`); `polyhedral=True` reads the mesh the way they
+`H1` above order 1 and `L2`); `polyhedral="all"` reads the mesh the way they
 take it.
 
 Inside-out cells are found on every read and named in a warning. Wedges are

@@ -277,7 +277,7 @@ def _check_vtk_round_trip(data):
         volumes.append(cell.ComputeVolume())
     assert min(volumes) > 0
     assert vtk.vtkGeometryFilter()(grid).number_of_cells == t.faces().boundary().shape[0]
-    back = vtk_to_dataset(grid, polyhedral=True)
+    back = vtk_to_dataset(grid, polyhedral="all")
     assert isinstance(back.topology, td.PolyhedralTopology)
     ours = _faces_by_points(t)
     theirs = _faces_by_points(back.topology)
@@ -339,7 +339,7 @@ def test_polyhedra_from_vtk_data(backend, name):
         with pytest.raises(ValueError, match="wound the same way"):
             vtk_to_dataset(grid)
         return
-    data = vtk_to_dataset(grid, polyhedral=True)
+    data = vtk_to_dataset(grid, polyhedral="all")
     assert isinstance(data.topology, td.PolyhedralTopology)
     assert data.num_cells == grid.number_of_cells
     surface = vtk.vtkGeometryFilter()(grid)
@@ -937,8 +937,8 @@ def _cgns(name):
 def test_cgns_in_both_polyhedral_conventions(backend):
     """NFACE_n (a sign per cell -> face reference) and NGON_n with ParentElements
     (owner and neighbour): the same mesh, consistently wound either way."""
-    nface = vtk_to_dataset(_cgns("Example_nface_n.cgns"), polyhedral=True)
-    ngon = vtk_to_dataset(_cgns("Example_ngon_pe.cgns"), polyhedral=True)
+    nface = vtk_to_dataset(_cgns("Example_nface_n.cgns"), polyhedral="all")
+    ngon = vtk_to_dataset(_cgns("Example_ngon_pe.cgns"), polyhedral="all")
     for data in (nface, ngon):
         assert isinstance(data.topology, td.PolyhedralTopology)
         assert len(td.check_winding(data)) == 0
@@ -958,7 +958,7 @@ def test_a_real_cfd_mesh_needs_orienting(backend):
     grid = _cgns("EngineSector.cgns")
     with pytest.raises(ValueError, match="orient=True"):
         vtk_to_dataset(grid)
-    data = vtk_to_dataset(grid, orient=True, polyhedral=True)
+    data = vtk_to_dataset(grid, orient=True, polyhedral="all")
     assert data.num_cells == 1956 and len(td.check_winding(data)) == 0
     assert (td.algorithms.cell_geometry(data)[0].values.numpy() > 0).all()
     surface = vtk.vtkGeometryFilter()(dataset_to_vtk(data))
@@ -1421,6 +1421,22 @@ def _split(grid, **options):
     return out
 
 
+@needs_vtk
+def test_polyhedral_as_a_flag_is_deprecated():
+    """``polyhedral=True`` and ``False``, ``"all"`` and the default as a flag, warn at
+    the caller's line and read as those do; anything else is refused."""
+    from tack.interop.vtk import vtk_to_dataset
+
+    grid = _mixed_vtu_grid()
+    for flag, spelled in ((True, "all"), (False, None)):
+        with pytest.warns(tack.TackDeprecationWarning, match="polyhedral=True or False") as caught:
+            read = vtk_to_dataset(grid, polyhedral=flag)
+        assert {w.filename for w in caught} == {__file__}
+        assert type(read.topology) is type(vtk_to_dataset(grid, polyhedral=spelled).topology)
+    with pytest.raises(ValueError, match='polyhedral is None, "all" or "split"'):
+        vtk_to_dataset(grid, polyhedral="every")
+
+
 @pytest.mark.parametrize("copy", [True, False])
 def test_split_reads_shapes_and_polyhedra_over_one_set_of_points(copy):
     """``vtk_to_dataset(..., polyhedral="split")``: the shaped cells one piece and the
@@ -1446,7 +1462,7 @@ def test_split_reads_shapes_and_polyhedra_over_one_set_of_points(copy):
     for piece in pieces:                         # both "p"s, each in its own space
         assert piece.fields["p", td.H1].values.numpy().tolist() == [1.0] * grid.number_of_points
         assert set(piece.fields["p", td.Constant].values.numpy().tolist()) == {2.0}
-    whole = vtk_to_dataset(grid, polyhedral=True)
+    whole = vtk_to_dataset(grid, polyhedral="all")
 
     def area(data):
         return float(td.cell_geometry(data).measure.values.numpy().sum()) if data.num_cells else 0
@@ -1464,7 +1480,7 @@ def test_split_readings_outputs_reduce_once_marked():
 
     grid = _mixed_vtu_grid()
     pieces = _split(grid)
-    whole = vtk_to_dataset(grid, polyhedral=True)
+    whole = vtk_to_dataset(grid, polyhedral="all")
     for level in (-2.0, 2.0, 6.0):
         cuts = td.PartitionedDataSet([td.contour(p, "T", level) for p in pieces])
         with pytest.raises(NotImplementedError, match="generate_global_ids"):
@@ -1491,7 +1507,7 @@ def _repeated_points(grid):
     return append.GetOutput()
 
 
-@pytest.mark.parametrize("polyhedral", [True, "split"])
+@pytest.mark.parametrize("polyhedral", ["all", "split"])
 def test_reading_merges_repeated_points(polyhedral):
     """``vtk_to_dataset(..., merge_points=True)`` reads a grid whose cells repeat
     their neighbours' points as the grid on shared points: the points once, each
@@ -1502,7 +1518,7 @@ def test_reading_merges_repeated_points(polyhedral):
     grid = _mixed_vtu_grid()
     repeated = _repeated_points(grid)
     assert repeated.number_of_points > grid.number_of_points
-    expected, merged = (vtk_to_dataset(g, polyhedral=True, merge_points=m)
+    expected, merged = (vtk_to_dataset(g, polyhedral="all", merge_points=m)
                         for g, m in ((grid, None), (repeated, True)))
     assert merged.num_points == grid.number_of_points
     np.testing.assert_array_equal(np.sort(merged.fields["T"].values.numpy()),
@@ -1532,7 +1548,7 @@ def test_split_readings_surface_is_the_wholes():
     grid = _mixed_vtu_grid()
     pieces = _split(grid)
     surface = td.extract_surface(pieces)
-    whole = td.extract_surface(vtk_to_dataset(grid, polyhedral=True))
+    whole = td.extract_surface(vtk_to_dataset(grid, polyhedral="all"))
     assert sum(int(((p.ghosts.cells.numpy() & 1) == 0).sum()) for p in surface) == whole.num_cells
     assert sum(td.extract_surface(p).num_cells for p in pieces) > whole.num_cells
 def test_split_reading_ghosted_as_polyhedra_reduces_exactly():
@@ -1545,7 +1561,7 @@ def test_split_reading_ghosted_as_polyhedra_reduces_exactly():
     grid = _mixed_vtu_grid()
     shaped, polyhedral = _split(grid)
     pieces = td.ghost_cells(td.PartitionedDataSet([td.as_polyhedra(shaped), polyhedral]))
-    whole = vtk_to_dataset(grid, polyhedral=True)
+    whole = vtk_to_dataset(grid, polyhedral="all")
     for level in (-2.0, 2.0, 6.0):
         cuts = td.PartitionedDataSet([td.contour(p, "T", level) for p in pieces])
         assert td.statistics(cuts, "T").n == td.contour(whole, "T", level).num_points
@@ -1614,8 +1630,8 @@ def test_orient_repairs_shapes_before_matching_polyhedral_faces():
     grid = append.GetOutput()
     with pytest.warns(UserWarning, match="inside out"), \
             pytest.raises(ValueError, match="wound the same way"):
-        vtk_to_dataset(grid, polyhedral=True)
-    data = vtk_to_dataset(grid, polyhedral=True, orient=True)
+        vtk_to_dataset(grid, polyhedral="all")
+    data = vtk_to_dataset(grid, polyhedral="all", orient=True)
     assert data.num_cells == grid.number_of_cells
 
 

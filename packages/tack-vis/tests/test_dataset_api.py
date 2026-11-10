@@ -388,8 +388,9 @@ def test_rectilinear_round_trip(backend):
 def test_polygonal_round_trip(backend, make):
     """A polygonal topology exports as VTK_POLYGON cells, which the import read
     as linear shapes and refused ("cell types [7] are not linear shapes"). They
-    come back as polygons of an unstructured topology, or with
-    ``polyhedral="all"`` as the polygonal topology they were."""
+    come back in an unstructured topology, those of three and four points
+    triangles and quads, or with ``polyhedral="all"`` as the polygonal topology
+    they were."""
     if make == "as_polygons":
         data = td.as_polygons(td.extract_surface(td.uniform_grid((3, 3, 3))))
     else:
@@ -400,8 +401,10 @@ def test_polygonal_round_trip(backend, make):
     grid = dataset_to_vtk(data)
     mixed = vtk_to_dataset(grid)
     assert isinstance(mixed.topology, td.UnstructuredTopology)
-    assert (mixed.topology.types.numpy() == 7).all()
     offsets, loops = data.topology.loops()
+    sizes = np.diff(offsets.numpy())
+    np.testing.assert_array_equal(mixed.topology.types.numpy(),
+                                  np.select([sizes == 3, sizes == 4], [5, 9], 7))
     np.testing.assert_array_equal(mixed.topology.offsets.numpy(), offsets.numpy())
     np.testing.assert_array_equal(mixed.topology.connectivity.numpy(), loops.numpy())
     np.testing.assert_array_equal(mixed.fields["c"].values.numpy(), np.arange(data.num_cells))

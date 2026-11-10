@@ -95,6 +95,8 @@
   polyhedra, so their filters keep their inputs.
 - **Breaking:** `vtk_to_dataset` of a grid or `vtkPolyData` with polygons
   (`VTK_POLYGON`, or polygons of five points or more) gives an
-  `UnstructuredTopology` with the polygons beside the triangles and quads, not
-  a `PolygonalTopology`, so the reader changes once, in this release, for both.
+  `UnstructuredTopology` with the polygons beside the triangles and quads (a
+  polygon of three or four points read as a triangle or quad, as a
+  `vtkPolyData`'s is), not a `PolygonalTopology`, so the reader changes once, in
+  this release, for both.
   `polyhedral="all"` reads every cell as a polygon as before.

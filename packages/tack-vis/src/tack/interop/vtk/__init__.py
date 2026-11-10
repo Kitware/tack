@@ -1077,6 +1077,28 @@ class _DefaultFloat:
 _DEFAULT_FLOAT = _DefaultFloat()
 
 
+def _small_polygons_as_shapes(types, offsets):
+    """``types`` with each polygon (7) of three points a triangle (5) and of four a
+    quad (9), as ``_polydata_as_grid`` types a ``vtkPolyData``'s, so they take the
+    shapes' paths rather than a polygon's fan; ``types`` itself where there is none
+    (Jeff Lee's review of #389)."""
+    import numpy as np
+
+    from tack.arrays import to_host
+
+    def host(a):
+        return np.asarray(a if isinstance(a, np.ndarray) else to_host(a)).reshape(-1)
+
+    kinds = host(types).astype(np.uint8)
+    sizes = np.diff(host(offsets))
+    small = (kinds == 7) & (sizes >= 3) & (sizes <= 4)
+    if not small.any():
+        return types
+    kinds = np.where(small, np.where(sizes == 3, 5, 9), kinds).astype(np.uint8)
+    out = tack.array(kinds, tack.u8)
+    return out.to_device(offsets.device) if isinstance(offsets, tack.Array) else out
+
+
 def vtk_to_dataset(grid, dtype=_DEFAULT_FLOAT, polyhedral=None, orient=False, id_dtype=None,
                    origin=None, copy=True, merge_points=None, world=None):
     """Copy a ``vtkUnstructuredGrid``, ``vtkPolyData``, ``vtkStructuredGrid``,
@@ -1107,7 +1129,8 @@ def vtk_to_dataset(grid, dtype=_DEFAULT_FLOAT, polyhedral=None, orient=False, id
     polylines becomes a ``PolylineTopology`` (its lines two-point polylines, and
     no other cells allowed). Polygons (``VTK_POLYGON``) stand beside triangles
     and quads in one ``UnstructuredTopology``, as polyhedra beside solids (no
-    other cells allowed with them); with ``polyhedral="all"`` a
+    other cells allowed with them), those of three and four points read as
+    triangles and quads, as a ``vtkPolyData``'s are; with ``polyhedral="all"`` a
     grid of polygons becomes a ``PolygonalTopology`` instead, its triangles and
     quads polygons too. Its types, offsets and connectivity stay implicit where
     VTK's are (a cell type given as a number, affine offsets). Hexahedra with
@@ -1667,7 +1690,8 @@ def _vtk_to_dataset(grid, dtype=tack.f32, polyhedral=None, orient=False, id_dtyp
                 topology = PolygonalTopology(_ids(offsets), _ids(connectivity),
                                              num_points=num_points, id_dtype=id_dtype)
             else:
-                topology = UnstructuredTopology(types, offsets, connectivity,
+                topology = UnstructuredTopology(_small_polygons_as_shapes(types, offsets),
+                                                offsets, connectivity,
                                                 num_points=num_points, id_dtype=id_dtype)
         else:
             from tack.dataset.shapes import _BY_ID

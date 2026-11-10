@@ -72,6 +72,26 @@ def test_larger_polygons_stand_beside_the_triangles():
     assert _measure(every) == pytest.approx(_measure(data), rel=1e-12)
 
 
+
+def test_a_grids_polygons_of_three_and_four_points_are_triangles_and_quads():
+    """As a vtkPolyData's are, so they take the shapes' paths rather than a polygon's
+    fan (Jeff Lee's review of #389); larger ones stay polygons."""
+    from vtkmodules.vtkCommonCore import vtkPoints, vtkUnsignedCharArray
+    from vtkmodules.vtkCommonDataModel import vtkCellArray, vtkUnstructuredGrid
+
+    pts = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [2, 0, 0], [2, 1, 0],
+                    [3, 0.5, 0]], float)
+    grid = vtkUnstructuredGrid()
+    grid.points = vtkPoints(data=pts)
+    grid.cells = (vtkUnsignedCharArray(np.array([7, 7, 7], np.uint8)),
+                  vtkCellArray(offsets=np.array([0, 4, 7, 12]),
+                               connectivity=np.array([0, 1, 2, 3, 1, 4, 2, 4, 6, 5, 2, 1])))
+    data = vtk_to_dataset(grid, dtype=tack.f64)
+    assert data.topology.types.numpy().tolist() == [9, 5, 7]
+    assert _measure(data) == pytest.approx(_vtk_measure(grid), rel=1e-12)
+    assert isinstance(vtk_to_dataset(grid, polyhedral="all").topology, td.PolygonalTopology)
+
+
 def test_strips_are_their_triangles_wound_alike_with_their_cell_data():
     sphere = vtk.vtkSphereSource(theta_resolution=16, phi_resolution=12)()
     strips = vtk.vtkStripper()(sphere)

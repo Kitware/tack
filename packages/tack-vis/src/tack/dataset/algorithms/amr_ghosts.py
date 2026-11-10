@@ -27,7 +27,7 @@ from tack.dataset.amr import AMRDataSet
 from tack.dataset.carry import _point_values
 from tack.dataset.dataset import DataSet, Field
 from tack.dataset.ghosts import Ghosts
-from tack.dataset.partitioned import agree, common_origin
+from tack.dataset.partitioned import agree, common_origin, field_units
 from tack.dataset.spaces import H1, Constant, Values
 from tack.dataset.topology import StructuredTopology
 
@@ -848,7 +848,8 @@ def amr_ghost_cells(amr, layers, fields):
     pieces = [box for _, box in amr]
     names = []
     common_origin(amr._as_pieces(), "ghost_cells of an AMRDataSet",  # agreed in its gather
-                  check=lambda: names.extend(_carried(pieces, fields, "ghost_cells")))
+                  check=lambda: names.extend(_carried(pieces, fields, "ghost_cells")),
+                  units_of=lambda: field_units("ghost_cells of an AMRDataSet", pieces, names))
     extents = []
     for level in range(amr.num_levels):
         lo, hi = amr.level_domain(level)

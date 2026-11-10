@@ -14,7 +14,7 @@ from tack.dataset.algorithms._common import _csr_rows, _tolerance
 from tack.dataset.dataset import DataSet, Field
 from tack.dataset.ghosts import Ghosts
 from tack.dataset.global_ids import GlobalIds
-from tack.dataset.partitioned import PartitionedDataSet, common_origin
+from tack.dataset.partitioned import PartitionedDataSet, common_origin, field_units
 from tack.dataset.spaces import H1, Constant, Values
 from tack.dataset.topology import StructuredTopology, UnstructuredTopology
 
@@ -47,8 +47,11 @@ def merge_pieces(data, root=0, fields=None, device=None, tolerance=0.0):
 
     pieces = list(data)
     names = []
-    common_origin(data, "merge_pieces",            # on every rank, in the origin's gather
-                  check=lambda: names.extend(_carried(pieces, fields, "merge_pieces")))
+    # On every rank, in the origin's gather: the fields, and their one unit each.
+    _, agreed_units = common_origin(
+        data, "merge_pieces", check=lambda: names.extend(_carried(pieces, fields,
+                                                                  "merge_pieces")),
+        units_of=lambda: field_units("merge_pieces", pieces, names))
     tolerance = _tolerance(data, tolerance, "merge_pieces")
     blocks = tc.Blocks([piece.device for piece in pieces], data.world)
     world = blocks.world
@@ -72,6 +75,11 @@ def merge_pieces(data, root=0, fields=None, device=None, tolerance=0.0):
     else:
         merged = _merged_unstructured(blocks, pieces, names, _kind, target, out_device,
                                       tolerance)
+    if merged is not None:
+        # The units every piece's values are in (unknown where one piece's is).
+        for name, unit in agreed_units.items():
+            field = merged.fields[name]
+            merged.fields[name] = Field(field.space, field.values, unit)
     source = blocks.rank_of(target)
     if source == root:
         return merged

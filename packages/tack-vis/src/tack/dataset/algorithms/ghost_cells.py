@@ -43,7 +43,7 @@ from tack.dataset.carry import _take
 from tack.dataset.dataset import DataSet, Field, field_label, is_field_key
 from tack.dataset.ghosts import Ghosts
 from tack.dataset.global_ids import GlobalIds
-from tack.dataset.partitioned import PartitionedDataSet, agree, common_origin
+from tack.dataset.partitioned import PartitionedDataSet, agree, common_origin, field_units
 from tack.dataset.sets import Set
 from tack.dataset.spaces import H1, Constant, Values
 from tack.dataset.topology import StructuredTopology, UnstructuredTopology
@@ -130,7 +130,9 @@ def ghost_cells(data, layers=1, world=None, fields=None, tolerance=0.0):
         for i, piece in enumerate(pieces):
             _check_piece(i, piece)
 
-    common_origin(data, "ghost_cells", world, check)  # positions are matched as they are
+    # Positions are matched as they are; the fields' units agreed in the same gather.
+    common_origin(data, "ghost_cells", world, check,
+                  units_of=lambda: field_units("ghost_cells", pieces, names))
     tolerance = _tolerance(data, tolerance, "ghost_cells")
     blocks = tc.Blocks([piece.device for piece in pieces], world)
     if blocks.count > 1 << (63 - INDEX_BITS):

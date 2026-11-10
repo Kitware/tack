@@ -158,7 +158,7 @@ def _remade(module, name, message, rank, size):
     return error
 
 
-def common_origin(data, what, world=None, check=None):
+def common_origin(data, what, world=None, check=None, units_of=None):
     """The origin every piece of ``data`` has, on every rank of ``world``
     (``data.world`` by default): ``what`` (an algorithm that compares or moves
     positions between pieces) refuses pieces on two origins, in two spatial
@@ -167,16 +167,27 @@ def common_origin(data, what, world=None, check=None):
 
     ``check``, a function of no arguments, runs first and is agreed on in the
     same gather, as ``agree`` does: checks of the pieces whose algorithm's
-    first collective is this one cost no other."""
+    first collective is this one cost no other.
+
+    ``units_of``, a function of no arguments run after ``check``, gives this
+    rank's fields the algorithm combines and their one unit over its pieces,
+    ``{name: unit}`` (``{}`` with no pieces). Every rank's are compared in the
+    same gather -- the same names, and per name one unit (``units.common``) --
+    so that values in two units are refused on every rank before they meet;
+    the result is then ``(origin, {name: unit})``, the units agreed."""
     from tack.dataset import units
 
     world = data.world if world is None else world
     _, error, said = (None, None, None) if check is None else _attempt(check)
+    local_units = None
+    if units_of is not None and error is None:
+        local_units, error, said = _attempt(units_of)
     mine = sorted({piece.origin for piece in data})
     spatial = sorted({piece.unit or "" for piece in data})
     times = sorted({(piece.time, piece.time_unit) for piece in data}, key=repr)
-    gathered = world._allgather((mine, spatial, times, said))
-    _agreed([part for *_, part in gathered], error)
+    gathered = world._allgather((mine, spatial, times, said, local_units))
+    _agreed([g[3] for g in gathered], error)
+    agreed_units = None if units_of is None else _agreed_units(what, [g[4] for g in gathered])
     gathered = [g[:3] for g in gathered]
     every = sorted({o for part, _, _ in gathered for o in part})
     units.common(f"{what}'s pieces' geometry",
@@ -185,7 +196,35 @@ def common_origin(data, what, world=None, check=None):
     if len(every) > 1:
         raise ValueError(f"{what} needs its pieces on one origin, not {every}: rebase "
                          "them to one first (DataSet.rebased)")
-    return every[0] if every else (0.0, 0.0, 0.0)
+    origin = every[0] if every else (0.0, 0.0, 0.0)
+    return origin if units_of is None else (origin, agreed_units)
+
+
+def field_units(what, pieces, names):
+    """``{name: unit}``: each of ``names``' one unit over ``pieces`` (``units.common``:
+    ``None`` if one is unknown), refusing two known units -- values ``what``
+    combines must be in one."""
+    from tack.dataset import units
+
+    return {name: units.common(f"{what}'s field {name!r} on the pieces",
+                               [piece.fields[name].unit for piece in pieces])
+            for name in names}
+
+
+def _agreed_units(what, every):
+    """Ranks' ``{name: unit}`` (``None`` where a check failed, ``{}`` with no pieces)
+    as one: the same names on every rank with pieces, one unit each. Every rank
+    has the same list, so every rank raises alike."""
+    from tack.dataset import units
+
+    held = [part for part in every if part]
+    names = list(held[0]) if held else []
+    for part in held[1:]:
+        if sorted(part) != sorted(names):
+            raise ValueError(f"{what} needs the same fields on every rank's pieces, not "
+                             f"{sorted(names)} and {sorted(part)}")
+    return {name: units.common(f"{what}'s field {name!r} on the ranks' pieces",
+                               [part[name] for part in held]) for name in names}
 
 
 def _one_time(what, times):

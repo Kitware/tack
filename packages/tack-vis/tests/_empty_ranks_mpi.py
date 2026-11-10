@@ -348,7 +348,34 @@ SPREAD_CASES = {
 # ── Refusals: (pieces, run(data)) that must raise the same kind of error on every
 # rank, a rank without pieces too, however the pieces are laid out (issue #364). ──
 
+def mixed_fields():
+    """The tetrahedra, pieces 0 and 1 with field ``a``, 2 and 3 with ``b``: with every
+    field probed, the pieces give back different fields (#411)."""
+    out = []
+    for k, piece in enumerate(tetrahedra()):
+        piece = td.DataSet(piece.topology, piece.geometry, **piece._frame())
+        piece.fields["a" if k < 2 else "b"] = td.Field(td.H1(piece), tack.array(
+            np.ones(piece.num_points, np.float32)))
+        out.append(piece)
+    return out
+
+
+def mixed_units():
+    """The tetrahedra, pieces 0 and 1 with field ``q`` in m, 2 and 3 in cm (#411)."""
+    out = []
+    for k, piece in enumerate(tetrahedra()):
+        piece.fields["q"] = td.Field(td.Constant(piece), tack.array(
+            np.ones(piece.num_cells, np.float32)), "m" if k < 2 else "cm")
+        out.append(piece)
+    return out
+
+
 REFUSED = {
+    "refused/probe-fields": (mixed_fields, lambda d: td.probe(d, WHERE)),
+    "refused/probe-units": (mixed_units, lambda d: td.probe(d, WHERE, fields=["q"])),
+    "refused/integrate-units": (mixed_units, lambda d: td.integrate(d, "q")),
+    "refused/merge-units": (mixed_units, lambda d: td.merge_pieces(d, fields=["q"])),
+    "refused/ghost-units": (mixed_units, lambda d: td.ghost_cells(d, fields=["q"])),
     "refused/streamlines": (tetrahedra, lambda d: td.streamlines(d, "RTData", SEEDS, 0.1, 10)),
     "refused/advect": (flowing, lambda d: td.advect(d, "nope", SEEDS, 0.1, 10)),
     "refused/probe": (tetrahedra, lambda d: td.probe(d, WHERE, fields=["nope"])),

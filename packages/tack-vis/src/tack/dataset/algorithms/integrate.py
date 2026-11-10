@@ -402,21 +402,23 @@ def integrate(data, fields=None):
             raise TypeError("integrate names each Field it is given: pass {name: field}")
 
         def mine():
-            # The names and the measure's unit as a rank with pieces finds them, every
-            # piece's fields checked, so that a piece without one fails on every rank.
-            found = [_names(piece, fields) for piece in pieces]
-            return None if not found else ([name for name, _ in found[0]],
-                                           _measure_unit(pieces[0]))
+            # This rank's names, measure unit and fields' units, every piece's
+            # checked: the same names on each, one unit each, so that a piece
+            # without a field, or in another unit, fails on every rank.
+            if not pieces:
+                return None
+            return _schema_over(pieces, fields, "integrate over a PartitionedDataSet's "
+                                "partitions")
 
-        # A rank without pieces gets the same answer (the sums, and the fields'
-        # units, are every rank's).
-        labels, measure_unit = next((m for m in agree(data.world, mine) if m is not None),
-                                    ([], None))
+        # Every rank's, the same on every rank with pieces, so that sums of values
+        # in two units are refused on every rank; a rank without pieces gets them too.
+        held = [m for m in agree(data.world, mine) if m is not None]
+        labels, measure_unit, field_units = _schema_across(
+            held, "integrate over a PartitionedDataSet's ranks") if held else ([], None, {})
         names = _names(pieces[0], fields) if pieces else [(name, name) for name in labels]
         parts = _over_pieces(data, lambda piece: _piece(piece, names))
         measure = math.fsum(m for m, _, _ in parts)
         values = {name: np.sum([v[name] for _, v, _ in parts], axis=0) for name in labels}
-        field_units = parts[0][2] if parts else {}
         out_units = {name: units.derived((field_units[name], 1), (measure_unit, 1))
                      for name in labels}
     else:
@@ -429,6 +431,40 @@ def integrate(data, fields=None):
                      values={name: (float(v) if np.ndim(v) == 0 else tuple(map(float, v)))
                              for name, v in values.items()},
                      units=out_units)
+
+
+def _schema_over(pieces, fields, what):
+    """``(names, measure unit, {name: unit})`` of ``pieces``, which must have the same
+    fields to integrate (``_names``) and one unit for the measure and for each
+    field (``units.common``: unknown where one is)."""
+    from tack.dataset.algorithms._common import _measure_unit
+
+    found = [_names(piece, fields) for piece in pieces]
+    labels = [name for name, _ in found[0]]
+    for i, names in enumerate(found[1:], 1):
+        if [name for name, _ in names] != labels:
+            raise ValueError(f"{what} need the same fields to integrate: 0 has {labels}, {i} "
+                             f"{[name for name, _ in names]} (choose fields=)")
+    measure = units.common(f"{what}' geometry", [_measure_unit(p) for p in pieces])
+    field_units = {name: units.common(f"{what}' field {name!r}",
+                                      [_field(p, field).unit for p, names in zip(pieces, found)
+                                       for n, field in names if n == name])
+                   for name in labels}
+    return labels, measure, field_units
+
+
+def _schema_across(schemas, what):
+    """``_schema_over``'s of every rank with pieces as one: the same names, one unit
+    each."""
+    labels, _, _ = schemas[0]
+    for other, _, _ in schemas[1:]:
+        if other != labels:
+            raise ValueError(f"{what} need the same fields to integrate, not {labels} and "
+                             f"{other} (choose fields=)")
+    measure = units.common(f"{what}' geometry", [m for _, m, _ in schemas])
+    return labels, measure, {name: units.common(f"{what}' field {name!r}",
+                                                [f[name] for _, _, f in schemas])
+                             for name in labels}
 
 
 def _names(data, fields):

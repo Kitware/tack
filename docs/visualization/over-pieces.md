@@ -374,7 +374,8 @@ so one of your own can be too.
 
 A rank may hold no pieces, and it takes part all the same. An algorithm
 checks its arguments against the pieces before it first communicates: a field
-every piece must have, its kind and width, the kinds of cells. Every rank
+every piece must have, its kind and width, the kinds of cells, and, where it
+combines the pieces' values, that they agree on the fields and their units. Every rank
 learns the outcome, so a refusal raises the same error on every rank,
 including those that hold no pieces, instead of leaving them waiting for the
 rank that raised. The rank that found the error raises its own; the others

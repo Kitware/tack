@@ -413,10 +413,15 @@ def integrate(data, fields=None):
         # Every rank's, the same on every rank with pieces, so that sums of values
         # in two units are refused on every rank; a rank without pieces gets them too.
         held = [m for m in agree(data.world, mine) if m is not None]
-        labels, measure_unit, field_units = _schema_across(
-            held, "integrate over a PartitionedDataSet's ranks") if held else ([], None, {})
+        labels, measure_unit = _schema_across(
+            held, "integrate over a PartitionedDataSet's ranks") if held else ([], None)
         names = _names(pieces[0], fields) if pieces else [(name, name) for name in labels]
         parts = _over_pieces(data, lambda piece: _piece(piece, names))
+        # Every piece's fields' units, every rank's (so every rank refuses alike):
+        # one each, or the sums would add values in two units.
+        field_units = {name: units.common(f"integrate over a PartitionedDataSet's field "
+                                          f"{name!r}", [u[name] for _, _, u in parts])
+                       for name in labels}
         measure = math.fsum(m for m, _, _ in parts)
         values = {name: np.sum([v[name] for _, v, _ in parts], axis=0) for name in labels}
         out_units = {name: units.derived((field_units[name], 1), (measure_unit, 1))
@@ -434,37 +439,30 @@ def integrate(data, fields=None):
 
 
 def _schema_over(pieces, fields, what):
-    """``(names, measure unit, {name: unit})`` of ``pieces``, which must have the same
-    fields to integrate (``_names``) and one unit for the measure and for each
-    field (``units.common``: unknown where one is)."""
+    """``(names, measure unit)`` of ``pieces``, which must have the same fields to
+    integrate (``_names``, in any order) and one unit for the measure
+    (``units.common``: unknown where one is). The fields' units are compared
+    where every piece's integrals are, with no field evaluated twice."""
     from tack.dataset.algorithms._common import _measure_unit
 
     found = [_names(piece, fields) for piece in pieces]
     labels = [name for name, _ in found[0]]
     for i, names in enumerate(found[1:], 1):
-        if [name for name, _ in names] != labels:
+        if sorted(name for name, _ in names) != sorted(labels):
             raise ValueError(f"{what} need the same fields to integrate: 0 has {labels}, {i} "
                              f"{[name for name, _ in names]} (choose fields=)")
-    measure = units.common(f"{what}' geometry", [_measure_unit(p) for p in pieces])
-    field_units = {name: units.common(f"{what}' field {name!r}",
-                                      [_field(p, field).unit for p, names in zip(pieces, found)
-                                       for n, field in names if n == name])
-                   for name in labels}
-    return labels, measure, field_units
+    return labels, units.common(f"{what}' geometry", [_measure_unit(p) for p in pieces])
 
 
 def _schema_across(schemas, what):
-    """``_schema_over``'s of every rank with pieces as one: the same names, one unit
-    each."""
-    labels, _, _ = schemas[0]
-    for other, _, _ in schemas[1:]:
-        if other != labels:
+    """``_schema_over``'s of every rank with pieces as one: the same names, one
+    measure unit."""
+    labels, _ = schemas[0]
+    for other, _ in schemas[1:]:
+        if sorted(other) != sorted(labels):
             raise ValueError(f"{what} need the same fields to integrate, not {labels} and "
                              f"{other} (choose fields=)")
-    measure = units.common(f"{what}' geometry", [m for _, m, _ in schemas])
-    return labels, measure, {name: units.common(f"{what}' field {name!r}",
-                                                [f[name] for _, _, f in schemas])
-                             for name in labels}
+    return labels, units.common(f"{what}' geometry", [m for _, m in schemas])
 
 
 def _names(data, fields):

@@ -244,6 +244,7 @@ nav:
       - Plans:
           - design/plans/index.md
           - Cut filters' memory: design/plans/cut-filters-memory.md
+          - Mutation rules, stage 1: design/plans/mutation-rules.md
       - Contracts: contracts/index.md
       - Dataset API design: vis-guide/design/dataset-api.md
       - Polyhedra: vis-guide/design/polyhedra.md

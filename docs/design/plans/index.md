@@ -27,3 +27,4 @@ recommendation, so a review can answer "yes", "no" or "other" per decision.
 | Plan | Issue | Status |
 |---|---|---|
 | [Cut filters' memory](cut-filters-memory.md) | [#318](https://github.com/Kitware/tack/issues/318) | Proposed |
+| [Mutation rules, stage 1](mutation-rules.md) | [#323](https://github.com/Kitware/tack/issues/323) | Proposed |

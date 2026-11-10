@@ -6,4 +6,6 @@
   copies and DLPack take it as any array; writes through it land in `a`, and
   count as writes to all of `a`'s memory (`DeviceBuffer.version`). A view
   keeps `a` alive and is read-only if `a` is; a step is refused. Structure-of-
-  arrays arrays slice component by component.
+  arrays arrays slice component by component. `tack.copyto` between views that
+  overlap (`copyto(a[1:], a[:-1])`) reads the source whole first, as NumPy's,
+  copying it to new storage.

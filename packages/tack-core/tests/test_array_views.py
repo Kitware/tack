@@ -312,3 +312,30 @@ def test_debug_mode_checks_against_the_view(backend):
             _past_the_end(a[0:4], 4)              # inside the root, past the view
     finally:
         tack.set_debug(was)
+
+
+@pytest.mark.parametrize("layout", ["aos", "soa"])
+def test_copyto_between_overlapping_views_reads_the_source_first(backend, layout):
+    # As np.copyto: shifting rows within one array is as if the source were read
+    # whole first, on any device and however its threads run (#393 review).
+    host = np.arange(60, dtype=np.float32).reshape(20, 3)
+    for dst_rows, src_rows in ((slice(2, None), slice(None, -2)),
+                               (slice(None, -2), slice(2, None)),
+                               (slice(3, 13), slice(5, 15))):
+        values = tack.array(host, tack.vec3(), layout=layout)
+        expected = host.copy()
+        np.copyto(expected[dst_rows], expected[src_rows])
+        tack.copyto(values[dst_rows], values[src_rows])
+        np.testing.assert_array_equal(values.numpy(), expected)
+
+
+def test_only_storage_shared_out_of_step_counts_as_overlap(backend):
+    from tack.lang.array import _partly_overlap
+
+    a = tack.zeros((10, 2))
+    b = tack.zeros((10, 2))
+    assert _partly_overlap(a[1:], a[:-1]) and _partly_overlap(a[2:6], a[4:8])
+    assert not _partly_overlap(a[:5], a[5:])                 # side by side
+    assert not _partly_overlap(a[2:6], a[2:6])               # element for element
+    assert not _partly_overlap(a, a.reshape(20))
+    assert not _partly_overlap(a[1:], b[:-1])                # other storage

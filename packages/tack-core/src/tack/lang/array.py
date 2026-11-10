@@ -1186,6 +1186,30 @@ def asarray(obj, dtype=None, *, device=None, layout=None) -> Array:
     return array(obj, dtype, device=device, layout=layout)
 
 
+def _storage(array):
+    """``[(root buffer, first scalar, scalars)]``: the storage ``array`` occupies,
+    one entry per buffer (an SOA array's components'). A view's is a stretch of
+    its root's."""
+    arrays = array.components if isinstance(array, SoaArray) else (array,)
+    out = []
+    for a in arrays:
+        buffer = a._buffer
+        out.append((getattr(buffer, "_root", buffer), getattr(buffer, "_start", 0),
+                    a.scalar_size))
+    return out
+
+
+def _partly_overlap(a, b):
+    """Whether arrays ``a`` and ``b`` share storage other than element for element:
+    stretches of one root that overlap without starting at the same scalar."""
+    for root, start, count in _storage(a):
+        for other, other_start, other_count in _storage(b):
+            if (root is other and start != other_start
+                    and start < other_start + other_count and other_start < start + count):
+                return True
+    return False
+
+
 def copyto(dst: Array, src):
     """Copy ``src`` into the existing array ``dst``, as ``np.copyto`` does.
 
@@ -1196,6 +1220,11 @@ def copyto(dst: Array, src):
 
     It only writes into Tack arrays. `numpy` reads one into a new NumPy
     array; ``np.copyto`` copies between NumPy arrays.
+
+    ``src`` and ``dst`` may overlap -- two views of one array's rows, say
+    ``copyto(a[1:], a[:-1])`` -- and the result is as if ``src`` were read whole
+    first, as NumPy's: a source over part of the destination's storage is
+    copied to new storage before it is written.
     """
     if not isinstance(dst, Array):
         raise TypeError(f"copyto() writes into a Tack array, not {type(dst).__name__}")
@@ -1206,6 +1235,10 @@ def copyto(dst: Array, src):
         from tack.runtime.dispatch import same_device
         same_device("copyto()", (dst, src))
         dst._check_writable()
+        if _partly_overlap(dst, src):
+            # The copy runs element by element, in no order: an element written
+            # before another reads it would be read already overwritten.
+            src = src.copy()
         from tack.algorithms.copy import copy as _copy
         if src.layout == dst.layout == "aos":
             _copy(src._scalar_view(), dst._scalar_view(), dst.scalar_size)

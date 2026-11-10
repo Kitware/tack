@@ -409,7 +409,7 @@ def _merged_rings(messages, order, types, offsets, connectivity, num_points, id_
     ring_points, ordered_sizes = _csr_rows(ring_offsets, points, rings)
     return mixed_from_rings(types, offsets, connectivity, ordered_counts,
                             np.concatenate(([0], np.cumsum(ordered_sizes))), ring_points,
-                            num_points, id_dtype=id_dtype)
+                            num_points, id_dtype=id_dtype, where="the merged pieces")
 
 
 def _add_values(message, piece, names, kind_of, points, cells, device, explicit):

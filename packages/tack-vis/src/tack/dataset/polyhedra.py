@@ -404,6 +404,7 @@ class PolyhedralTopology(_Topology):
 
     def validate(self):
         _refuse("polyhedral topology", self._id_problems())
+        _refuse("polyhedral topology", unlisted_faces(self.cell_faces, self.num_faces))
         return self
 
     @on_inputs_device
@@ -525,6 +526,25 @@ def _bucket_keys(sizes, caps, keys, largest, n):
         keys[c] = key
         if key == caps.shape[0]:
             tack.atomic_max(largest, 0, need)
+
+
+@tack.kernel
+def _mark_listed(cell_faces, listed):
+    for i in range(cell_faces.shape[0]):
+        listed[cell_faces[i]] = 1
+
+
+def unlisted_faces(cell_faces, n_faces):
+    """``validate``'s problem, if any, with stored faces no cell lists: ``faces()``
+    makes each a face with no cell on either side, counted as boundary (a clip
+    through a plane of mesh points left them, #389's review)."""
+    if not n_faces:
+        return []
+    listed = tack.zeros((n_faces,), tack.i32)
+    if size_of(cell_faces):
+        _mark_listed(cell_faces, listed)
+    missing = n_faces - int(listed.sum())
+    return [f"{missing} of the {n_faces} stored faces are on no cell"] if missing else []
 
 
 class SizeBuckets(_OnItsArrays):
@@ -1087,14 +1107,15 @@ def outward_rings(face_offsets, face_points, cell_offsets, cell_faces, sides):
 
 
 def mixed_from_rings(types, offsets, connectivity, ring_counts, ring_offsets, ring_points,
-                     num_points, id_dtype=None):
+                     num_points, id_dtype=None, where=None):
     """An ``UnstructuredTopology`` of the cells ``types``/``offsets``/``connectivity``
     (host arrays), its polyhedra's faces given as rings wound out of them --
     ``ring_counts`` a cell, 0 for a shape -- matched by point set
     (``_match_rings``), so a face two polyhedra both list is one face with both;
     one a polyhedron shares with a shape is its ring, which ``faces()`` matches.
     Without polyhedra, the cells alone. What pieces joined from other pieces'
-    cells (``ghost_cells``, ``merge_pieces``) are made of."""
+    cells (``ghost_cells``, ``merge_pieces``) are made of; ``where`` says which, for
+    a refusal."""
     from tack.dataset.topology import UnstructuredTopology
 
     types = np.asarray(types, np.uint8)
@@ -1107,8 +1128,12 @@ def mixed_from_rings(types, offsets, connectivity, ring_counts, ring_offsets, ri
     face_offsets, face_points, cell_faces, sides, same_way = _match_rings(
         np.asarray(ring_offsets, np.int64), ring_points)
     if same_way:
-        raise ValueError(f"{same_way} faces two polyhedra share are wound the same way by "
-                         "both")
+        raise ValueError(
+            f"{same_way} faces two polyhedra share are wound the same way by both"
+            + (f", in {where}" if where else "") + ". Between pieces, that is most likely "
+            "pieces read or oriented apart, one's polyhedra inside out against its "
+            "neighbours': read each with vtk_to_dataset(..., orient=True), which turns "
+            "them outward")
     cell_face_offsets = np.concatenate(([0], np.cumsum(ring_counts))).astype(np.int64)
     return UnstructuredTopology(types, offsets, connectivity, num_points=num_points,
                                 id_dtype=id_dtype,

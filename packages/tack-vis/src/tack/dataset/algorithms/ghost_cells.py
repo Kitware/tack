@@ -144,6 +144,10 @@ def ghost_cells(data, layers=1, world=None, fields=None, tolerance=0.0):
         result = PartitionedDataSet(out, world=world)
         result._ghost_plans = plans
         return result
+    if 3 in every and 2 in every:
+        raise TypeError("ghost_cells takes pieces read alike, not some with polyhedra beside "
+                        "shaped cells (vtk_to_dataset's default reading) and some all "
+                        'polyhedra (polyhedral="all"): read every piece the same way')
     if len(set(every) - {3}) > 1 or (3 in every and set(every) - {0, 3}):
         raise TypeError("ghost_cells takes pieces all structured, all unstructured or all "
                         "polyhedral, not a mix (as_polyhedra makes an unstructured piece "
@@ -528,7 +532,8 @@ def _appended(g, piece, host, identity, received, names, numbered, blocks):
                                        piece.topology.id_dtype)
         elif host["rings"] is not None:
             topology = _polyhedra_with(host["rings"], sources, maps, total_points,
-                                       piece.topology.id_dtype, (types, offsets, connectivity))
+                                       piece.topology.id_dtype, (types, offsets, connectivity),
+                                       piece=g)
         else:
             topology = UnstructuredTopology(types, offsets, connectivity,
                                             num_points=total_points,
@@ -572,7 +577,7 @@ def _appended(g, piece, host, identity, received, names, numbered, blocks):
     return out, points_from, cells_from
 
 
-def _polyhedra_with(rings, sources, maps, num_points, id_dtype, cells=None):
+def _polyhedra_with(rings, sources, maps, num_points, id_dtype, cells=None, piece=None):
     """A piece's polyhedra and the ones its neighbours sent, after them in the order
     of the messages, as one topology: every cell's outward faces matched by point
     set (``_from_rings``), so a face a received cell shares with one of the
@@ -591,9 +596,12 @@ def _polyhedra_with(rings, sources, maps, num_points, id_dtype, cells=None):
         points.append(maps[m][message["ring_points"].numpy()])
     counts, sizes = np.concatenate(counts), np.concatenate(sizes)
     if cells is not None:
+        senders = sorted({int(source) for source, _ in sources})
         return mixed_from_rings(*cells, counts, np.concatenate(([0], np.cumsum(sizes))),
                                 np.concatenate(points).astype(np.int64), num_points,
-                                id_dtype=id_dtype)
+                                id_dtype=id_dtype,
+                                where=f"piece {piece} beside the ghost cells of pieces "
+                                      f"{senders}")
     return PolyhedralTopology._from_rings(
         np.concatenate(([0], np.cumsum(counts))).astype(np.int64),
         np.concatenate(([0], np.cumsum(sizes))).astype(np.int64),

@@ -171,6 +171,62 @@ def _kept_offsets(counts, kept, starts, slots, out, n_cells):
             out[slots[c]] = starts[c]
 
 
+@tack.kernel
+def _mark_listed(cell_faces, listed):
+    for i in range(cell_faces.shape[0]):
+        listed[cell_faces[i]] = 1
+
+
+@tack.kernel
+def _listed_sizes(face_offsets, listed, sizes):
+    for f in range(listed.shape[0]):
+        sizes[f] = face_offsets[f + 1] - face_offsets[f] if listed[f] == 1 else 0
+
+
+@tack.kernel
+def _listed_out(face_offsets, face_points, listed, slots, starts, out_offsets, out_points):
+    for f in range(listed.shape[0]):
+        if listed[f] == 1:
+            out_offsets[slots[f]] = starts[f]
+            begin = face_offsets[f]
+            for j in range(face_offsets[f + 1] - begin):
+                out_points[starts[f] + j] = face_points[begin + j]
+
+
+@tack.kernel
+def _relisted(cell_faces, slots, out):
+    for i in range(cell_faces.shape[0]):
+        out[i] = slots[cell_faces[i]]
+
+
+def _only_listed(face_offsets, face_points, cell_faces, dtype):
+    """The faces some cell lists, renumbered in order, and ``cell_faces`` on the new
+    numbers; the arrays as given where every face is listed. A clip through a plane
+    of mesh points left the faces and caps of a cell it dropped (one only touching
+    the value) in the plane, with no cell on either side, which ``faces()`` counted
+    as boundary (Jeff Lee's review of #389)."""
+    n_faces = size_of(face_offsets) - 1
+    listed = tack.zeros((n_faces,), tack.i32)
+    if size_of(cell_faces):
+        _mark_listed(cell_faces, listed)
+    slots = tack.empty((n_faces,), dtype)
+    kept = exclusive_scan(listed, slots, n_faces) if n_faces else 0
+    if kept == n_faces:
+        return face_offsets, face_points, cell_faces
+    sizes = tack.empty((n_faces,), dtype)
+    _listed_sizes(face_offsets, listed, sizes)
+    starts = tack.empty((n_faces,), dtype)
+    points = exclusive_scan(sizes, starts, n_faces)
+    out_offsets = tack.empty((kept + 1,), dtype)
+    out_points = tack.empty((points,), dtype)
+    _listed_out(face_offsets, face_points, listed, slots, starts, out_offsets, out_points)
+    _close(out_offsets, kept, points)
+    out_faces = tack.empty((size_of(cell_faces),), dtype)
+    if size_of(cell_faces):
+        _relisted(cell_faces, slots, out_faces)
+    return out_offsets, out_points, out_faces
+
+
 def clip_polyhedra(data, values, iso, inside, fields):
     """``clip`` of ``data``'s polyhedral topology by point ``values`` (a materialized
     scalar array) at ``iso``: the part at or above it, or with ``inside`` at or
@@ -270,6 +326,7 @@ def clip_parts(data, values, iso, inside):
                    side_zero, counts, kept, cell_slots, cell_starts, first, last, kept_faces,
                    out_faces, out_sides, sources, n_cells)
     _close(out_cell_offsets, kept_cells, entries)
+    out_offsets, out_points, out_faces = _only_listed(out_offsets, out_points, out_faces, odt)
     topology = PolyhedralTopology(out_offsets, out_points, out_cell_offsets, out_faces,
                                   out_sides, num_points=count, id_dtype=odt)
     return topology, ends, weights, sources

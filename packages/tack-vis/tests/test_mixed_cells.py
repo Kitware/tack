@@ -260,6 +260,46 @@ def test_a_shaped_face_on_a_face_two_polyhedra_share_is_refused():
         t.faces()
 
 
+
+def test_a_stored_face_no_cell_lists_is_refused_by_validate():
+    """``faces()`` would make it a face with no cell on either side, counted as
+    boundary (Jeff Lee's review of #389)."""
+    mixed = _mixed(_hexes((3, 2, 2)).topology, [0])
+    arrays = [getattr(mixed, name).numpy() for name in mixed._POLYHEDRAL]
+    fo, fp = arrays[0], arrays[1]
+    arrays[0] = np.append(fo, fo[-1] + 3)             # one more face, a triangle no cell has
+    arrays[1] = np.append(fp, fp[:3])
+    t = td.UnstructuredTopology(mixed.types.numpy(), mixed.offsets.numpy(),
+                                mixed.connectivity.numpy(), num_points=mixed.num_points,
+                                polyhedra=tuple(arrays))
+    with pytest.raises(ValueError, match="stored faces are on no cell"):
+        t.validate()
+    mixed.validate()
+
+
+def test_a_clip_through_a_plane_of_mesh_points_leaves_no_face_without_a_cell():
+    """A cell that only touches the value is dropped, but its face in the plane and
+    its cap were kept, with no cell on either side: the surface of the clip at
+    x = 1 came out 18 faces of area 18, not 16 (Jeff Lee's review of #389). Read
+    as all polyhedra, and just above the plane, it was right."""
+    import test_dataset_devices as devices
+
+    mixed = devices._mixed_hexes(tack.device("cpu"))
+    x = mixed.positions()
+    mixed.fields["f"] = td.Field(td.H1(mixed), tack.array(np.ascontiguousarray(x[:, 0])))
+
+    def area(data):
+        return float(td.cell_geometry(data).measure.values.numpy().sum())
+
+    for data in (mixed, td.as_polyhedra(mixed)):
+        clipped = td.clip(data, "f", 1.0)
+        clipped.topology.validate()
+        above = td.clip(data, "f", 1.0 + 1e-9)
+        surface = td.extract_surface(clipped)
+        assert surface.num_cells == td.extract_surface(above).num_cells
+        assert area(surface) == pytest.approx(area(td.extract_surface(above)), rel=1e-6)
+
+
 def _pentagonal_prisms():
     """Two pentagonal prisms stacked along z, sharing a pentagon, as polyhedra,
     and a hexahedron against the lower prism's first side."""
@@ -1536,6 +1576,36 @@ def _described(piece):
     return (types.tolist(), centres.tolist(), measures.tolist(), piece.num_points,
             faces.num_faces, int(faces.boundary().shape[0]),
             None if ids is None else (ids.points.numpy().tolist(), ids.cells.numpy().tolist()))
+
+
+
+def test_mixed_pieces_beside_all_polyhedra_pieces_are_refused_with_the_remedy():
+    """Pieces read two ways: the advice is to read them alike, not ``as_polyhedra``
+    (Jeff Lee's review of #389)."""
+    shaped, mixed = _first_slab_polyhedra()
+    pieces = list(_slabs(mixed))
+    pieces[1] = td.as_polyhedra(pieces[1])
+    with pytest.raises(TypeError, match="read every piece the same way"):
+        td.ghost_cells(td.PartitionedDataSet(pieces))
+
+
+def test_polyhedra_wound_the_same_way_across_pieces_name_where_and_the_remedy():
+    """Two polyhedra listing their shared face the same way, as pieces read apart
+    give: the refusal says where, and that orient=True when reading fixes it."""
+    from tack.dataset.polyhedra import mixed_from_rings, outward_rings
+
+    t = _mixed(_hexes((3, 2, 2)).topology, [0, 1])
+    cells, ring_offsets, ring_points = outward_rings(
+        *(getattr(t, name) for name in t._POLYHEDRAL))
+    ring_points = ring_points.copy()
+    for r in range(cells[1], cells[2]):          # the second polyhedron inside out
+        ring_points[ring_offsets[r]:ring_offsets[r + 1]] = \
+            ring_points[ring_offsets[r]:ring_offsets[r + 1]][::-1]
+    with pytest.raises(ValueError, match=r"wound the same way by both, in pieces 3 and 4\. "
+                                         r".*orient=True"):
+        mixed_from_rings(t.types.numpy(), t.offsets.numpy(), t.connectivity.numpy(),
+                         np.diff(cells), ring_offsets, ring_points, t.num_points,
+                         where="pieces 3 and 4")
 
 
 def mixed_pieces_across(world, root=0):

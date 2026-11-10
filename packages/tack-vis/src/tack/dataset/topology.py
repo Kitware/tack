@@ -699,7 +699,9 @@ class UnstructuredTopology(_Topology):
         if p[3]:
             found.append(f"{p[3]} polyhedra have connectivity points that are on none of "
                          "their faces, or there twice")
-        return found
+        from tack.dataset.polyhedra import unlisted_faces
+
+        return found + unlisted_faces(self.cell_faces, self.num_polyhedral_faces)
 
     def _moved(self, target):
         polyhedra = None

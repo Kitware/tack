@@ -9,7 +9,11 @@
   input fell from 2.24 to 0.32 GB and the time from 259 to 219 ms; on an
   80M-cell image at two values, from 1.32 to 0.30 GB and 346 to 263 ms (#316).
   Hidden and refined cells (an AMR box's) are left out in place: before, the
-  rest were extracted into unstructured cells first.
+  rest were extracted into unstructured cells first. A 2D structured grid's
+  contour lines go by flying edges too, the same lines as the general path,
+  their orientation included: on a 4096^2 image at ten values the peak above
+  the input fell from 14.1 to 0.18 GB, at one value from 2.01 to 0.02 GB and
+  from 53 to 33 ms.
 - `slice` of an image or a rectilinear grid by a `Plane` (`slice_plane`) goes
   by a plane cutter, as VTK's `vtkFlyingEdgesPlaneCutter`: flying edges over
   each row's stretch near the plane, found from the plane's equation, the

@@ -25,6 +25,7 @@ import pytest
 
 import tack
 import tack.dataset as td
+from tack.dataset import shapes
 from tack.dataset.algorithms import _flying_edges
 
 pytestmark = pytest.mark.quick      # the inner-loop set; see CLAUDE.md, Tests
@@ -39,7 +40,8 @@ def _general(monkeypatch, *args, **kwargs):
 def _triangles(out, names):
     """Each triangle's corners' positions and the named fields at its corners
     (point fields) or on it (cell fields), in the general path's order."""
-    rows = out.topology.connectivity.numpy().reshape(-1, 3).astype(np.int64)
+    width = 2 if out.topology.groups()[0].shape is shapes.Line else 3
+    rows = out.topology.connectivity.numpy().reshape(-1, width).astype(np.int64)
     cells = out.fields["cell"].values.numpy()
     levels = (out.fields["contour_value"].values.numpy() if "contour_value" in out.fields
               else np.zeros(len(rows)))
@@ -160,12 +162,11 @@ def test_what_flying_edges_does_not_take_goes_the_general_way(backend):
     x = image.geometry.values.numpy()
     image = _with(image, x[:, 0] + x[:, 1], tack.f32)
     assert _flying_edges.serves(image, image.fields["s"])
-    sheet = _with(td.uniform_grid((6, 5)), np.arange(30.0), tack.f32)
     cell_values = td.uniform_grid((6, 5, 4))
     cell_values.fields["s"] = td.Field(td.Constant(cell_values), tack.array(
         np.arange(cell_values.num_cells, dtype=np.float32)))
     tets = td.tetrahedralize(image)
-    for data in (sheet, cell_values, tets):
+    for data in (cell_values, tets):
         assert not _flying_edges.serves(data, data.fields["s"])
     # Unmerged points go the general way too: each triangle its own.
     out = td.contour(image, "s", 4.5, merge_points=False)
@@ -310,3 +311,47 @@ def test_a_plane_cuts_a_curvilinear_grid_as_the_general_path_does(backend, monke
             tack.vec(3, dtype)))
         assert _check_cut(monkeypatch, bent, x.mean(axis=0), (0.3, 0.2, 1.0),
                           value=[-0.2, 0.3]).num_cells > 0
+
+
+# ── A sheet's lines ─────────────────────────────────────────────────
+
+@pytest.mark.parametrize("kind", ["image", "rectilinear", "curvilinear"])
+def test_a_sheet_contours_to_the_general_paths_lines(backend, monkeypatch, kind):
+    # Lines keep their orientation (the values above on their right), share their
+    # points, and drop where both ends land on one point, as the general path's.
+    rng = np.random.default_rng(9)
+    for dtype in _dtypes():
+        grid = td.uniform_grid((30, 25), spacing=(0.3, 0.2), dtype=dtype)
+        if kind == "rectilinear":
+            grid = td.rectilinear_grid(np.cumsum(rng.uniform(0.1, 0.6, 22)),
+                                       np.cumsum(rng.uniform(0.1, 0.6, 19)), dtype=dtype)
+        elif kind == "curvilinear":
+            x = grid.geometry.values.numpy().astype(float)
+            bent = x + 0.1 * np.sin(2 * x[:, [1, 0, 2]])
+            bent[:, 2] = 0.05 * np.sin(x[:, 0])
+            grid = td.DataSet(grid.topology, tack.array(bent.astype(dtype.numpy_dtype),
+                                                       tack.vec(3, dtype)))
+        assert _flying_edges.serves(grid, td.Field(td.H1(grid), tack.zeros((grid.num_points,))))
+        x = grid.geometry.values.numpy().astype(float)
+        data = _with(grid, np.sin(3 * x[:, 0]) * np.cos(4 * x[:, 1]), dtype)
+        out = _check(monkeypatch, data, [-0.3, 0.0, 0.4])
+        assert out.topology.groups()[0].shape is shapes.Line
+
+
+def test_a_sheets_values_on_points_nans_and_hidden_cells(backend, monkeypatch):
+    rng = np.random.default_rng(10)
+    for dtype in _dtypes():
+        grid = td.uniform_grid((20, 18), spacing=(0.5, 0.5), dtype=dtype)
+        x = grid.geometry.values.numpy().astype(float)
+        values = np.round(np.sin(x[:, 0]) + np.cos(x[:, 1]), 1)
+        _check(monkeypatch, _with(grid, values, dtype), [0.0, 0.5, 1.0])
+        missing = values.copy()
+        missing[rng.integers(0, len(missing), 15)] = np.nan
+        out = _check(monkeypatch, _with(td.uniform_grid((20, 18), spacing=(0.5, 0.5),
+                                                        dtype=dtype), missing, dtype), [0.0, 0.5])
+        assert len(np.unique(out.topology.connectivity.numpy())) == out.num_points
+        hidden = _hidden(_with(td.uniform_grid((20, 18), spacing=(0.5, 0.5), dtype=dtype),
+                               values, dtype))
+        fast = _check(monkeypatch, hidden, [0.0, 0.5])
+        assert _same(_cell_marks(fast), _cell_marks(_general(monkeypatch, hidden, "s",
+                                                             [0.0, 0.5])))

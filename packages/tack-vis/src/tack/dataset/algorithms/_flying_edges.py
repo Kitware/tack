@@ -31,6 +31,12 @@ plane, so a slice visits only the cells near it, its values computed where
 they are read rather than stored for every point; a curvilinear grid's planes
 take whole rows, the values still computed where read.
 
+A sheet (a 2D grid) takes the same points' passes, one layer of cells along
+z, and lines instead of triangles: each cell's crossings, going round its
+sides through its view, paired as ``contour._level_lines`` pairs them, each
+rising crossing with the next falling one, so the values above lie on a
+line's right; a line whose two crossings land on one point is dropped.
+
 Hidden and refined cells (``Ghosts.MASKED_CELLS``, an AMR box's) make no
 triangles, and crossings only they use are dropped afterwards, as for cells
 with a NaN corner: the general path's output, which extracts the other cells
@@ -63,17 +69,49 @@ def _corner_of(cells, i, j, k):
     return [ci, cj, ck], 4 * d + 2 * b + (a ^ b)
 
 
-@tack.func
-def _point_at(cells, u, i, j, k):
-    """``(position, value)`` of point ``(i, j, k)``."""
-    c, corner = _corner_of(cells, i, j, k)
-    return cells.corner_position(c, corner), u.corner_value(c, corner)
+@tack.device_class
+class _Solid:
+    """A solid grid's points read through its cells' views (``_corner_of``): an
+    (i, j, k) cell and its corner, as the general path reads them."""
+
+    def __init__(self, cells, u):
+        self.cells = cells
+        self.u = u
+
+    @tack.func
+    def at(self, i, j, k):
+        """``(position, value)`` of point ``(i, j, k)``."""
+        c, corner = _corner_of(self.cells, i, j, k)
+        return self.cells.corner_position(c, corner), self.u.corner_value(c, corner)
+
+    @tack.func
+    def position(self, i, j, k):
+        c, corner = _corner_of(self.cells, i, j, k)
+        return self.cells.corner_position(c, corner)
 
 
-@tack.func
-def _position_at(cells, i, j, k):
-    c, corner = _corner_of(cells, i, j, k)
-    return cells.corner_position(c, corner)
+@tack.device_class
+class _Sheet(_Solid):
+    """A sheet's (a 2D grid's) points, through its (i, j) cells' views: a quad's
+    corners go (0, 0), (1, 0), (1, 1), (0, 1)."""
+
+    @tack.func
+    def at(self, i, j, k):
+        c, corner = self._corner(i, j)
+        return self.cells.corner_position(c, corner), self.u.corner_value(c, corner)
+
+    @tack.func
+    def position(self, i, j, k):
+        c, corner = self._corner(i, j)
+        return self.cells.corner_position(c, corner)
+
+    @tack.func
+    def _corner(self, i, j):
+        ci = min(i, self.cells.cx - 1)
+        cj = min(j, self.cells.cy - 1)
+        a = i - ci
+        b = j - cj
+        return [ci, cj], 2 * b + (a ^ b)
 
 
 @tack.func
@@ -144,7 +182,7 @@ def _edge_codes(values, levels, nlevels, nx, ny, nz, flags):
 
 
 @tack.kernel
-def _landings(cells, values, levels, nlevels, nx, ny, nz, windows, flags):
+def _landings(grid, values, levels, nlevels, nx, ny, nz, windows, flags):
     # Each crossed edge whose crossing lands on an end (_end_hit), recoded
     # _AT_START or _AT_END; positions, which an image computes, are read through
     # the cells' views as the general path reads them, and only here. One
@@ -168,8 +206,7 @@ def _landings(cells, values, levels, nlevels, nx, ny, nz, windows, flags):
                         kk = k + (1 if axis == 2 else 0)
                         b = ii + nx * (jj + ny * kk)
                         hit = _end_hit(level, p, b, values[p], values[b],
-                                       _position_at(cells, i, j, k),
-                                       _position_at(cells, ii, jj, kk))
+                                       grid.position(i, j, k), grid.position(ii, jj, kk))
                         if hit == p:
                             f += (_AT_START - _BETWEEN) << (2 * axis)
                         elif hit == b:
@@ -376,7 +413,7 @@ def _triangle_counts(cells, u, hexa, flags, windows, point_counts, levels, nleve
 
 
 @tack.kernel
-def _points(cells, u, flags, windows, levels, nlevels, nx, ny, starts, total, positions,
+def _points(grid, flags, windows, levels, nlevels, nx, ny, starts, total, positions,
             edges, weights):
     # Each (row of points, value)'s points, in its order: a point a crossing lands
     # on, then its edges' crossings between their ends along x, y and z.
@@ -392,7 +429,7 @@ def _points(cells, u, flags, windows, levels, nlevels, nx, ny, starts, total, po
         for i in range(w[0], w[1] + 1 if end > at else w[0]):
             p = i + nx * r
             f = tack.i32(flags[w[2] + i - w[0]])
-            x0, v0 = _point_at(cells, u, i, j, k)
+            x0, v0 = grid.at(i, j, k)
             if _landed(f) == 1:
                 positions[at] = x0
                 edges[at] = [p, p]
@@ -404,7 +441,7 @@ def _points(cells, u, flags, windows, levels, nlevels, nx, ny, starts, total, po
                     jj = j + (1 if axis == 1 else 0)
                     kk = k + (1 if axis == 2 else 0)
                     b = ii + nx * (jj + ny * kk)
-                    x1, v1 = _point_at(cells, u, ii, jj, kk)
+                    x1, v1 = grid.at(ii, jj, kk)
                     a = p
                     xa = x0
                     xb = x1
@@ -525,6 +562,151 @@ def _triangles(cells, u, hexa, flags, windows, levels, nlevels, nx, ny, nz, poin
             n3 = m3
 
 
+# ── A sheet's lines ─────────────────────────────────────────────────
+
+@tack.func
+def _side_number(flags, windows, v, nlevels, a, b, nx, cj, ci, n0, n1, m0, m1):
+    """``(number, landing)``: the output number of side ``(a, b)``'s crossing (a
+    quad's side, its points' global ids), and the point it lands on (-1 if
+    between the ends). ``n0``/``n1`` are rows ``cj``/``cj + 1``'s first numbers
+    at point ``ci``, ``m0``/``m1`` at ``ci + 1``."""
+    owner = min(a, b)
+    axis = 0 if max(a, b) - owner == 1 else 1
+    oi = owner % nx
+    oj = owner // nx
+    s = oj - cj
+    f = _flag(flags, windows, oj * nlevels + v, oi)
+    code = _code(f, axis)
+    start = (n0 if s == 0 else n1) if oi == ci else (m0 if s == 0 else m1)
+    number = start
+    landing = tack.i64(-1)
+    if code == _BETWEEN:
+        number = start + _landed(f) + (1 if axis == 1 and _code(f, 0) == _BETWEEN else 0)
+    elif code == _AT_START:
+        landing = owner
+    elif code == _AT_END:
+        landing = owner + (1 if axis == 0 else nx)
+        # The far point: along x the next point of the row, along y the row above.
+        number = (m0 if s == 0 else m1) if axis == 0 else (n1 if oi == ci else m1)
+    return number, landing
+
+
+@tack.func
+def _sheet_lines(cells, c, values, level, v, nlevels, flags, windows, nx, cj, ci, n0, n1, m0,
+                 m1, rows, sources, which, at, write):
+    """Value ``v``'s lines of cell ``c``, as the general path pairs them
+    (``contour._level_lines``): going round the cell from its first rising
+    crossing, each rising one with the next falling one, so the values above lie
+    on the line's right; a line whose two crossings land on one point is
+    dropped. Written from ``at`` when ``write``; returns the next ``at``."""
+    n = cells.num_faces(c)
+    first = -1
+    for k in range(n):
+        if first < 0:
+            if (not values[cells.side_point_id(c, k, 0)] >= level
+                    and values[cells.side_point_id(c, k, 1)] >= level):
+                first = k
+    if first >= 0:
+        rising = tack.i64(0)
+        rising_landing = tack.i64(-1)
+        for i in range(n):
+            k = (first + i) % n
+            a = cells.side_point_id(c, k, 0)
+            b = cells.side_point_id(c, k, 1)
+            above_a = values[a] >= level
+            above_b = values[b] >= level
+            if above_a != above_b:
+                number, landing = _side_number(flags, windows, v, nlevels, a, b, nx, cj, ci,
+                                               n0, n1, m0, m1)
+                if not above_a:
+                    rising = number
+                    rising_landing = landing
+                elif not (landing >= 0 and landing == rising_landing):
+                    if write == 1:
+                        rows[2 * at] = rising
+                        rows[2 * at + 1] = number
+                        sources[at] = cells.entity_id(c)
+                        which[at] = v
+                    at += 1
+    return at
+
+
+@tack.func
+def _cell_nan(cells, c, values):
+    # As contour._side_nan: a cell with a NaN corner has no lines.
+    nan = 0
+    for k in range(cells.num_faces(c)):
+        x = values[cells.side_point_id(c, k, 0)]
+        if x != x:
+            nan = 1
+    return nan == 1
+
+
+@tack.kernel
+def _sheet_line_runs(cells, values, flags, windows, points, levels, nlevels, nx, ny, marks,
+                     hidden, line_starts, total, write, counts, rows, sources, which):
+    # Each (row of cells, value)'s lines: counted (write 0; ``points`` the rows'
+    # point counts), or written from their start (write 1; ``points`` the rows'
+    # first numbers), walking along x with the first number of each of the two
+    # rows of points around it.
+    cx = nx - 1
+    cy = ny - 1
+    for q in range(cy * nlevels):
+        cj = q // nlevels
+        v = q - cj * nlevels
+        level = levels[v]
+        q0 = cj * nlevels + v
+        q1 = q0 + nlevels
+        at = tack.i64(0)
+        n0 = tack.i64(0)
+        n1 = tack.i64(0)
+        lo, hi = _sheet_window(windows, nlevels, v, cj, cx)
+        if write == 1:
+            at = line_starts[q]
+            n0 = points[q0]
+            n1 = points[q1]
+            end = line_starts[q + 1] if q + 1 < cy * nlevels else total
+            if end <= at:
+                hi = lo - 1
+        elif points[q0] + points[q1] == 0:
+            hi = lo - 1                # no crossing in its rows of points: no lines
+        f00 = _flag(flags, windows, q0, lo)
+        for ci in range(lo, hi + 1):
+            f01 = _flag(flags, windows, q1, ci)
+            f10 = _flag(flags, windows, q0, ci + 1)
+            m0 = n0 + _emitted(f00)
+            m1 = n1 + _emitted(f01)
+            # A cell none of whose four sides is crossed has no lines: its sides are
+            # its corner (ci, cj)'s two edges, (ci, cj + 1)'s along x and
+            # (ci + 1, cj)'s along y.
+            crossed = (_code(f00, 0) | _code(f00, 1) | _code(f01, 0) | _code(f10, 1)) != 0
+            c = [ci, cj]
+            e = ci + cx * cj
+            if crossed and not _cell_nan(cells, c, values) and not (
+                    hidden == 1 and (tack.i32(marks[e]) & _MASKED) != 0):
+                at = _sheet_lines(cells, c, values, level, v, nlevels, flags, windows, nx, cj,
+                                  ci, n0, n1, m0, m1, rows, sources, which, at, write)
+            n0 = m0
+            n1 = m1
+            f00 = f10
+        if write == 0:
+            counts[q] = at
+
+
+@tack.func
+def _sheet_window(windows, nlevels, v, cj, cx):
+    """The cells ``[lo, hi]`` of row of cells ``cj`` its two rows of points' windows
+    reach for value ``v``; ``hi < lo`` if none."""
+    lo = cx
+    hi = tack.i64(-1)
+    for s in range(2):
+        w = windows[(cj + s) * nlevels + v]
+        if w[1] >= w[0]:
+            lo = min(lo, max(w[0] - 1, 0))
+            hi = max(hi, min(w[1], cx - 1))
+    return lo, hi
+
+
 @tack.kernel
 def _mark_used(rows, used):
     for t in range(rows.shape[0]):
@@ -553,10 +735,22 @@ def _whole_rows(nx, windows):
 
 def serves(data, field):
     """Whether ``data``'s contour of ``field`` can go by flying edges: a structured
-    grid of solid cells with an H1 geometry and a point field, both of order 1."""
+    grid of solid cells (triangles) or of a sheet's (lines) with an H1 geometry
+    and a point field, both of order 1."""
     from tack.dataset.spaces import H1
 
-    return _solid_grid(data) and isinstance(field.space, H1) and field.space.order == 1
+    return ((_solid_grid(data) or _sheet(data)) and isinstance(field.space, H1)
+            and field.space.order == 1)
+
+
+def _sheet(data):
+    from tack.dataset.spaces import H1
+    from tack.dataset.topology import StructuredTopology
+
+    dims = getattr(data.topology, "point_dims", ())
+    return (isinstance(data.topology, StructuredTopology) and len(dims) == 2
+            and min(dims) >= 2 and isinstance(data.geometry.space, H1)
+            and data.geometry.space.order == 1)
 
 
 def _masks(data):
@@ -582,8 +776,9 @@ def _solid_grid(data):
 
 
 def surface(data, field, levels, nlevels):
-    """``contour``'s surface of ``field`` (``_surface``), every row's window whole."""
-    nx, ny, nz = (int(d) for d in data.topology.point_dims)
+    """``contour``'s surface of ``field`` (``_surface``), every row's window whole: a
+    solid grid's triangles, or a sheet's lines."""
+    nx, ny, nz = (int(d) for d in (*data.topology.point_dims, 1)[:3])
     windows = tack.empty((ny * nz * nlevels,), tack.vec(3, tack.i64))
     _whole_rows(nx, windows)
     group = next(g for g in data.launch_groups("cells", [field]) if g.count)
@@ -803,11 +998,13 @@ def _surface(data, values, u, levels, nlevels, weight_dtype, windows, nflags, co
     field's view) over ``windows``."""
     from tack.dataset.algorithms._common import _compact
 
-    nx, ny, nz = (int(d) for d in data.topology.point_dims)
+    nx, ny, nz = (int(d) for d in (*data.topology.point_dims, 1)[:3])
     npoints, nrows = nx * ny * nz, ny * nz
-    ncrows = (ny - 1) * (nz - 1)
+    sheet = len(data.topology.point_dims) == 2
+    ncrows = (ny - 1) * (1 if sheet else nz - 1)
     group = next(g for g in data.launch_groups("cells", []) if g.count)
     cells = data.domain_view("cells", group)
+    grid = (_Sheet if sheet else _Solid)(cells, u)
     hexa = shapes.Hexahedron()
     idt = data.id_dtype
     odt = ids.for_output(data, max(3 * nlevels * (npoints + data.num_cells * 5), 1))
@@ -816,27 +1013,38 @@ def _surface(data, values, u, levels, nlevels, weight_dtype, windows, nflags, co
         _edge_codes(values, levels, nlevels, nx, ny, nz, flags)
     elif nflags:
         _window_codes(values, levels, nlevels, nx, ny, nz, windows, flags)
-    _landings(cells, values, levels, nlevels, nx, ny, nz, windows, flags)
+    _landings(grid, values, levels, nlevels, nx, ny, nz, windows, flags)
     point_counts = tack.empty((nrows * nlevels,), odt)
     nans = tack.empty((nrows,), tack.i64)
     _point_counts(flags, windows, nlevels, ny, point_counts, nans)
     # Hidden and refined cells make no triangles, as visible() leaves them out.
     marks, hidden = _masks(data)
     triangle_counts = tack.empty((ncrows * nlevels,), odt)
-    _triangle_counts(cells, u, hexa, flags, windows, point_counts, levels, nlevels, nx, ny,
-                     nz, marks, hidden, triangle_counts)
+    width = 2 if sheet else 3                  # a line's points, or a triangle's
+    stand_in = tack.empty((1,), odt)
+    if sheet:
+        _sheet_line_runs(cells, values, flags, windows, point_counts, levels, nlevels, nx, ny,
+                         marks, hidden, triangle_counts, 0, 0, triangle_counts, stand_in,
+                         tack.empty((1,), idt), tack.empty((1,), tack.i32))
+    else:
+        _triangle_counts(cells, u, hexa, flags, windows, point_counts, levels, nlevels, nx,
+                         ny, nz, marks, hidden, triangle_counts)
     count = exclusive_scan(point_counts, point_counts, nrows * nlevels)
     triangles = exclusive_scan(triangle_counts, triangle_counts, ncrows * nlevels)
     positions = tack.empty((count,), tack.vec(3, data.dtype))
     edges = tack.empty((count,), tack.vec(2, idt))
     weights = tack.empty((count,), weight_dtype)
     if count:
-        _points(cells, u, flags, windows, levels, nlevels, nx, ny, point_counts, count,
+        _points(grid, flags, windows, levels, nlevels, nx, ny, point_counts, count,
                 positions, edges, weights)
-    rows = tack.empty((3 * triangles,), odt)
+    rows = tack.empty((width * triangles,), odt)
     sources = tack.empty((triangles,), idt)
     which = tack.empty((triangles,), tack.i32)
-    if triangles:
+    if triangles and sheet:
+        _sheet_line_runs(cells, values, flags, windows, point_counts, levels, nlevels, nx, ny,
+                         marks, hidden, triangle_counts, triangles, 1, stand_in, rows, sources,
+                         which)
+    elif triangles:
         _triangles(cells, u, hexa, flags, windows, levels, nlevels, nx, ny, nz, point_counts,
                    triangle_counts, triangles, marks, hidden, rows, sources, which)
     del flags, point_counts, triangle_counts

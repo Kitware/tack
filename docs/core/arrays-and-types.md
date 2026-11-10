@@ -105,6 +105,26 @@ read is a transfer of its own, so read many values with `numpy()`. Writing one
 element from the host, `a[i] = x`, raises `TypeError`, and so does iterating
 over an array.
 
+A slice of the first dimension, `a[i:j]`, is a **view**: an array of those
+rows over the same memory, as in NumPy, on every device. Kernels, `fill`,
+`tack.copyto`, reductions, copies and DLPack take it like any array, and what
+they write lands in `a`. Bounds follow Python's (negative from the end,
+clamped to the array); a step is refused, since a view is one contiguous
+stretch. A view keeps the array it views alive, and is read-only if that
+array is.
+
+<!-- tack-check: row-views -->
+```python
+import tack
+
+tack.set_default_device("cpu")
+
+rows = tack.zeros((6, 3))
+middle = rows[2:4]                         # rows 2 and 3, the same memory
+middle.fill(1.0)
+assert rows.numpy()[3, 0] == 1.0 and rows.numpy()[4, 0] == 0.0
+```
+
 On a GPU, these calls keep their place among the queued launches. A
 `tack.copyto` does not overwrite values a queued launch still reads, and
 `numpy()` waits for the launches before it. On Apple silicon the CPU and GPU

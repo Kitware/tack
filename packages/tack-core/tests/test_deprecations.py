@@ -72,3 +72,56 @@ def test_a_deprecation_warns_at_the_callers_line_once():
 def test_a_deprecation_is_removed_after_it_is_made():
     with pytest.raises(ValueError, match="must come after"):
         deprecated("x", since="0.9", removed_in="0.9", use="y")
+
+
+def test_a_package_declares_its_own_through_the_entry_point_group(tmp_path, monkeypatch):
+    """A package built on Tack names its declaration module under the
+    ``tack.deprecations`` entry point group, and the registry (so ``due`` and the
+    docs page) holds its declarations without tack-core knowing the package."""
+    import importlib.metadata
+    import sys
+
+    from tack import _deprecation
+
+    (tmp_path / "downstream_deprecations.py").write_text(
+        "from tack._deprecation import deprecated\n"
+        "OLD = deprecated('downstream.old()', since='1.0', removed_in='1.1',\n"
+        "                 use='downstream.new()', package='downstream')\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setattr(_deprecation, "_REGISTRY", list(_deprecation._REGISTRY))
+    point = importlib.metadata.EntryPoint("downstream", "downstream_deprecations",
+                                          _deprecation.ENTRY_POINTS)
+    monkeypatch.setattr(importlib.metadata, "entry_points", lambda group: [point])
+    monkeypatch.delitem(sys.modules, "downstream_deprecations", raising=False)
+    found = registry()
+    assert any(d.what == "downstream.old()" and d.package == "downstream" for d in found)
+    assert [d.what for d in due({"downstream": "1.1"}) if d.package == "downstream"] == [
+        "downstream.old()"]
+
+
+def test_an_editable_install_is_read_at_its_source_trees_version(tmp_path, monkeypatch):
+    """An editable install's metadata keeps the version it was installed at, so a
+    checkout past a deprecation's ``removed_in`` read as installed would pass the
+    guard: its ``pyproject.toml`` is read instead (Jeff Lee's review of #389)."""
+    import importlib.metadata
+    import json
+
+    from tack import _deprecation
+
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "tack-vis"\nversion = "0.9.0"\n')
+
+    class Installed:
+        version = "0.6.0"
+
+        def __init__(self, editable):
+            self.editable = editable
+
+        def read_text(self, name):
+            assert name == "direct_url.json"
+            return json.dumps({"url": tmp_path.as_uri(),
+                               "dir_info": {"editable": self.editable}})
+
+    monkeypatch.setattr(importlib.metadata, "distribution", lambda name: Installed(True))
+    assert _deprecation._package_version("tack-vis") == "0.9.0"
+    monkeypatch.setattr(importlib.metadata, "distribution", lambda name: Installed(False))
+    assert _deprecation._package_version("tack-vis") == "0.6.0"

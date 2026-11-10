@@ -32,10 +32,14 @@ sections, and `release VERSION YYYY-MM-DD` writes them into `CHANGELOG.md`
 and deletes the files; edit `CHANGELOG.md` only at a release (its summary).
 **Deprecations** go through `tack._deprecation`: declare one with
 `deprecated(what, since=, removed_in=, use=, package=)` in the package's
-declaration module (`DECLARED_IN`: tack-core's in `_deprecation.py`, tack-vis's
-in `tack/dataset/_deprecations.py`, so the registry needs no VTK), call its
-`warn()` where the feature is used (a `tack.TackDeprecationWarning` at the first
-line outside Tack's directories), and add a `### Deprecated` entry.
+declaration module (tack-core's in `_deprecation.py`; any other package's named
+in its `pyproject.toml` under the `tack.deprecations` entry point group, as
+tack-vis names `tack/dataset/_deprecations.py`, so the registry needs no VTK and
+a package built on Tack can add its own), call its `warn()` where the feature is
+used (a `tack.TackDeprecationWarning` at the first line outside Tack's
+directories), and add a `### Deprecated` entry. `due()` reads an editable
+install's version from its `pyproject.toml` (its metadata keeps the version it
+was installed at), so the guard test holds in a checkout too.
 `test_deprecations.py` fails once a package's version reaches a `removed_in`, and
 `docs/_ext/deprecations.py` (an MkDocs hook) writes `reference/deprecations.md`'s
 table from the registry. Deprecate in one minor release, remove in the next or

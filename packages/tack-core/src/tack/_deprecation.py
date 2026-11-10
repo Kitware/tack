@@ -4,8 +4,10 @@
 """Deprecations: what is going away, since when, until when, and what to use.
 
 A package declares each deprecation once, at import, in its declaration module
-(``DECLARED_IN``: tack-core's here, tack-vis's in ``tack.dataset._deprecations``),
-and the code it deprecates warns through it::
+-- tack-core's here, any other's named under the ``tack.deprecations`` entry
+point group (``ENTRY_POINTS``; tack-vis's ``tack.dataset._deprecations``), so a
+package built on Tack declares its own without tack-core knowing it -- and the
+code it deprecates warns through it::
 
     SPLIT = deprecated('vtk_to_dataset(..., polyhedral="split")', since="0.8",
                        removed_in="0.9", use="the default reading",
@@ -19,15 +21,16 @@ line (its ``default`` action) and, by its default filters, in a script's own
 code (``__main__``) and under pytest.
 
 The declarations are the registry (``registry``): ``due`` lists those whose
-``removed_in`` their package's version has reached, which a test refuses, so a
-release cannot ship a deprecation past its date; the docs list the current
+``removed_in`` their package's version has reached (from its source tree's
+``pyproject.toml`` when installed editable, whose metadata keeps the version it
+was installed at), which a test refuses, so a release cannot ship a
+deprecation past its date; the docs list the current
 ones from it (``docs/_ext/deprecations.py``). Deprecate in one minor release and
 remove in the next or later; before 1.0 a breaking change may still go without
 one where keeping the old behaviour costs more than it saves, which the
 CHANGELOG says. A deprecation's entry goes under ``### Deprecated``.
 """
 
-import importlib
 import os
 import re
 import sys
@@ -36,9 +39,11 @@ from dataclasses import dataclass
 
 __all__ = ["Deprecation", "TackDeprecationWarning", "deprecated", "due", "registry"]
 
-#: The modules that declare each package's deprecations: importing them makes
-#: the registry complete without importing what they deprecate (VTK's interop).
-DECLARED_IN = ("tack._deprecation", "tack.dataset._deprecations")
+#: The entry point group naming each package's declaration module (in its
+#: ``pyproject.toml``: ``[project.entry-points."tack.deprecations"]``, the
+#: distribution's name to the module): loading them makes the registry complete
+#: without importing what they deprecate (VTK's interop).
+ENTRY_POINTS = "tack.deprecations"
 
 
 class TackDeprecationWarning(DeprecationWarning):
@@ -72,7 +77,7 @@ _REGISTRY = []
 
 
 def deprecated(what, *, since, removed_in, use, package="tack-core"):
-    """Declare a deprecation (in its package's ``DECLARED_IN`` module, at import) and
+    """Declare a deprecation (in its package's declaration module, at import) and
     return it: the code it deprecates calls its ``warn()``."""
     if _version(removed_in) <= _version(since):
         raise ValueError(f"{what} is removed in {removed_in}, which must come after {since}")
@@ -83,10 +88,12 @@ def deprecated(what, *, since, removed_in, use, package="tack-core"):
 
 def registry():
     """Every declared deprecation, in the order declared: each package's declaration
-    module imported first (one not installed is skipped)."""
-    for name in DECLARED_IN:
+    module (``ENTRY_POINTS``) imported first, one that cannot be skipped."""
+    from importlib.metadata import entry_points
+
+    for point in entry_points(group=ENTRY_POINTS):
         try:
-            importlib.import_module(name)
+            point.load()
         except ImportError:
             pass
     return tuple(_REGISTRY)
@@ -94,18 +101,43 @@ def registry():
 
 def due(versions=None):
     """The deprecations whose ``removed_in`` their package's version (``versions[package]``,
-    by default the installed one) has reached: to be removed before that release."""
-    from importlib.metadata import PackageNotFoundError, version
+    by default its own, ``_package_version``) has reached: to be removed before that
+    release."""
+    from importlib.metadata import PackageNotFoundError
 
     found = []
     for d in registry():
         try:
-            current = (versions or {}).get(d.package) or version(d.package)
+            current = (versions or {}).get(d.package) or _package_version(d.package)
         except PackageNotFoundError:
             continue
         if _version(current) >= _version(d.removed_in):
             found.append(d)
     return found
+
+
+def _package_version(package):
+    """A distribution's version: its source tree's (``pyproject.toml``) when it is
+    installed editable, since its metadata keeps the version it was installed at
+    (a checkout at 0.7.0 installed when it said 0.6.0 reports 0.6.0), else the
+    installed one."""
+    import json
+    import tomllib
+    from importlib.metadata import distribution
+    from urllib.parse import unquote, urlparse
+
+    found = distribution(package)
+    origin = json.loads(found.read_text("direct_url.json") or "{}")
+    if origin.get("dir_info", {}).get("editable") and origin.get("url", "").startswith("file:"):
+        project = os.path.join(unquote(urlparse(origin["url"]).path), "pyproject.toml")
+        try:
+            with open(project, "rb") as f:
+                stated = tomllib.load(f).get("project", {}).get("version")
+        except OSError:
+            stated = None
+        if stated:
+            return stated
+    return found.version
 
 
 def _version(text):

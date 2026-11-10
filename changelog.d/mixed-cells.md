@@ -64,7 +64,8 @@
   `tack.TackDeprecationWarning`, a `DeprecationWarning`, at the line that uses
   it; a test fails once a release reaches a deprecation's removal, and the
   docs list the current ones (Reference, Deprecations). The CHANGELOG has a
-  Deprecated section.
+  Deprecated section. A package built on Tack declares its own under the
+  `tack.deprecations` entry point group.
 
 ### Deprecated
 

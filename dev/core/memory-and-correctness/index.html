@@ -5360,8 +5360,8 @@ two dimensions.</p>
 two separate calls. They need an argument specific to the algorithm, and
 two arrays are the safe default.</p>
 <h2 id="remember-that-views-share-storage">Remember that views share storage<a class="headerlink" href="#remember-that-views-share-storage" title="Permanent link">&para;</a></h2>
-<p><code>reshape</code> returns a <strong>view</strong>, a second array over the same memory. <code>copy</code>
-makes independent storage:</p>
+<p><code>reshape</code> and a slice of rows, <code>a[i:j]</code>, return a <strong>view</strong>, a second array
+over the same memory. <code>copy</code> makes independent storage:</p>
 <!-- tack-check: memory-views -->
 <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">tack</span>
@@ -5380,6 +5380,10 @@ makes independent storage:</p>
 <span class="n">number</span><span class="p">(</span><span class="n">flat</span><span class="p">)</span>
 <span class="n">np</span><span class="o">.</span><span class="n">testing</span><span class="o">.</span><span class="n">assert_allclose</span><span class="p">(</span><span class="n">grid</span><span class="o">.</span><span class="n">numpy</span><span class="p">()[</span><span class="mi">1</span><span class="p">],</span> <span class="p">[</span><span class="mi">4</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">6</span><span class="p">,</span> <span class="mi">7</span><span class="p">])</span>       <span class="c1"># written through the view</span>
 <span class="n">np</span><span class="o">.</span><span class="n">testing</span><span class="o">.</span><span class="n">assert_allclose</span><span class="p">(</span><span class="n">independent</span><span class="o">.</span><span class="n">numpy</span><span class="p">()[</span><span class="mi">1</span><span class="p">],</span> <span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">])</span>
+
+<span class="n">line</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="mi">8</span><span class="p">,))</span>
+<span class="n">number</span><span class="p">(</span><span class="n">line</span><span class="p">[</span><span class="mi">2</span><span class="p">:</span><span class="mi">5</span><span class="p">])</span>                       <span class="c1"># elements 2 to 4 only, numbered from 0</span>
+<span class="n">np</span><span class="o">.</span><span class="n">testing</span><span class="o">.</span><span class="n">assert_allclose</span><span class="p">(</span><span class="n">line</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span> <span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">])</span>
 </code></pre></div>
 <p>Passing <code>grid</code> and <code>flat</code> as two arguments does not give a kernel two
 buffers. Tack keeps each iteration's own reads and writes in program order,

@@ -5415,6 +5415,23 @@ inspecting results and for decisions in host code. On a discrete GPU each such
 read is a transfer of its own, so read many values with <code>numpy()</code>. Writing one
 element from the host, <code>a[i] = x</code>, raises <code>TypeError</code>, and so does iterating
 over an array.</p>
+<p>A slice of the first dimension, <code>a[i:j]</code>, is a <strong>view</strong>: an array of those
+rows over the same memory, as in NumPy, on every device. Kernels, <code>fill</code>,
+<code>tack.copyto</code>, reductions, copies and DLPack take it like any array, and what
+they write lands in <code>a</code>. Bounds follow Python's (negative from the end,
+clamped to the array); a step is refused, since a view is one contiguous
+stretch. A view keeps the array it views alive, and is read-only if that
+array is.</p>
+<!-- tack-check: row-views -->
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">tack</span>
+
+<span class="n">tack</span><span class="o">.</span><span class="n">set_default_device</span><span class="p">(</span><span class="s2">&quot;cpu&quot;</span><span class="p">)</span>
+
+<span class="n">rows</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="mi">6</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
+<span class="n">middle</span> <span class="o">=</span> <span class="n">rows</span><span class="p">[</span><span class="mi">2</span><span class="p">:</span><span class="mi">4</span><span class="p">]</span>                         <span class="c1"># rows 2 and 3, the same memory</span>
+<span class="n">middle</span><span class="o">.</span><span class="n">fill</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>
+<span class="k">assert</span> <span class="n">rows</span><span class="o">.</span><span class="n">numpy</span><span class="p">()[</span><span class="mi">3</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="mf">1.0</span> <span class="ow">and</span> <span class="n">rows</span><span class="o">.</span><span class="n">numpy</span><span class="p">()[</span><span class="mi">4</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="mf">0.0</span>
+</code></pre></div>
 <p>On a GPU, these calls keep their place among the queued launches. A
 <code>tack.copyto</code> does not overwrite values a queued launch still reads, and
 <code>numpy()</code> waits for the launches before it. On Apple silicon the CPU and GPU

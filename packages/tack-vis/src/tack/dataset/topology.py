@@ -1373,13 +1373,14 @@ def _structured_face_tables(shape):
 # ── Faces of shaped cells and polyhedra together ─────────────────────
 
 @tack.kernel
-def _polyhedral_candidates(face_offsets, sides, flags):
-    # A polyhedral face a shaped cell may be the other side of: three or four
-    # points (a polygon's edge, two), and one side so far.
+def _polyhedral_candidates(face_offsets, flags):
+    # A polyhedral face a shaped cell may share: three or four points (a polygon's
+    # edge, two). Faces with both sides taken are matched too, so that a shaped
+    # cell's face on one is found and refused (_classify_runs), not left a face
+    # of its own.
     for f in range(flags.shape[0]):
         n = face_offsets[f + 1] - face_offsets[f]
-        one = 1 if (sides[f][0] < 0) != (sides[f][2] < 0) else 0
-        flags[f] = 1 if one == 1 and n >= 2 and n <= 4 else 0
+        flags[f] = 1 if n >= 2 and n <= 4 else 0
 
 
 @tack.kernel
@@ -1400,21 +1401,27 @@ def _candidate_rows(flags, slots, face_offsets, face_points, at, rows, kinds, ca
 
 
 @tack.kernel
-def _classify_runs(order, offsets, shaped, fresh, problems, count):
+def _classify_runs(order, offsets, shaped, candidates, sides, fresh, problems, count):
     # Per run of equal keys: a face of shaped cells only (fresh, numbered after the
     # polyhedral faces), or a polyhedral face with at most one shaped cell beside
-    # it. problems: [0] more than two cells, [1] two polyhedral faces of the
-    # same points.
+    # it and a side free for it. A polyhedral face counts the cells it has
+    # (one or two). problems: [0] more than two cells, [1] two polyhedral faces
+    # of the same points.
     for r in range(count):
         polyhedral = 0
-        n = offsets[r + 1] - offsets[r]
+        cells = 0
         for i in range(offsets[r], offsets[r + 1]):
-            if order[i] >= shaped:
+            e = order[i]
+            if e >= shaped:
                 polyhedral += 1
+                f = candidates[e - shaped]
+                cells += (1 if sides[f][0] >= 0 else 0) + (1 if sides[f][2] >= 0 else 0)
+            else:
+                cells += 1
         fresh[r] = 1 if polyhedral == 0 else 0
         if polyhedral > 1:
             tack.atomic_add(problems, 1, 1)
-        elif n > 2:
+        elif cells > 2:
             tack.atomic_add(problems, 0, 1)
 
 
@@ -1583,11 +1590,11 @@ class Faces(_OnItsArrays):
                            topology.cell_face_sides, sides_in, nc)
 
         # The entries to match: every shaped cell's faces, then the polyhedral faces
-        # a shaped cell may share (three or four points, one side).
+        # a shaped cell may share (three or four points; a polygon's edges, two).
         flags = tack.empty((nfp,), tack.i32)
         slots = tack.empty((nfp,), idt)
         if nfp:
-            _polyhedral_candidates(topology.face_offsets, sides_in, flags)
+            _polyhedral_candidates(topology.face_offsets, flags)
         m = exclusive_scan(flags, slots, nfp) if nfp else 0
         total = shaped + m
         rows = tack.empty((total,), tack.vec(4, idt))
@@ -1610,7 +1617,7 @@ class Faces(_OnItsArrays):
             offsets, runs = run_offsets(keys, order)
             del keys
             fresh = tack.empty((runs,), idt)
-            _classify_runs(order, offsets, shaped, fresh, problems, runs)
+            _classify_runs(order, offsets, shaped, candidates, sides_in, fresh, problems, runs)
             first_fresh = tack.empty((runs,), idt)
             new = exclusive_scan(fresh, first_fresh, runs)
         else:

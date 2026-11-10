@@ -237,6 +237,29 @@ def test_a_polyhedral_face_wound_like_its_shaped_neighbour_is_refused():
         bad.faces()
 
 
+
+def test_a_shaped_face_on_a_face_two_polyhedra_share_is_refused():
+    """Three cells on one face: a hexahedron's face with the points of the face
+    two polyhedra share. It was left a face of its own, with one side, and the
+    mesh read as manifold."""
+    mixed = _mixed(_hexes((3, 2, 2)).topology, [0, 1])
+    pid = lambda i, j, k: i + 3 * (j + 2 * k)
+    # Polyhedron 0's points, its x = 0 side replaced by four new points: the third
+    # cell's x = 1 face is the face between the two polyhedra.
+    corner = lambda a, b, c: 12 + b + 2 * c if a == 0 else pid(a, b, c)
+    third = [corner(a, b, c) for a, b, c in ((0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+                                             (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1))]
+    arrays = [getattr(mixed, name).numpy() for name in mixed._POLYHEDRAL]
+    arrays[2] = np.append(arrays[2], arrays[2][-1])       # no faces of its own
+    offsets = mixed.offsets.numpy()
+    t = td.UnstructuredTopology(np.append(mixed.types.numpy(), 12),
+                                np.append(offsets, offsets[-1] + 8),
+                                np.append(mixed.connectivity.numpy(), third),
+                                num_points=16, polyhedra=tuple(arrays))
+    with pytest.raises(ValueError, match="more than two cells"):
+        t.faces()
+
+
 def _pentagonal_prisms():
     """Two pentagonal prisms stacked along z, sharing a pentagon, as polyhedra,
     and a hexahedron against the lower prism's first side."""

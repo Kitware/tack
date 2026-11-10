@@ -10,3 +10,8 @@
   fields, `extract_surface` of order-2 fields, a 2D mesh or polyhedra, its
   pieces, `extract_edges` of an `L2` geometry, and `feature_edges` and
   `glyphs` of polygons or polyhedra still take the cells left (#405).
+- `surface_normals` keeps hidden and refined cells, marked, as its output is on
+  the input's cells: each has a zero normal, adds nothing at its points and
+  joins no region for the winding. The other cells' normals and winding, and
+  the normals at the points they use, are what extracting them gave, to the
+  bit; before, the masked cells were dropped from the output (#405).

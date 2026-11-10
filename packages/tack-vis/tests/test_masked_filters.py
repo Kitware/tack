@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """Filters that leave hidden and refined cells out in place (#405): ``clip``,
-``extract_surface``, ``extract_edges``, ``triangulate``, ``feature_edges`` and
-``glyphs``, which extracted the other cells first (``ghosts.visible``) -- a copy
+``extract_surface``, ``extract_edges``, ``triangulate``, ``feature_edges``,
+``glyphs`` and ``surface_normals`` (whose output keeps them, marked), which extracted the other cells first (``ghosts.visible``) -- a copy
 of every box below an AMR hierarchy's finest level, its positions stored, its
 fields copied and the caches of its topology lost on every call.
 
@@ -122,3 +122,37 @@ def test_a_masked_grid_keeps_its_faces_across_surface_calls(backend):
     assert faces is not None
     second = td.extract_surface(data)
     assert data.topology._faces is faces and _cells(first) == _cells(second)
+
+
+def test_surface_normals_keep_masked_cells_and_leave_them_out_of_the_normals(backend):
+    # The output is the input's cells, so hidden and refined cells stay, marked,
+    # with a zero normal; the others' normals and winding, and the normals at
+    # the points they use, are the extracted cells' to the bit.
+    rng = np.random.default_rng(5)
+    for dtype in _dtypes():
+        flat = td.triangulate(td.uniform_grid((14, 12), spacing=(0.3, 0.4), dtype=dtype))
+        x = arrays.materialize(flat.geometry.values).numpy().astype(float)
+        x[:, 2] = 0.5 * np.sin(x[:, 0])
+        rows = flat.topology.connectivity.numpy().reshape(-1, 3).copy()
+        turned = rng.random(len(rows)) < 0.3                 # work for the winding
+        rows[turned] = rows[turned][:, ::-1]
+        triangles = td.DataSet(td.UnstructuredTopology(
+            np.full(len(rows), 5, np.uint8), np.arange(0, 3 * len(rows) + 1, 3),
+            rows.reshape(-1)), tack.array(x.astype(dtype.numpy_dtype), tack.vec(3, dtype)))
+        for surface in (triangles, td.uniform_grid((14, 12), spacing=(0.3, 0.4), dtype=dtype),
+                        td.as_polygons(td.uniform_grid((14, 12), dtype=dtype))):
+            data = _masked(surface)
+            kept = (data.ghosts.cells.numpy() & (td.Ghosts.HIDDENCELL | td.Ghosts.REFINEDCELL)) == 0
+            for weights in (None, "area"):
+                a = td.surface_normals(data, weights=weights)
+                b = td.surface_normals(visible(data), weights=weights)
+                assert a.num_cells == data.num_cells
+                assert np.array_equal(a.ghosts.cells.numpy(), data.ghosts.cells.numpy())
+                normals = a.fields["cell_normals"].values.numpy()
+                assert not normals[~kept].any()
+                assert np.array_equal(normals[kept], b.fields["cell_normals"].values.numpy())
+                where = {p.tobytes(): i for i, p in
+                         enumerate(arrays.materialize(a.geometry.values).numpy())}
+                at = [where[p.tobytes()] for p in arrays.materialize(b.geometry.values).numpy()]
+                assert np.array_equal(a.fields["normals"].values.numpy()[at],
+                                      b.fields["normals"].values.numpy())

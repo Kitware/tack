@@ -134,7 +134,17 @@ def _node_gradients(cells, u, out):
 #: whatever rounding left of the 0 -- in f32, positions of size 6 round a cell of
 #: size 1e-3 by 4e-4 of it, and AhmedML's flat corners came out at 1e-4 to 2e-4 --
 #: its angle under a tenth of a degree; below its negative, the cell is tangled.
+#: The same band applies to f64 data, where rounding is far smaller: a corner
+#: within it is as good as flat, its gradient a thousand times the cell's and more.
 _FLAT = tack.constant(1e-3)
+
+#: A cell's Green-Gauss gradient is trusted while its signed volume is more than
+#: this of the sum of its sub-tetrahedra's absolute volumes (1 for a cell that
+#: does not fold). A folded cell's parts cancel as it turns inside out, and its
+#: gradient grows as one over the fraction: on a hexahedron folded by one point
+#: (`test_gradients._tangled`), the largest point gradient was 7 at 0.11, 21 at
+#: 0.04 and 612 at 0.002.
+_THIN = tack.constant(0.1)
 
 
 @tack.func
@@ -185,10 +195,13 @@ def _shape_green_gauss(cells, u, c):
     over its faces from the shape's tables, each fanned from its points' mean, so a
     linear field's is exact, without the map's Jacobian. Positions and values from
     the cell's first corner. Faces wound all outward or all inward give the same
-    gradient, the volume's sign cancelling."""
+    gradient, the volume's sign cancelling. Also whether it is trusted: 1 where its
+    signed volume is more than ``_THIN`` of its sub-tetrahedra's absolute volumes
+    (each fan triangle's with the first corner)."""
     origin = cells.corner_position(c, 0)
     u0 = u.corner_value(c, 0)
     six = origin[0] - origin[0]
+    whole = six
     total = origin - origin
     for k in range(cells.NUM_FACES):
         size = cells.face_num_points(k)
@@ -219,18 +232,33 @@ def _shape_green_gauss(cells, u, c):
         apex = points / size
         six += apex.dot(newell)
         total += spun + along.cross(apex) + newell * (values / size)
-    return total / six
+        # The sub-tetrahedra over this face, apex . (a x b) each, again.
+        a = first
+        for j in range(1, size + 1):
+            b = first
+            if j < size:
+                b = cells.corner_position(c, cells.face_corner(k, j)) - origin
+            whole += abs(apex.dot(a.cross(b)))
+            a = b
+    trusted = 1 if abs(six) > _THIN * whole else 0
+    return total / six, trusted
 
 
 @tack.kernel
 def _corner_gradients(cells, u, start, out, singular):
+    # singular, per corner: 0 a gradient; 1 none, left out of the point's mean; 2
+    # left out too, but its cell's Green-Gauss gradient is in out, for a point all
+    # of whose corners are left out (_without_singular).
     for c in cells:
         first = start + cells.index(c) * cells.NUM_POINTS
         # Tangled: the map folds over (a corner's scaled Jacobian below -_FLAT), so
         # its inverse, which the corner gradients take, is wrong near the fold and
         # unbounded at it. The cell's gradient is then its own as a polyhedron's,
-        # at every corner.
+        # at every corner, unless the cell is nearly as much inside out as not
+        # (_THIN), where that grows without bound too: then a corner whose map does
+        # not fold keeps its own, and the folded ones are left out.
         tangled = 0
+        flats = 0
         for j in range(cells.NUM_POINTS):
             singular[first + j] = 0
             if cells.ID == shapes.PYRAMID and j == 4:
@@ -244,6 +272,7 @@ def _corner_gradients(cells, u, start, out, singular):
                 flat, folded = _corner_kind(cells, c, pc)
                 if folded == 1:
                     tangled = 1
+                    singular[first + j] = 3          # folded: settled below
                 if flat == 1:
                     # Singular at this corner too, where two of the cell's faces
                     # meet flat (a corner on a straight edge of a face), or all but
@@ -253,30 +282,52 @@ def _corner_gradients(cells, u, start, out, singular):
                     # average.
                     out[first + j] = tack.vec3(0.0, 0.0, 0.0)
                     singular[first + j] = 1
+                    flats = 1
                 else:
                     out[first + j] = world_gradient(cells, u, c, pc)
-        if cells.DIMENSION == 3 and tangled == 1:
-            g = _shape_green_gauss(cells, u, c)
+        if cells.DIMENSION == 3 and (tangled == 1 or flats == 1):
+            g, trusted = _shape_green_gauss(cells, u, c)
             for j in range(cells.NUM_POINTS):
-                out[first + j] = g
-                singular[first + j] = 0
+                kind = singular[first + j]
+                if tangled == 1 and trusted == 1:
+                    out[first + j] = g
+                    singular[first + j] = 0
+                elif kind == 3:
+                    out[first + j] = tack.vec3(0.0, 0.0, 0.0)
+                    singular[first + j] = 1
+                elif kind == 1 and trusted == 1:
+                    # A flat corner keeps the cell's Green-Gauss gradient, which is
+                    # bounded there, for a point with no other gradient.
+                    out[first + j] = g
+                    singular[first + j] = 2
 
 
 @tack.kernel
-def _without_singular(offsets, entries, singular, out, nan):
-    # A point's average over the corners that have a gradient: the corners left out
-    # added zero to the mean over all, which is scaled to the rest; NaN if none is left.
+def _without_singular(offsets, entries, singular, corners, out, nan):
+    # A point's mean over its corners that have a gradient (singular 0); where none
+    # has, over those left out with their cell's Green-Gauss gradient (2); NaN where
+    # there is neither.
     for p in range(out.shape[0]):
-        n = offsets[p + 1] - offsets[p]
         left_out = 0
         for k in range(offsets[p], offsets[p + 1]):
-            left_out += singular[entries[k]]
+            if singular[entries[k]] != 0:
+                left_out += 1
         if left_out > 0:
-            if left_out == n:
+            total = out[p] - out[p]          # in the gradients' own type: Metal has no f64
+            kept = 0
+            for k in range(offsets[p], offsets[p + 1]):
+                if singular[entries[k]] == 0:
+                    total += corners[entries[k]]
+                    kept += 1
+            if kept == 0:
+                for k in range(offsets[p], offsets[p + 1]):
+                    if singular[entries[k]] == 2:
+                        total += corners[entries[k]]
+                        kept += 1
+            if kept == 0:
                 out[p] = tack.vec3(nan, nan, nan)
             else:
-                # In the gradients' own type: Metal has no f64.
-                out[p] = out[p] * n / (n - left_out)
+                out[p] = total / kept
 
 
 @tack.kernel
@@ -492,7 +543,7 @@ def _scalar_gradients(data, field, at):
         offsets, entries = data.topology.point_links()
         _average_links(offsets, entries, corners, out)
         if singular.max() > 0:              # rare: only then is any point rescaled
-            _without_singular(offsets, entries, singular, out, float("nan"))
+            _without_singular(offsets, entries, singular, corners, out, float("nan"))
     return out
 
 
@@ -519,9 +570,13 @@ def gradients(data, field, at="cells"):
     just below it, as vtkPyramid does; a cell whose Jacobian is singular at any
     other corner -- where two of its faces meet flat, as in a hexahedron with a
     straight corner -- has no gradient there (it grows without bound toward the
-    corner) and is left out of that point's average, which is NaN only if no
-    cell around the point is left (VTK leaves its inverse Jacobian unset there;
-    Viskores adds nothing but still counts the cell). ``flow_quantities`` derives divergence, vorticity and
+    corner) and is left out of that point's average; at a point no other cell
+    gives a gradient, a mesh's corner say, the point takes the cell's gradient
+    over its faces (Green-Gauss, bounded there) instead, and only a 2D cell or a
+    solid as much inside out as not leaves the point NaN (VTK leaves its inverse
+    Jacobian unset there; Viskores adds nothing but still counts the cell). A
+    solid folded over (a corner's scaled Jacobian below -1e-3) takes its
+    Green-Gauss gradient at every corner. ``flow_quantities`` derives divergence, vorticity and
     the Q-criterion from a vector field's gradient.
 
     A field given its gradient (``Field(..., gradient=)``) gives that instead of its

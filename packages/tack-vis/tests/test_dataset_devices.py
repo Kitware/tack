@@ -162,6 +162,11 @@ CALLS = {
     "values_at_centers": lambda d: td.values_at_centers(d, "s"),
     "gradients": lambda d: td.gradients(d, "s"),
     "gradients_at_points": lambda d: td.gradients(d, "s", at="points"),
+    "finite_differences": lambda d: (td.finite_differences(d, "v", order=4)
+                                     if isinstance(d.topology, td.StructuredTopology) else None),
+    "finite_differences_hessian": lambda d: (
+        td.finite_differences(d, td.project(d, "s", td.Constant(d)), derivative=2)
+        if isinstance(d.topology, td.StructuredTopology) else None),
     "cell_ids": td.cell_ids,
     "point_ids": td.point_ids,
     "to_cells": lambda d: td.project(d, "s", td.Constant(d)),

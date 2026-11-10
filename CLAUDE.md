@@ -33,6 +33,13 @@ and deletes the files; edit `CHANGELOG.md` only at a release (its summary).
 `tools/` tests itself alone (`cd tools && uv run --no-project --with pytest
 pytest`; its `pytest.ini` keeps the repository's conftest out).
 
+**Plans go in `docs/design/plans/`**, one page per piece of work with
+decisions in it (an API change, several pull requests, a choice between
+designs), proposed in a pull request of its own so reviewers can comment on
+any line; merging it accepts the plan, and the pull requests that carry it out
+link it. Its status (proposed, accepted, done, superseded) opens it, and a done
+plan records how the work came out. Bug fixes and small features need none.
+
 **Every source file opens with an SPDX header** (ParaView's form: `#
 SPDX-FileCopyrightText: Copyright (c) Kitware Inc.`, then `#
 SPDX-License-Identifier: BSD-3-Clause`; `.py`, `.js`, `.css`, `.html` outside

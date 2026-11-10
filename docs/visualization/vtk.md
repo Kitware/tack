@@ -56,8 +56,9 @@ an image: its positions are computed from its origin and spacing, never stored.
 | `vtkRectilinearGrid` | `StructuredTopology` over a `CartesianProduct` of its axes |
 | `vtkStructuredGrid` | `StructuredTopology` with explicit positions |
 | `vtkUnstructuredGrid` of shaped cells | `UnstructuredTopology` |
-| `vtkUnstructuredGrid` with polyhedra | `PolyhedralTopology`, every cell a polyhedron of its faces |
-| polygons, polylines | `PolygonalTopology`, `PolylineTopology` |
+| `vtkUnstructuredGrid` with polyhedra | `UnstructuredTopology`, the polyhedra beside the shaped cells (`polyhedral="all"`: a `PolyhedralTopology`, every cell a polyhedron of its faces) |
+| polygons | `UnstructuredTopology`, the polygons beside the triangles and quads (`polyhedral="all"`: a `PolygonalTopology`, every cell a polygon) |
+| polylines | `PolylineTopology` |
 | `vtkPolyData` | the unstructured grid of its cells; triangle strips as their triangles |
 | point data, cell data | `H1` fields, `Constant` fields; a point and a cell array of one name are two fields |
 | `vtkGhostType` | the ghost marks, `data.ghosts` |

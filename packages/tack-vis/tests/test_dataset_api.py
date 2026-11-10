@@ -387,7 +387,9 @@ def test_rectilinear_round_trip(backend):
 @pytest.mark.parametrize("make", ["as_polygons", "polyhedral_contour"])
 def test_polygonal_round_trip(backend, make):
     """A polygonal topology exports as VTK_POLYGON cells, which the import read
-    as linear shapes and refused ("cell types [7] are not linear shapes")."""
+    as linear shapes and refused ("cell types [7] are not linear shapes"). They
+    come back as polygons of an unstructured topology, or with
+    ``polyhedral="all"`` as the polygonal topology they were."""
     if make == "as_polygons":
         data = td.as_polygons(td.extract_surface(td.uniform_grid((3, 3, 3))))
     else:
@@ -396,7 +398,14 @@ def test_polygonal_round_trip(backend, make):
     assert isinstance(data.topology, td.PolygonalTopology) and data.num_cells
     data.fields["c"] = td.Field(td.Constant(data), _scalars(np.arange(data.num_cells)))
     grid = dataset_to_vtk(data)
-    back = vtk_to_dataset(grid)
+    mixed = vtk_to_dataset(grid)
+    assert isinstance(mixed.topology, td.UnstructuredTopology)
+    assert (mixed.topology.types.numpy() == 7).all()
+    offsets, loops = data.topology.loops()
+    np.testing.assert_array_equal(mixed.topology.offsets.numpy(), offsets.numpy())
+    np.testing.assert_array_equal(mixed.topology.connectivity.numpy(), loops.numpy())
+    np.testing.assert_array_equal(mixed.fields["c"].values.numpy(), np.arange(data.num_cells))
+    back = vtk_to_dataset(grid, polyhedral="all")
     assert isinstance(back.topology, td.PolygonalTopology)
     assert back.num_cells == data.num_cells
     for a, b in zip(back.topology.loops(), data.topology.loops()):

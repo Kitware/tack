@@ -89,3 +89,8 @@
   `PolyhedralTopology`. `polyhedral=True` (or `"all"`) reads every cell as a
   polyhedron as before; the VTK algorithm wrappers do so for grids with
   polyhedra, so their filters keep their inputs.
+- **Breaking:** `vtk_to_dataset` of a grid or `vtkPolyData` with polygons
+  (`VTK_POLYGON`, or polygons of five points or more) gives an
+  `UnstructuredTopology` with the polygons beside the triangles and quads, not
+  a `PolygonalTopology`, so the reader changes once, in this release, for both.
+  `polyhedral=True` (or `"all"`) reads every cell as a polygon as before.

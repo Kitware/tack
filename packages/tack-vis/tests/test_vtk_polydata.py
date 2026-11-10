@@ -58,12 +58,18 @@ def test_a_surface_of_triangles_and_quads_is_unstructured():
     assert set(np.unique(disk.topology.types.numpy())) == {9}         # VTK_QUAD
 
 
-def test_larger_polygons_make_a_polygonal_topology():
+def test_larger_polygons_stand_beside_the_triangles():
+    """One topology of both, as for polyhedra beside shapes; ``polyhedral="all"``
+    reads every cell as a polygon, as before 0.8."""
     hexagon = [[np.cos(a), np.sin(a), 0] for a in np.linspace(0, 2 * np.pi, 7)[:-1]]
     surface = _polydata([*hexagon, [0, 0, 1]], polys=[[0, 1, 2, 3, 4, 5], [1, 0, 6]])
     data = vtk_to_dataset(surface, dtype=tack.f64)
-    assert isinstance(data.topology, td.PolygonalTopology)
+    assert isinstance(data.topology, td.UnstructuredTopology)
+    assert list(np.asarray(data.topology.types.numpy())) == [7, 5]
     assert _measure(data) == pytest.approx(_vtk_measure(surface), rel=1e-12)
+    every = vtk_to_dataset(surface, dtype=tack.f64, polyhedral="all")
+    assert isinstance(every.topology, td.PolygonalTopology)
+    assert _measure(every) == pytest.approx(_measure(data), rel=1e-12)
 
 
 def test_strips_are_their_triangles_wound_alike_with_their_cell_data():

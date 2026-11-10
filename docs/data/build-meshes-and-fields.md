@@ -57,7 +57,8 @@ names the VTK class you may already use.
 | `vtkStructuredGrid` | `td.DataSet(td.StructuredTopology(dims), positions)` | a position per point |
 | `vtkUnstructuredGrid` | `td.DataSet(td.UnstructuredTopology(types, offsets, connectivity), positions)` | a position per point |
 | `vtkUnstructuredGrid` of polyhedra | `td.PolyhedralTopology.from_cell_faces(...)` | a position per point |
-| `vtkPolyData` of polygons or lines | `td.PolygonalTopology`, `td.PolylineTopology` | a position per point |
+| `vtkPolyData` of polygons | `td.UnstructuredTopology(types, offsets, loops)`, type 7 a polygon beside triangles (5) and quads (9); or `td.PolygonalTopology`, every cell a polygon | a position per point |
+| `vtkPolyData` of lines | `td.PolylineTopology` | a position per point |
 | `vtkPolyData` of vertices | `td.point_cloud(positions, fields)` | a position per point |
 | `vtkOverlappingAMR` | `td.AMRDataSet` ([AMR and octrees](amr-and-octrees.md)) | per box |
 | `vtkHyperTreeGrid` | `td.OctreeDataSet` ([AMR and octrees](amr-and-octrees.md)) | per root cell |

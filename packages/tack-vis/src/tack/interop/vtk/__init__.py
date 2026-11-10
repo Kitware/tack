@@ -1103,9 +1103,11 @@ def vtk_to_dataset(grid, dtype=_DEFAULT_FLOAT, polyhedral=None, orient=False, id
     its polyhedra another, over the same points (``_split_polyhedra``; deprecated
     since 0.8, to be removed in 0.9: the default reading holds both). A grid of
     polylines becomes a ``PolylineTopology`` (its lines two-point polylines, and
-    no other cells allowed), and one of polygons (``VTK_POLYGON``) a
-    ``PolygonalTopology`` (its triangles and quads polygons too, and no other
-    cells allowed). Its types, offsets and connectivity stay implicit where
+    no other cells allowed). Polygons (``VTK_POLYGON``) stand beside triangles
+    and quads in one ``UnstructuredTopology``, as polyhedra beside solids (no
+    other cells allowed with them); with ``polyhedral=True`` (or ``"all"``) a
+    grid of polygons becomes a ``PolygonalTopology`` instead, its triangles and
+    quads polygons too. Its types, offsets and connectivity stay implicit where
     VTK's are (a cell type given as a number, affine offsets). Hexahedra with
     corners repeated as finite-element files write other shapes (Tecplot's
     bricks, degenerate Exodus and Patran hexahedra) become those shapes: a
@@ -1114,10 +1116,10 @@ def vtk_to_dataset(grid, dtype=_DEFAULT_FLOAT, polyhedral=None, orient=False, id
     A ``vtkPolyData`` is taken as the unstructured grid of its cells in VTK's
     order -- verts (a poly vertex as its vertices), lines, polygons (of three or
     four points triangles and quads), and triangle strips, each strip as its
-    triangles, which take its cell data -- so the same rules hold: a surface of triangles and quads is
-    an ``UnstructuredTopology``, one with larger polygons a ``PolygonalTopology``,
-    lines a ``PolylineTopology``, and polylines or polygons beside other cells
-    are refused.
+    triangles, which take its cell data -- so the same rules hold: a surface of
+    triangles, quads and larger polygons is an ``UnstructuredTopology``, lines a
+    ``PolylineTopology``, and polylines or polygons beside other cells are
+    refused.
     Tetrahedra, hexahedra, wedges and pyramids whose corners are in the reverse of
     VTK's order (inside out: a negative volume, faces pointing inward, as some
     converters write prisms) are found on every read, by a kernel, and named in a
@@ -1619,7 +1621,7 @@ def _vtk_to_dataset(grid, dtype=tack.f32, polyhedral=None, orient=False, id_dtyp
 
             return _lagrange.to_dataset(grid, present, dtype or tack.f64, id_dtype, shift,
                                         _units_label, float_fields)
-    if isinstance(grid, vtkUnstructuredGrid) and polyhedral:
+    if isinstance(grid, vtkUnstructuredGrid) and polyhedral and 7 not in present:
         topology = _polyhedral_topology(grid, orient=orient, id_dtype=id_dtype)
         geometry, geometry_dtype = _points_geometry(grid, shift, dtype, False)
     elif isinstance(grid, vtkUnstructuredGrid):
@@ -1646,13 +1648,18 @@ def _vtk_to_dataset(grid, dtype=tack.f32, polyhedral=None, orient=False, id_dtyp
             topology = PolylineTopology(_ids(offsets), _ids(connectivity),
                                         num_points=num_points, id_dtype=id_dtype)
         elif 7 in present:
-            # Polygons, as dataset_to_vtk writes a PolygonalTopology: triangles
-            # and quads are polygons too; nothing else mixes in.
+            # Polygons stand beside the triangles and quads, as VTK holds them;
+            # nothing else mixes in. With polyhedral, every cell is a polygon
+            # (a PolygonalTopology, the reading before 0.8).
             if not present <= {5, 7, 9}:
                 raise ValueError("a grid with polygons (VTK_POLYGON) may hold only "
                                  "triangles, quads and polygons")
-            topology = PolygonalTopology(_ids(offsets), _ids(connectivity),
-                                         num_points=num_points, id_dtype=id_dtype)
+            if polyhedral:
+                topology = PolygonalTopology(_ids(offsets), _ids(connectivity),
+                                             num_points=num_points, id_dtype=id_dtype)
+            else:
+                topology = UnstructuredTopology(types, offsets, connectivity,
+                                                num_points=num_points, id_dtype=id_dtype)
         else:
             from tack.dataset.shapes import _BY_ID
 

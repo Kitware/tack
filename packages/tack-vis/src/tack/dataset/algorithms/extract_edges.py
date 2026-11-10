@@ -85,6 +85,16 @@ def _copy_points(values, out, n):
         out[i] = values[i]
 
 
+@tack.kernel
+def _used_edges(cells, marks, used):
+    # The edges of each cell that is not hidden or refined.
+    for c in cells:
+        e = cells.entity_id(c)
+        if (tack.i32(marks[e]) & 40) == 0:
+            for k in range(cells.NUM_EDGES):
+                tack.atomic_max(used, cells.edge_id(c, k), 1)
+
+
 @on_inputs_device
 def extract_edges(data, edges=None, fields=None, subdivision=None):
     """The ``edges`` -- an edge ``Set``, a set's name in ``data.sets``, or edge ids (a
@@ -108,11 +118,15 @@ def extract_edges(data, edges=None, fields=None, subdivision=None):
     its cells as they are. The output's geometry is the points' positions and
     the new ones; no other field is kept, and no ghost marks. A straight
     geometry's edges are lines already, and are not subdivided."""
+    from tack.dataset.algorithms._refine import _masks
     from tack.dataset.ghosts import refuse_hidden, visible
 
-    if edges is None:
+    marks, hidden = _masks(data)
+    in_place = (edges is None and hidden and isinstance(data.geometry.space, H1)
+                and getattr(data.topology, "reference_cells", True))
+    if edges is None and not in_place:
         data = visible(data)
-    else:
+    elif edges is not None:
         refuse_hidden(data, "extract_edges of chosen edges")
     if isinstance(data.geometry.space, L2):
         if edges is not None or fields:
@@ -124,7 +138,18 @@ def extract_edges(data, edges=None, fields=None, subdivision=None):
     topology = data.topology
     found = topology.edges()
     idt = data.id_dtype
-    if edges is None:
+    if in_place:
+        # The edges of cells that are not hidden or refined, in order: what the
+        # cells left once they are extracted would give, on the same points.
+        from tack.dataset.algorithms._common import _compact
+
+        used = tack.zeros((found.num_edges,), tack.i32)
+        for group in data.launch_groups("cells", []):
+            if group.count:
+                _used_edges(data.domain_view("cells", group, incidence="edges"), marks, used)
+        _, chosen, n = _compact(used, idt)
+        edges_to_cells = Take(chosen)
+    elif edges is None:
         n = found.num_edges
         chosen = CountingArray(n, dtype=idt)              # every edge, in order
         edges_to_cells = Same()

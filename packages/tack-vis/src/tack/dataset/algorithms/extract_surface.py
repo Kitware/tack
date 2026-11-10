@@ -12,6 +12,7 @@ from tack import arrays
 from tack.algorithms.scan import exclusive_scan
 from tack.dataset import ids as id_types
 from tack.dataset import shapes
+from tack.dataset.algorithms._common import _close
 from tack.dataset.carry import Pieces, Same, Take, _take, carry, selected
 from tack.dataset.dataset import Field
 from tack.dataset.sets import Set
@@ -41,6 +42,93 @@ def _surface_cells(ids, kinds, rows, starts, types, offsets, connectivity, lengt
             connectivity[at + j] = row[j]
         if i == 0:
             offsets[n] = length
+
+
+@tack.func
+def _open_side(cells, c, k, sides, marks):
+    """Whether cell ``c``'s local face ``k`` bounds the cells left -- the cell is not
+    hidden or refined (asked by the caller) and the face's other side is none,
+    or is."""
+    s = sides[cells.face_id(c, k)]
+    other = s[2] if cells.face_side(c, k) == 0 else s[0]
+    return other < 0 or (tack.i32(marks[other]) & 40) != 0
+
+
+@tack.kernel
+def _open_face_counts(cells, sides, marks, faces, points):
+    # Each cell's faces on the boundary of the cells left, and their points.
+    for c in cells:
+        e = cells.entity_id(c)
+        n = 0
+        m = 0
+        if (tack.i32(marks[e]) & 40) == 0:
+            for k in range(cells.NUM_FACES):
+                if _open_side(cells, c, k, sides, marks):
+                    n += 1
+                    m += cells.side_num_points(c, k)
+        faces[e] = n
+        points[e] = m
+
+
+@tack.kernel
+def _open_faces(cells, sides, marks, kinds, face_starts, point_starts, types, offsets,
+                connectivity, owners, ids):
+    # Those faces, each going round outward for its cell -- the cell's own local
+    # face, as the faces of the cells left once extracted would have it.
+    for c in cells:
+        e = cells.entity_id(c)
+        if (tack.i32(marks[e]) & 40) == 0:
+            at = face_starts[e]
+            p = point_starts[e]
+            for k in range(cells.NUM_FACES):
+                if _open_side(cells, c, k, sides, marks):
+                    f = cells.face_id(c, k)
+                    n = cells.side_num_points(c, k)
+                    types[at] = tack.u8(kinds[f])
+                    offsets[at] = p
+                    for j in range(n):
+                        connectivity[p + j] = cells.side_point_id(c, k, j)
+                    owners[at] = e
+                    ids[at] = f
+                    at += 1
+                    p += n
+
+
+def _masked_surface(data, marks, fields):
+    """``extract_surface``'s default on a 3D mesh of shape cells with hidden or
+    refined cells: the faces bounding the cells left, from the topology's own
+    faces (kept by it, where extracting the rest derived another mesh's every
+    call), each going round outward for its cell -- the extracted cells'
+    surface, on the points it uses, numbered in the same order."""
+    faces = data.topology.faces()
+    n = data.num_cells
+    idt = data.id_dtype
+    face_counts = tack.zeros((n,), tack.i32)
+    point_counts = tack.zeros((n,), tack.i32)
+    groups = [g for g in data.launch_groups("cells", []) if g.count]
+    for group in groups:
+        _open_face_counts(data.domain_view("cells", group, incidence="faces"), faces.sides, marks, face_counts,
+                          point_counts)
+    odt = id_types.for_output(data, 24 * n)
+    face_starts = tack.empty((n,), odt)
+    point_starts = tack.empty((n,), odt)
+    count = exclusive_scan(face_counts, face_starts, n) if n else 0
+    length = exclusive_scan(point_counts, point_starts, n) if n else 0
+    types = tack.empty((count,), tack.u8)
+    offsets = tack.empty((count + 1,), odt)
+    connectivity = tack.empty((length,), odt)
+    owners = tack.empty((count,), idt)
+    chosen = tack.empty((count,), idt)
+    if count:
+        for group in groups:
+            _open_faces(data.domain_view("cells", group, incidence="faces"), faces.sides, marks, faces.kinds,
+                        face_starts, point_starts, types, offsets, connectivity, owners,
+                        chosen)
+    _close(offsets, count, length)
+    used, points = _used_points(connectivity, data.num_points, idt)
+    surface = UnstructuredTopology(types, offsets, connectivity, num_points=used)
+    return carry(data, surface, points=Take(points), cells=Pieces(owners),
+                 faces_to_cells=Take(chosen), fields=fields)
 
 
 @tack.kernel
@@ -263,6 +351,14 @@ def extract_surface(data, faces=None, fields=None):
             raise TypeError("extract_surface of pieces takes their boundary; choose faces "
                             "of each piece instead")
         return _surface_of_pieces(data, fields)
+    from tack.dataset.algorithms._refine import _masks
+
+    marks, hidden = _masks(data)
+    if (faces is None and hidden and isinstance(data.geometry.space, H1)
+            and data.topology.dimension == 3 and getattr(data.topology, "reference_cells", True)
+            and not _has_order_two(data, fields)):
+        # Hidden and refined cells left out in place, the topology's faces kept.
+        return _masked_surface(data, marks, fields)
     if faces is None:
         data = visible(data)
     else:

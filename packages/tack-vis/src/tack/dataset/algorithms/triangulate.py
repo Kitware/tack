@@ -7,7 +7,7 @@ import tack
 from tack.algorithms.scan import exclusive_scan
 from tack.arrays import materialize, size_of
 from tack.dataset import ids, shapes
-from tack.dataset.algorithms._refine import _ears, _fan_counts, _pieces_topology, _split
+from tack.dataset.algorithms._refine import _ears, _fan_counts, _masks, _pieces_topology, _split
 from tack.runtime.dispatch import on_inputs_device
 
 __all__ = ['triangulate']
@@ -18,10 +18,9 @@ def triangulate(data, fields=None):
     """Every 2D cell as triangles: a quad or pixel in 2, a polygon of ``n`` corners in
     ``n - 2`` by ear cutting in its plane (as VTK's vtkTriangleFilter), so a concave
     one is covered once, each triangle wound as the polygon; other cells are left
-    out. The points are the same; cell fields go to each cell's triangles."""
-    from tack.dataset.ghosts import visible
-
-    data = visible(data)
+    out. The points are the same; cell fields go to each cell's triangles. Hidden
+    and refined cells make no triangles, left out in place; the points stay all
+    of ``data``'s."""
     t = data.topology
     if getattr(t, "reference_cells", True):
         return _split(data, "triangles", fields)
@@ -32,8 +31,9 @@ def triangulate(data, fields=None):
     odt = ids.for_output(data, 3 * size_of(loop_points))
     counts = tack.empty((n,), tack.i32)
     starts = tack.empty((n,), odt)
+    marks, hidden = _masks(data)
     if n:
-        _fan_counts(loop_offsets, counts)
+        _fan_counts(loop_offsets, counts, marks, hidden)
     count = exclusive_scan(counts, starts, n) if n else 0
     connectivity = tack.empty((3 * count,), odt)
     sources = tack.empty((count,), data.id_dtype)
@@ -42,5 +42,5 @@ def triangulate(data, fields=None):
         after = tack.empty((size_of(loop_points),), tack.i32)
         before = tack.empty((size_of(loop_points),), tack.i32)
         _ears(loop_offsets, loop_points, materialize(data.geometry.values), starts, after,
-              before, connectivity, sources)
+              before, connectivity, sources, marks, hidden)
     return _pieces_topology(data, connectivity, sources, count, shapes.TRIANGLE, 3, fields)

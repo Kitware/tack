@@ -77,11 +77,11 @@ def _masks(data):
 
 
 @tack.kernel
-def _split_cells(cells, table, pieces, width, starts, connectivity, sources):
+def _split_cells(cells, table, pieces, width, starts, connectivity, sources, marks, hidden):
     for c in cells:
         e = cells.entity_id(c)
         at = starts[e]
-        for t in range(pieces):
+        for t in range(0 if _left_out(marks, hidden, e) else pieces):
             for v in range(width):
                 connectivity[(at + t) * width + v] = cells.point_id(c, table[t * width + v])
             sources[at + t] = e
@@ -171,9 +171,10 @@ def _cone_tets(cells, rank, starts, connectivity, sources, marks, hidden):
 
 
 @tack.kernel
-def _fan_counts(loop_offsets, counts):
+def _fan_counts(loop_offsets, counts, marks, hidden):
     for c in range(counts.shape[0]):
-        counts[c] = max(loop_offsets[c + 1] - loop_offsets[c] - 2, 0)
+        counts[c] = 0 if _left_out(marks, hidden, c) else max(
+            loop_offsets[c + 1] - loop_offsets[c] - 2, 0)
 
 
 @tack.func
@@ -202,7 +203,8 @@ def _turn(x, loop_points, first, a, b, c, drop):
 
 
 @tack.kernel
-def _ears(loop_offsets, loop_points, x, starts, after, before, connectivity, sources):
+def _ears(loop_offsets, loop_points, x, starts, after, before, connectivity, sources, marks,
+          hidden):
     # Each polygon by ear cutting in its plane -- the plane of its Newell normal's
     # largest component -- so a concave one is covered once (a fan from its first
     # corner covers part of it twice and part not at all). An ear is a corner
@@ -215,7 +217,7 @@ def _ears(loop_offsets, loop_points, x, starts, after, before, connectivity, sou
         first = loop_offsets[c]
         n = loop_offsets[c + 1] - first
         at = starts[c]
-        if n >= 3:
+        if n >= 3 and not _left_out(marks, hidden, c):
             nx = 0.0
             ny = 0.0
             nz = 0.0
@@ -379,7 +381,8 @@ def _split(data, kind, fields):
     n = data.num_cells
     groups = [g for g in data.topology.groups() if g.count and int(g.shape.ID) in tables]
     counts = tack.zeros((n,), tack.i32)
-    marks, hidden = tack.zeros((1,), tack.u8), 0     # its callers take the visible cells
+    # Hidden and refined cells make no pieces, left out in place (#405).
+    marks, hidden = _masks(data)
     for group in groups:
         _piece_counts(group.view(), len(tables[int(group.shape.ID)]), counts, marks, hidden)
     most = max((len(tables[int(g.shape.ID)]) for g in groups), default=0)
@@ -391,5 +394,5 @@ def _split(data, kind, fields):
     for group in groups:
         table = np.asarray(tables[int(group.shape.ID)], np.int32)
         _split_cells(group.view(), _table(("pieces", kind, int(group.shape.ID)), table),
-                     len(table), width, starts, connectivity, sources)
+                     len(table), width, starts, connectivity, sources, marks, hidden)
     return _pieces_topology(data, connectivity, sources, count, shape, width, fields)

@@ -114,14 +114,16 @@ def _busy(out, iters, count):
             backend.async_marker()
 
 
-def _long_enough(run, count, attempts=4):
+def _long_enough(run, count, attempts=6):
     """``run(count)``, which returns a result and the waits it measured,
     with the launches doubled until every wait lasts `_MIN_WAIT` (each launch
     stays as long as calibrated). Other processes
     on the device (pytest-xdist workers) can slow the calibration far more
     than the run: on Level Zero with four workers a launch calibrated at
     300 ms later ran in 44. They only ever lengthen a wait, so a retry
-    settles it."""
+    settles it. Four attempts (eight times the launches) were not enough on
+    CI's hosted Mac, whose wait still came out at 62 ms (2026-11-09); six
+    allow 32 times, a few seconds at most."""
     for _ in range(attempts):
         result, waits = run(count)
         if min(waits) >= _MIN_WAIT:

@@ -250,8 +250,131 @@ def test_what_it_refuses():
         td.finite_differences(td.tetrahedralize(data), "u")
     with pytest.raises(NotImplementedError, match="point data"):
         td.finite_differences(data, td.project(data, "u", td.L2(data)))
-    marks = np.zeros(60, np.uint8)
-    marks[7] = td.Ghosts.HIDDENPOINT
-    data.ghosts = td.Ghosts(points=tack.array(marks, tack.u8))
-    with pytest.raises(NotImplementedError, match="hidden points"):
-        td.finite_differences(data, "u")
+
+
+# ── Hidden points and cells ─────────────────────────────────────────
+
+def _blocked(marks, sizes):
+    """Where some axis of more than one entity has no visible neighbour on either
+    side: there VTK takes the world axis of that number as the grid's direction
+    and Tack a normal to the others, which differ off planes of world axes."""
+    hidden = (marks != 0).reshape(sizes[::-1])
+    blocked = np.zeros_like(hidden)
+    for axis in range(3):
+        if hidden.shape[axis] < 2:
+            continue
+        gone = np.ones_like(hidden)
+        before = gone.copy()
+        after = gone.copy()
+        index = [slice(None)] * 3
+        index[axis] = slice(1, None)
+        shifted = [slice(None)] * 3
+        shifted[axis] = slice(None, -1)
+        before[tuple(index)] = hidden[tuple(shifted)]
+        after[tuple(shifted)] = hidden[tuple(index)]
+        blocked |= before & after
+    return blocked.reshape(-1)
+
+
+def _hide(grid, on, fraction, seed=5):
+    """Marks hiding about ``fraction`` of ``grid``'s points (cells), as a VTK ghost
+    array: the marks."""
+    n = grid.number_of_points if on == "points" else grid.number_of_cells
+    marks = np.zeros(n, np.uint8)
+    bit = td.Ghosts.HIDDENPOINT if on == "points" else td.Ghosts.HIDDENCELL
+    marks[np.random.default_rng(seed).random(n) < fraction] = bit
+    (grid.point_data if on == "points" else grid.cell_data)["vtkGhostType"] = (
+        vtk.vtkUnsignedCharArray(marks))
+    return marks
+
+
+@needs_vtk
+@pytest.mark.parametrize("kind", ["image", "rectilinear", "curvilinear"])
+@pytest.mark.parametrize("dims", [(9, 8, 7), (9, 1, 7)])
+@pytest.mark.parametrize("on", ["points", "cells"])
+def test_order_2_around_hidden_values_is_vtks_gradient(kind, dims, on):
+    """A hidden neighbour makes VTK's stencil one-sided, and two leave no derivative
+    along the axis; VTK writes 0 at the hidden points themselves, Tack NaN."""
+    grid = _vtk_grid(kind, dims)
+    if on == "points":
+        x = np.array([grid.GetPoint(p) for p in range(grid.number_of_points)])
+        attributes = grid.point_data
+        sizes = dims
+    else:
+        centers = vtk.vtkCellCenters()(grid)
+        x = np.array([centers.GetPoint(c) for c in range(centers.number_of_points)])
+        attributes = grid.cell_data
+        sizes = tuple(max(n - 1, 1) for n in dims)
+    s, v = _sampled(x)
+    attributes["s"] = vtk.vtkDoubleArray(s)
+    attributes["v"] = vtk.vtkDoubleArray(v)
+    marks = _hide(grid, on, 0.2)
+    data = vtk_to_dataset(grid, dtype=tack.f64)
+    hidden = marks != 0
+    keep = ~hidden & (~_blocked(marks, sizes) if kind == "curvilinear" else True)
+    assert hidden.any() and keep.sum() > len(keep) // 2
+    for name in ("s", "v"):
+        ours = td.finite_differences(data, name).values.numpy()
+        theirs = _vtk_gradient(grid, name, on).reshape(ours.shape)
+        assert np.isnan(ours[hidden]).all() and not np.isnan(ours[~hidden]).any()
+        np.testing.assert_allclose(ours[keep], theirs[keep], rtol=1e-11, atol=1e-11,
+                                   err_msg=name)
+
+
+def _marked(data, fraction, on="points", bit=None, seed=6):
+    n = data.num_points if on == "points" else data.num_cells
+    marks = np.zeros(n, np.uint8)
+    if bit is None:
+        bit = td.Ghosts.HIDDENPOINT if on == "points" else td.Ghosts.HIDDENCELL
+    marks[np.random.default_rng(seed).random(n) < fraction] = bit
+    array = tack.array(marks, tack.u8)
+    data.ghosts = td.Ghosts(points=array) if on == "points" else td.Ghosts(cells=array)
+    return marks
+
+
+@pytest.mark.parametrize("order", [2, 4, 6])
+@pytest.mark.parametrize("derivative", [1, 2])
+@pytest.mark.parametrize("on", ["points", "cells"])
+def test_no_stencil_reads_a_hidden_value(order, derivative, on):
+    data = _curvilinear((10, 9, 8))
+    n = data.num_points if on == "points" else data.num_cells
+    marks = _marked(data, 0.15, on)
+    hidden = marks != 0
+    values = np.random.default_rng(1).random(n)
+    space = td.H1(data) if on == "points" else td.Constant(data)
+    results = []
+    for garbage in (1e30, -7.0):
+        u = np.where(hidden, garbage, values)
+        data.fields["u"] = td.Field(space, tack.array(u, tack.f64))
+        results.append(td.finite_differences(data, "u", order=order,
+                                             derivative=derivative).values.numpy())
+    assert np.isnan(results[0][hidden]).all()
+    np.testing.assert_array_equal(results[0][~hidden], results[1][~hidden])
+    assert np.isfinite(results[0][~hidden]).all()
+
+
+@pytest.mark.parametrize("order", [2, 4, 6])
+def test_linear_fields_stay_exact_around_hidden_points(order):
+    data = _curvilinear((10, 9, 8))
+    marks = _marked(data, 0.1)
+    a = np.array([0.7, -1.3, 2.1])
+    _with(data, _points(data) @ a)
+    keep = (marks == 0) & ~_blocked(marks, (10, 9, 8))
+    g = td.finite_differences(data, "u", order=order).values.numpy()
+    h = td.finite_differences(data, "u", order=order, derivative=2).values.numpy()
+    np.testing.assert_allclose(g[keep], np.broadcast_to(a, g[keep].shape), rtol=0, atol=1e-10)
+    np.testing.assert_allclose(h[keep], 0.0, rtol=0, atol=1e-8)
+
+
+def test_marks_that_hide_nothing_change_nothing():
+    """Duplicates (a ghost layer) and an AMR box's refined cells hold values."""
+    for on, bit in (("points", td.Ghosts.DUPLICATEPOINT), ("cells", td.Ghosts.REFINEDCELL),
+                    ("cells", td.Ghosts.DUPLICATECELL)):
+        data = _curvilinear((8, 7, 6))
+        n = data.num_points if on == "points" else data.num_cells
+        space = td.H1(data) if on == "points" else td.Constant(data)
+        data.fields["u"] = td.Field(space, tack.array(np.random.default_rng(2).random(n)))
+        plain = td.finite_differences(data, "u", order=4, derivative=2).values.numpy()
+        _marked(data, 0.3, on, bit)
+        np.testing.assert_array_equal(
+            td.finite_differences(data, "u", order=4, derivative=2).values.numpy(), plain)

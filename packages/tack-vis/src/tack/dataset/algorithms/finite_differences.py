@@ -57,67 +57,58 @@ def _windows(order, derivative):
     return centered, order + derivative
 
 
-def _classes(n, order):
-    """The positions along an axis of ``n`` points whose stencils differ: each edge
-    position, and one for every interior position (all of them, when the axis is
-    too short to have an interior)."""
-    e = order // 2
-    if n <= 2 * e + 1:
-        return list(range(n))
-    return [*range(e), e, *range(n - e, n)]
-
-
-def _table(n, order, derivative, width):
-    """Per stencil class along an axis of ``n`` points: its first offset, its length
-    and its weights (``width`` of them, padded with zeros)."""
-    centered, edge = _windows(order, derivative)
-    e = order // 2
-    starts, lengths, weights = [], [], []
-    for i in _classes(n, order):
-        m = min(centered if e <= i <= n - 1 - e else edge, n)
-        first = min(max(i - e, 0), n - m)
-        offsets = list(range(first - i, first - i + m))
-        starts.append(first - i)
-        lengths.append(m if n > 1 else 0)
-        weights.extend(_weights(offsets, derivative) + [0.0] * (width - m))
-    return starts, lengths, weights
-
-
-def _tables(sizes, order, derivative, dtype):
-    """The three axes' tables, one array each of starts, lengths and weights, with the
-    number of classes per axis (``classes``) and of weights per class (``width``)."""
+def _table(order, derivative, dtype):
+    """The stencils of one derivative, by the visible points a position has on each
+    side along its axis, up to ``cap`` each (``left * (cap + 1) + right``): each
+    stencil's first offset, its length and its weights (``width`` of them, padded
+    with zeros). The end of an axis and a hidden point bound a stencil alike, so
+    one table serves every axis: the centered stencil where it fits, else the edge
+    stencil as far as there are points, none where there is only the one."""
     centered, edge = _windows(order, derivative)
     width = max(centered, edge)
-    classes = max(len(_classes(n, order)) for n in sizes)
-    starts = np.zeros(3 * classes, np.int32)
-    lengths = np.zeros(3 * classes, np.int32)
-    weights = np.zeros(3 * classes * width, np.float64)
-    for axis, n in enumerate(sizes):
-        s, m, w = _table(n, order, derivative, width)
-        starts[axis * classes:axis * classes + len(s)] = s
-        lengths[axis * classes:axis * classes + len(m)] = m
-        weights[axis * classes * width:axis * classes * width + len(w)] = w
-    return (tack.array(starts, tack.i32), tack.array(lengths, tack.i32),
-            tack.array(weights.astype(dtype.numpy_dtype), dtype), classes, width)
+    cap = width - 1
+    e = order // 2
+    starts, lengths, weights = [], [], []
+    for left in range(cap + 1):
+        for right in range(cap + 1):
+            reach = left + right + 1
+            m = min(centered if left >= e and right >= e else edge, reach)
+            first = min(max(-e, -left), right - m + 1)
+            starts.append(first)
+            lengths.append(m if reach > 1 else 0)
+            weights.extend(_weights(list(range(first, first + m)), derivative)
+                           + [0.0] * (width - m))
+    return (tack.array(np.array(starts, np.int32), tack.i32),
+            tack.array(np.array(lengths, np.int32), tack.i32),
+            tack.array(np.array(weights, dtype.numpy_dtype), dtype), cap, width)
 
 
 @tack.func
-def _class(i, n, e):
-    """The stencil class of position `i` along an axis of `n` points (`_classes`)."""
-    c = e
-    if n <= 2 * e + 1 or i < e:
-        c = i
-    elif i >= n - e:
-        c = i - (n - 2 * e - 1)
-    return c
+def _reach(marks, bit, masked, p, i, n, stride, cap):
+    """The points on each side of point `p` (position `i` of `n` along an axis of
+    `stride`) a stencil may take, up to `cap`: to the axis' end, or to the first
+    point marked `bit` where `masked`."""
+    left = min(i, cap)
+    right = min(n - 1 - i, cap)
+    if masked != 0:
+        seen = 0
+        while seen < left and (marks[p - (seen + 1) * stride] & bit) == 0:
+            seen += 1
+        left = seen
+        seen = 0
+        while seen < right and (marks[p + (seen + 1) * stride] & bit) == 0:
+            seen += 1
+        right = seen
+    return left, right
 
 
 @tack.func
-def _axis(values, width, comp, positions, p, i, n, stride, axis, e, starts, lengths,
-          weights, classes, span):
-    """The derivative along one index axis at point `p` (position `i` of `n`), of the
-    field's component `comp` and of the positions: `(du, dx)`."""
-    c = axis * classes + _class(i, n, e)
+def _apply(values, width, comp, positions, p, stride, left, right, cap, starts, lengths,
+           weights, span):
+    """The derivative along one index axis at point `p`, with `left` and `right`
+    points to take on either side, of the field's component `comp` and of the
+    positions: `(du, dx)`."""
+    c = min(left, cap) * (cap + 1) + min(right, cap)
     s = starts[c]
     du = weights[0] * 0.0
     dx = tack.vec3(du)
@@ -130,51 +121,47 @@ def _axis(values, width, comp, positions, p, i, n, stride, axis, e, starts, leng
 
 
 @tack.func
-def _cross_axes(values, width, comp, positions, p, ia, na, sa, a, ib, nb, sb, b, e, starts,
-                lengths, weights, classes, span):
-    """The mixed second derivative along index axes `a` and `b` at point `p`, of the
-    field's component `comp` and of the positions: the product of the two axes'
-    first-derivative stencils."""
-    ca = a * classes + _class(ia, na, e)
-    cb = b * classes + _class(ib, nb, e)
+def _mixed(values, width, comp, positions, marks, bit, masked, p, sa, la, ra, jb, nb, sb,
+           cap, starts, lengths, weights, span):
+    """The mixed second derivative along index axes `a` (stride `sa`, with `la` and
+    `ra` points on either side of `p`) and `b`, of the field's component `comp` and
+    of the positions: the derivative along `a` of the derivatives along `b`, each
+    of those with the points it has itself, so that no stencil reaches a hidden
+    point. Without marks it is the product of the two stencils."""
+    ca = min(la, cap) * (cap + 1) + min(ra, cap)
     duv = weights[0] * 0.0
     dxv = tack.vec3(duv)
     for m in range(lengths[ca]):
-        wa = weights[ca * span + m]
-        qa = p + (starts[ca] + m) * sa
-        for l in range(lengths[cb]):
-            w = wa * weights[cb * span + l]
-            q = qa + (starts[cb] + l) * sb
-            duv += w * values[q * width + comp]
-            dxv += w * positions[q]
+        q = p + (starts[ca] + m) * sa
+        lb, rb = _reach(marks, bit, masked, q, jb, nb, sb, cap)
+        du, dx = _apply(values, width, comp, positions, q, sb, lb, rb, cap, starts, lengths,
+                        weights, span)
+        w = weights[ca * span + m]
+        duv += w * du
+        dxv += w * dx
     return duv, dxv
 
 
 @tack.func
-def _completed(ja, jb, jc, na, nb, nc):
-    """The index axes' world derivatives, an axis of one point (`n` 1, no derivative)
-    replaced by unit normals to the others, so that the inverse gives gradients in
-    the grid's plane or along its line: VTK takes the world axis of the same number
-    instead, which is the same where the grid lies in a plane of world axes."""
-    flat = 0
-    if na == 1:
-        flat += 1
-    if nb == 1:
-        flat += 1
-    if nc == 1:
-        flat += 1
+def _completed(ja, jb, jc, fa, fb, fc):
+    """The index axes' world derivatives, an axis with no derivative at the point
+    (`f` 1: an axis of one point, or both neighbours hidden) replaced by unit
+    normals to the others, so that the inverse gives gradients in the grid's plane
+    or along its line: VTK takes the world axis of the same number instead, which
+    is the same where the grid lies in a plane of world axes."""
+    flat = fa + fb + fc
     if flat == 1:
-        if na == 1:
+        if fa != 0:
             ja = jb.cross(jc).normalized()
-        elif nb == 1:
+        elif fb != 0:
             jb = jc.cross(ja).normalized()
         else:
             jc = ja.cross(jb).normalized()
     elif flat == 2:
         line = ja
-        if nb != 1:
+        if fb == 0:
             line = jb
-        if nc != 1:
+        if fc == 0:
             line = jc
         t = line.normalized()
         other = tack.vec3(1.0, 0.0, 0.0)
@@ -182,10 +169,10 @@ def _completed(ja, jb, jc, na, nb, nc):
             other = tack.vec3(0.0, 1.0, 0.0)
         u = t.cross(other).normalized()
         v = t.cross(u)
-        if na != 1:
+        if fa == 0:
             jb = u
             jc = v
-        elif nb != 1:
+        elif fb == 0:
             jc = u
             ja = v
         else:
@@ -217,74 +204,91 @@ def _metrics(ja, jb, jc):
 
 
 @tack.kernel
-def _gradient(values, width, comp, positions, nx, ny, nz, e, starts, lengths, weights,
-              classes, span, count, out):
+def _gradient(values, width, comp, positions, marks, bit, masked, nan, nx, ny, nz, cap,
+              starts, lengths, weights, span, count, out):
     for p in range(count):
-        i = p % nx
-        j = (p // nx) % ny
-        k = p // (nx * ny)
-        ua, ja = _axis(values, width, comp, positions, p, i, nx, 1, 0, e, starts, lengths,
-                       weights, classes, span)
-        ub, jb = _axis(values, width, comp, positions, p, j, ny, nx, 1, e, starts, lengths,
-                       weights, classes, span)
-        uc, jc = _axis(values, width, comp, positions, p, k, nz, nx * ny, 2, e, starts,
-                       lengths, weights, classes, span)
-        ja, jb, jc = _completed(ja, jb, jc, nx, ny, nz)
-        ra, rb, rc = _metrics(ja, jb, jc)
-        g = ra * ua + rb * ub + rc * uc
         base = (p * width + comp) * 3
-        out[base] = g[0]
-        out[base + 1] = g[1]
-        out[base + 2] = g[2]
+        if masked != 0 and (marks[p] & bit) != 0:
+            out[base] = nan
+            out[base + 1] = nan
+            out[base + 2] = nan
+        else:
+            i = p % nx
+            j = (p // nx) % ny
+            k = p // (nx * ny)
+            la, ra = _reach(marks, bit, masked, p, i, nx, 1, cap)
+            lb, rb = _reach(marks, bit, masked, p, j, ny, nx, cap)
+            lc, rc = _reach(marks, bit, masked, p, k, nz, nx * ny, cap)
+            ua, ja = _apply(values, width, comp, positions, p, 1, la, ra, cap, starts,
+                            lengths, weights, span)
+            ub, jb = _apply(values, width, comp, positions, p, nx, lb, rb, cap, starts,
+                            lengths, weights, span)
+            uc, jc = _apply(values, width, comp, positions, p, nx * ny, lc, rc, cap, starts,
+                            lengths, weights, span)
+            ja, jb, jc = _completed(ja, jb, jc, la + ra == 0, lb + rb == 0, lc + rc == 0)
+            da, db, dc = _metrics(ja, jb, jc)
+            g = da * ua + db * ub + dc * uc
+            out[base] = g[0]
+            out[base + 1] = g[1]
+            out[base + 2] = g[2]
 
 
 @tack.kernel
-def _hessian(values, width, comp, positions, nx, ny, nz, e, starts, lengths, weights,
-             starts2, lengths2, weights2, classes, span, span2, count, out):
+def _hessian(values, width, comp, positions, marks, bit, masked, nan, nx, ny, nz, cap,
+             starts, lengths, weights, span, cap2, starts2, lengths2, weights2, span2, count,
+             out):
     for p in range(count):
-        i = p % nx
-        j = (p // nx) % ny
-        k = p // (nx * ny)
-        sy = nx
-        sz = nx * ny
-        ua, ja = _axis(values, width, comp, positions, p, i, nx, 1, 0, e, starts, lengths,
-                       weights, classes, span)
-        ub, jb = _axis(values, width, comp, positions, p, j, ny, sy, 1, e, starts, lengths,
-                       weights, classes, span)
-        uc, jc = _axis(values, width, comp, positions, p, k, nz, sz, 2, e, starts, lengths,
-                       weights, classes, span)
-        uaa, xaa = _axis(values, width, comp, positions, p, i, nx, 1, 0, e, starts2,
-                         lengths2, weights2, classes, span2)
-        ubb, xbb = _axis(values, width, comp, positions, p, j, ny, sy, 1, e, starts2,
-                         lengths2, weights2, classes, span2)
-        ucc, xcc = _axis(values, width, comp, positions, p, k, nz, sz, 2, e, starts2,
-                         lengths2, weights2, classes, span2)
-        uab, xab = _cross_axes(values, width, comp, positions, p, i, nx, 1, 0, j, ny, sy, 1,
-                               e, starts, lengths, weights, classes, span)
-        uac, xac = _cross_axes(values, width, comp, positions, p, i, nx, 1, 0, k, nz, sz, 2,
-                               e, starts, lengths, weights, classes, span)
-        ubc, xbc = _cross_axes(values, width, comp, positions, p, j, ny, sy, 1, k, nz, sz, 2,
-                               e, starts, lengths, weights, classes, span)
-        ja, jb, jc = _completed(ja, jb, jc, nx, ny, nz)
-        ra, rb, rc = _metrics(ja, jb, jc)
-        g = ra * ua + rb * ub + rc * uc
-        # The chain rule: the index-space second derivatives less the grid's own
-        # curvature along the gradient, then to world axes on both sides.
-        m = tack.mat3([uaa - g.dot(xaa), uab - g.dot(xab), uac - g.dot(xac)],
-                      [uab - g.dot(xab), ubb - g.dot(xbb), ubc - g.dot(xbc)],
-                      [uac - g.dot(xac), ubc - g.dot(xbc), ucc - g.dot(xcc)])
-        r = tack.mat3(ra, rb, rc)
-        h = r.transpose() @ m @ r
         base = (p * width + comp) * 9
-        out[base] = h[0, 0]
-        out[base + 1] = h[0, 1]
-        out[base + 2] = h[0, 2]
-        out[base + 3] = h[1, 0]
-        out[base + 4] = h[1, 1]
-        out[base + 5] = h[1, 2]
-        out[base + 6] = h[2, 0]
-        out[base + 7] = h[2, 1]
-        out[base + 8] = h[2, 2]
+        if masked != 0 and (marks[p] & bit) != 0:
+            for c in range(9):
+                out[base + c] = nan
+        else:
+            i = p % nx
+            j = (p // nx) % ny
+            k = p // (nx * ny)
+            sy = nx
+            sz = nx * ny
+            # The reach of the wider stencils; the first derivatives' is within it.
+            la, ra = _reach(marks, bit, masked, p, i, nx, 1, cap2)
+            lb, rb = _reach(marks, bit, masked, p, j, ny, sy, cap2)
+            lc, rc = _reach(marks, bit, masked, p, k, nz, sz, cap2)
+            ua, ja = _apply(values, width, comp, positions, p, 1, la, ra, cap, starts,
+                            lengths, weights, span)
+            ub, jb = _apply(values, width, comp, positions, p, sy, lb, rb, cap, starts,
+                            lengths, weights, span)
+            uc, jc = _apply(values, width, comp, positions, p, sz, lc, rc, cap, starts,
+                            lengths, weights, span)
+            uaa, xaa = _apply(values, width, comp, positions, p, 1, la, ra, cap2, starts2,
+                              lengths2, weights2, span2)
+            ubb, xbb = _apply(values, width, comp, positions, p, sy, lb, rb, cap2, starts2,
+                              lengths2, weights2, span2)
+            ucc, xcc = _apply(values, width, comp, positions, p, sz, lc, rc, cap2, starts2,
+                              lengths2, weights2, span2)
+            uab, xab = _mixed(values, width, comp, positions, marks, bit, masked, p, 1, la, ra,
+                              j, ny, sy, cap, starts, lengths, weights, span)
+            uac, xac = _mixed(values, width, comp, positions, marks, bit, masked, p, 1, la, ra,
+                              k, nz, sz, cap, starts, lengths, weights, span)
+            ubc, xbc = _mixed(values, width, comp, positions, marks, bit, masked, p, sy, lb,
+                              rb, k, nz, sz, cap, starts, lengths, weights, span)
+            ja, jb, jc = _completed(ja, jb, jc, la + ra == 0, lb + rb == 0, lc + rc == 0)
+            da, db, dc = _metrics(ja, jb, jc)
+            g = da * ua + db * ub + dc * uc
+            # The chain rule: the index-space second derivatives less the grid's own
+            # curvature along the gradient, then to world axes on both sides.
+            m = tack.mat3([uaa - g.dot(xaa), uab - g.dot(xab), uac - g.dot(xac)],
+                          [uab - g.dot(xab), ubb - g.dot(xbb), ubc - g.dot(xbc)],
+                          [uac - g.dot(xac), ubc - g.dot(xbc), ucc - g.dot(xcc)])
+            r = tack.mat3(da, db, dc)
+            h = r.transpose() @ m @ r
+            out[base] = h[0, 0]
+            out[base + 1] = h[0, 1]
+            out[base + 2] = h[0, 2]
+            out[base + 3] = h[1, 0]
+            out[base + 4] = h[1, 1]
+            out[base + 5] = h[1, 2]
+            out[base + 6] = h[2, 0]
+            out[base + 7] = h[2, 1]
+            out[base + 8] = h[2, 2]
 
 
 def _grid(data, field):
@@ -303,17 +307,17 @@ def _grid(data, field):
     return tuple(max(n - 1, 1) for n in dims), centers, Values(data, "cells")
 
 
-def _refuse_hidden(data, field):
+def _hidden(data, field):
+    """The marks that hide values from the differences, the bit that does, and
+    whether any value is hidden: hidden points for point data, hidden cells for cell
+    data, as VTK's vtkGradientFilter reads them."""
     ghosts = data.ghosts
-    if ghosts is None:
-        return
-    if isinstance(field.space, H1):
-        marks, bit, what = ghosts.points, Ghosts.HIDDENPOINT, "hidden points"
-    else:
-        marks, bit, what = ghosts.cells, Ghosts.HIDDENCELL, "hidden cells"
-    if _has(marks, bit):
-        raise NotImplementedError(f"finite_differences on a grid with {what}: their "
-                                  "stencils would read values that are not there")
+    point_data = isinstance(field.space, H1)
+    bit = Ghosts.HIDDENPOINT if point_data else Ghosts.HIDDENCELL
+    marks = None if ghosts is None else ghosts.points if point_data else ghosts.cells
+    if not _has(marks, bit):
+        return tack.zeros((1,), tack.u8), bit, 0
+    return marks, bit, 1
 
 
 @on_inputs_device
@@ -332,7 +336,17 @@ def finite_differences(data, field, order=2, derivative=1):
     rectilinear and curvilinear grids, so that the gradient is VTK's (and first
     order at the edges); orders 4 and 6 take one-sided stencils of their own order
     there. An axis shorter than a stencil takes every point it has. Mixed second
-    derivatives take the product of the two axes' first-derivative stencils.
+    derivatives take the derivative along one axis of the derivatives along the
+    other.
+
+    Hidden points (``Ghosts.HIDDENPOINT``, for point data) and hidden cells
+    (``HIDDENCELL``, for cell data) hold no values: they bound the stencils as the
+    grid's edges do, so a point beside one takes a one-sided stencil and a point
+    between two along an axis has no derivative along it, as in VTK; their own
+    derivatives are NaN (VTK writes 0). Other marks hide nothing: ghost layers
+    widen the stencils at a piece's boundary, and the cells of an AMR box that a
+    finer level covers (``REFINEDCELL``) hold values and are differenced like the
+    rest.
 
     The gradient of a scalar is a 3-vector per point (or cell); of a vector of
     ``k`` components ``3k`` values, ``d(u_i)/d(x_j)`` at ``3 * i + j``, the layout
@@ -346,9 +360,7 @@ def finite_differences(data, field, order=2, derivative=1):
     line). Where the positions' derivatives are singular the derivatives are zero,
     as VTK leaves them. This differs from ``gradients(at="points")``, which
     averages each cell's derivative of the field's interpolant at the point: that
-    is right for finite element data, these for data sampled on a grid. A grid
-    with hidden points (for point data) or hidden cells (for cell data) is
-    refused."""
+    is right for finite element data, these for data sampled on a grid."""
     if order not in _ORDERS:
         raise ValueError(f"finite_differences' order is 2, 4 or 6, not {order!r}")
     if derivative not in (1, 2):
@@ -360,7 +372,6 @@ def finite_differences(data, field, order=2, derivative=1):
     if not isinstance(field.space, (H1, Constant)):
         raise NotImplementedError(f"finite_differences of a field on {field.space!r}: point "
                                   "data or cell data only")
-    _refuse_hidden(data, field)
     sizes, positions, space = _grid(data, field)
     width = width_of(field.values) or 1
     n = size_of(field.values)
@@ -374,17 +385,19 @@ def finite_differences(data, field, order=2, derivative=1):
     flat = values._scalar_view() if width_of(field.values) else values
     if arrays.dtype_of(field.values) != dtype:
         flat = flat.astype(dtype)
-    starts, lengths, weights, classes, span = _tables(sizes, order, 1, dtype)
-    e = order // 2
+    marks, bit, masked = _hidden(data, field)
+    starts, lengths, weights, cap, span = _table(order, 1, dtype)
     nx, ny, nz = sizes
     target = out._scalar_view()
+    nan = float("nan")
     if derivative == 2:
-        starts2, lengths2, weights2, _, span2 = _tables(sizes, order, 2, dtype)
+        starts2, lengths2, weights2, cap2, span2 = _table(order, 2, dtype)
     for comp in range(width):
         if derivative == 1:
-            _gradient(flat, width, comp, positions, nx, ny, nz, e, starts, lengths, weights,
-                      classes, span, n, target)
+            _gradient(flat, width, comp, positions, marks, bit, masked, nan, nx, ny, nz, cap,
+                      starts, lengths, weights, span, n, target)
         else:
-            _hessian(flat, width, comp, positions, nx, ny, nz, e, starts, lengths, weights,
-                     starts2, lengths2, weights2, classes, span, span2, n, target)
+            _hessian(flat, width, comp, positions, marks, bit, masked, nan, nx, ny, nz, cap,
+                     starts, lengths, weights, span, cap2, starts2, lengths2, weights2, span2,
+                     n, target)
     return Field(space, out, unit)

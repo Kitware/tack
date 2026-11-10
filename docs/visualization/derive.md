@@ -117,7 +117,10 @@ The differences assume a grid whose spacing varies smoothly. On spacing that
 jumps from one cell to the next, orders 4 and 6 amplify the jumps; order 2 is
 the safe choice there. A grid of two dimensions gives gradients in its plane.
 Point data is differenced over the points and cell data over the cells'
-centres. See the reference for
+centres. Hidden points (for point data) and hidden cells (for cell data) hold
+no values: the stencils stop at them as at the grid's edges, one-sided beside
+them, and their own derivatives are NaN. The cells of an AMR box that a finer
+level covers hold values and are differenced like the rest. See the reference for
 [`finite_differences`](../vis-guide/reference/algorithms.md#tack.dataset.algorithms.finite_differences.finite_differences).
 
 ### Other fields from fields

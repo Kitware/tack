@@ -14,6 +14,7 @@ import pytest
 
 import tack
 from tack import arrays
+from tack.runtime.dispatch import get_backend
 
 pytestmark = pytest.mark.quick      # the inner-loop set; see CLAUDE.md, Tests
 
@@ -50,7 +51,8 @@ def test_arange_of_integers_keeps_every_value(backend, args, dtype, expected):
 
 def test_arange_of_floats_and_refusals_are_as_before(backend):
     assert tack.arange(0, 1, 0.25).numpy().tolist() == [0.0, 0.25, 0.5, 0.75]
-    assert tack.arange(3, dtype=tack.f64).dtype == tack.f64
+    if get_backend().supports_f64:             # Metal has none
+        assert tack.arange(3, dtype=tack.f64).dtype == tack.f64
     with pytest.raises(TypeError, match="no integer type"):
         tack.arange(-1, 2**63 + 2**62, 2**62)      # -1 beside 3 * 2**62 - 1
 

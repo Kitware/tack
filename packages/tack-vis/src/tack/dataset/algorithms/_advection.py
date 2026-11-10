@@ -673,7 +673,10 @@ def _run(data, field, seeds, step_size, steps, integrator, locator, record, resu
     if not locator.serves(data):
         raise ValueError("the locator was built for another topology or geometry, or "
                          "Tack has written the positions since: make a new one")
-    mesh = mesh_search(data, locator, positions, strict=False, neighbors=neighbors)
+    from tack.dataset.ghosts import masked_marks
+
+    mesh = mesh_search(data, locator, positions, strict=False, neighbors=neighbors,
+                       marks=masked_marks(data))
     dtype = data.dtype
     # Seeds in an array of 3-vectors are copied on the device; anything else
     # comes from the host.

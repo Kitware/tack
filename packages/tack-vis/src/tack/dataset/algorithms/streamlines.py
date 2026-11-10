@@ -97,12 +97,7 @@ def streamlines(data, field, seeds, step_size, steps, integrator="rk4", locator=
         from tack.dataset.algorithms._particles import streamlines_pieces
         return streamlines_pieces(data, field, seeds, step_size, steps, integrator, step_unit,
                                   neighbors, **adaptive)
-    from tack.dataset.ghosts import refuse_hidden, visible
-
-    if locator is None:
-        data, field = visible(data, field)
-    else:
-        refuse_hidden(data, "streamlines with a locator")
+    # Hidden and refined cells are left out by the search (_run, masked_marks).
     from tack.dataset.polyhedra import PolylineTopology
 
     _, _, _, _, (trace, trace_times), lengths, capacity, _ = _run(

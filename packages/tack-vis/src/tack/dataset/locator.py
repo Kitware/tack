@@ -106,9 +106,14 @@ def _point_bins(points, ox, oy, oz, ix, iy, iz, nx, ny, nz, slack, keys):
         keys[q] = b
 
 
+# Cells that hold no points where a query gives marks: hidden or refined
+# (``Ghosts.MASKED_CELLS``).
+_MASKED = tack.constant(40, tack.i32)
+
+
 @tack.kernel
 def _test_points(cells, points, lo, hi, bin_offsets, bin_points, ox, oy, oz, ix, iy, iz,
-                 nx, ny, nz, tolerance, ncells, write, found, pcs):
+                 nx, ny, nz, tolerance, ncells, write, found, pcs, marks, hidden):
     for c in cells:
         e = cells.entity_id(c)
         pts = tack.local_array_like(lo, 3 * cells.NUM_POINTS)
@@ -127,6 +132,8 @@ def _test_points(cells, points, lo, hi, bin_offsets, bin_points, ox, oy, oz, ix,
         i1 = min(tack.i64(floor((b[0] + slack - ox) * ix)), nx - 1)
         j1 = min(tack.i64(floor((b[1] + slack - oy) * iy)), ny - 1)
         k1 = min(tack.i64(floor((b[2] + slack - oz) * iz)), nz - 1)
+        if hidden == 1 and (tack.i32(marks[e]) & _MASKED) != 0:
+            k1 = k0 - 1                          # left out: it holds no points
         for k in range(k0, k1 + 1):
             for j in range(j0, j1 + 1):
                 for i in range(i0, i1 + 1):
@@ -375,7 +382,7 @@ def _moved_cell_points(data, bad):
 @tack.kernel
 def _test_points_in_polyhedra(cells, points, lo, hi, bin_offsets, bin_points, ox, oy, oz,
                               ix, iy, iz, nx, ny, nz, tolerance, ncells, write, found, tets,
-                              pcs, starts, weights, moved):
+                              pcs, starts, weights, moved, marks, hidden):
     # As _test_points, locating in the cell's sub-tetrahedra, and ranking the
     # same way: holding the point ahead of coming within the tolerance.
     for c in cells:
@@ -393,6 +400,8 @@ def _test_points_in_polyhedra(cells, points, lo, hi, bin_offsets, bin_points, ox
         skipped = starts[e] if moved == 1 else -1
         if skipped == _SKIPPED:
             k1 = k0 - 1                          # no kernel: it holds no points
+        if hidden == 1 and (tack.i32(marks[e]) & _MASKED) != 0:
+            k1 = k0 - 1                          # left out: it holds no points
         for k in range(k0, k1 + 1):
             for j in range(j0, j1 + 1):
                 for i in range(i0, i1 + 1):
@@ -901,22 +910,29 @@ class CellLocator:
         return self._mesh_search
 
     @on_inputs_device
-    def find(self, points):
+    def find(self, points, hidden=None):
         """``Locations(cells, pcs, tets)`` for ``points`` (an ``(n, 3)`` host array or
         a field of 3-vectors): each point's cell (-1 for none) and its
         coordinates there, and in polyhedra its sub-tetrahedron (``tets`` is
-        ``None`` otherwise). See ``Locations``."""
-        return self._find(points)[0]
+        ``None`` otherwise). See ``Locations``.
 
-    def _find_holding(self, points):
+        ``hidden``, a dataset's cell ghost marks (``data.ghosts.cells``), leaves
+        its hidden and refined cells out: they hold no points, so a point in one
+        is found in a neighbour within its tolerance, or nowhere -- what the
+        dataset with them extracted (``ghosts.visible``) gives, without
+        extracting them or building another locator. The marks are the query's,
+        not the locator's, so one locator serves datasets of any marks."""
+        return self._find(points, hidden=hidden)[0]
+
+    def _find_holding(self, points, hidden=None):
         """``find``'s cells, and per point 1 if its cell holds it, 0 if the cell
         only comes within its tolerance (or there is none), as i32 arrays: what
         decides between pieces that both come close to a point
         (``probe`` and advection over a ``PartitionedDataSet``)."""
-        locations, held = self._find(points, want_held=True)
+        locations, held = self._find(points, want_held=True, hidden=hidden)
         return locations.cells, held
 
-    def _find(self, points, want_held=False):
+    def _find(self, points, want_held=False, hidden=None):
         data = self.data
         dtype = data.dtype
         if not hasattr(points, "numpy"):
@@ -933,6 +949,8 @@ class CellLocator:
         worth_bins = (self.structured is not None or "_cell_bins" in self.__dict__
                       or not first or 4 * m >= data.num_cells)
         search = self._search() if worth_bins else None
+        if search is not None and hidden is not None:
+            search = search.with_masks(hidden)
         if search is not None:
             # From the points: one launch, each point searching its bin's cells.
             found = tack.empty((m,), data.id_dtype)
@@ -974,15 +992,17 @@ class CellLocator:
             # The extra bin: outside the grid, where no cell looks, so not filled.
             order, starts = bucket_groups(keys, nbins + 1, ids.at_least(data.id_dtype, m),
                                           skip=nbins)
+            marks = (hidden, 1) if hidden is not None else (
+                tack.zeros((1,), tack.u8, device=self._device), 0)
             for write in (0, 1):
                 if self.polyhedral:
                     for_each(_test_points_in_polyhedra, data, "cells", points, self.lo,
                              self.hi, starts, order, *self._grid(), _TOLERANCE,
-                             data.num_cells, write, found, tets, pcs, *self._moved())
+                             data.num_cells, write, found, tets, pcs, *self._moved(), *marks)
                 else:
                     for_each(_test_points, data, "cells", points, self.lo, self.hi, starts,
                              order, *self._grid(), _TOLERANCE, data.num_cells, write, found,
-                             pcs)
+                             pcs, *marks)
             if want_held:
                 held = tack.empty((m,), tack.i32)
                 _held_ranks(found, none, data.num_cells, held)

@@ -801,8 +801,9 @@ def test_remove_ghosts_keeps_what_a_piece_owns():
 def test_hidden_cells_are_never_processed():
     """Filters leave hidden cells out, as if they were not there: their output is
     the output of the other cells, a field passed as an object included.
-    Choosing faces or edges by id, or reusing a locator, on such data is
-    refused rather than done with the hidden cells."""
+    Choosing faces or edges by id on such data is refused rather than done with
+    the hidden cells; a locator, which leaves them out in its search, is taken
+    (test_masked_search.py)."""
     whole = td.wavelet(6)
     marks = np.zeros(whole.num_cells, np.uint8)
     marks[::3] = Ghosts.HIDDENCELL
@@ -819,8 +820,9 @@ def test_hidden_cells_are_never_processed():
     assert probed.num_points == 1
     with pytest.raises(NotImplementedError, match="hidden or refined cells"):
         td.extract_surface(whole, np.arange(4))
-    with pytest.raises(NotImplementedError, match="hidden or refined cells"):
-        td.probe(whole, seeds, locator=td.CellLocator(whole))
+    again = td.probe(whole, seeds, locator=td.CellLocator(whole))
+    assert np.array_equal(again.fields["RTData"].values.numpy(),
+                          probed.fields["RTData"].values.numpy())
 
 
 @needs_vtk

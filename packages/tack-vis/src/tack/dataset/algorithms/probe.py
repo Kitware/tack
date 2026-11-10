@@ -141,13 +141,10 @@ def probe(data, where, fields=None, locator=None):
         if locator is not None:
             raise ValueError("probe of a PartitionedDataSet uses each piece's own locator")
         return _probe_pieces(data, where, fields)
-    from tack.dataset.ghosts import refuse_hidden, visible
-
-    if locator is None:
-        data = visible(data)
-    else:
-        refuse_hidden(data, "probe with a locator")
+    # Hidden and refined cells are left out by the search itself
+    # (masked_marks), so the dataset keeps its topology and its locator.
     from tack.dataset.carry import _point_values, selected
+    from tack.dataset.ghosts import masked_marks
 
     if not isinstance(where, DataSet):
         where = _vertices(relative_positions(where, data.origin, data.unit), data)
@@ -164,7 +161,7 @@ def probe(data, where, fields=None, locator=None):
 
         points = _shifted_values(points, where.dtype,
                                  np.asarray(where.origin) - np.asarray(data.origin))
-    found, pcs, tets = locator.find(points)
+    found, pcs, tets = locator.find(points, hidden=masked_marks(data))
     m = found.shape[0]
     # Fields read by cell id where find searched from the points; built only
     # then, since it needs the cell bins.
@@ -274,13 +271,12 @@ def _probe_pieces(data, where, fields, levels=None):
     finer one, after holding ahead of coming within the tolerance."""
     from tack import communication as tc
     from tack.communication._kernels import gather
-    from tack.dataset.ghosts import Ghosts, keep_marks, visible
+    from tack.dataset.ghosts import Ghosts, keep_marks, masked_marks
     from tack.dataset.partitioned import PartitionedDataSet, common_origin
 
-    pieces = []
-    for piece in data:                       # each piece's work on its own device
-        with piece.device:
-            pieces.append(visible(piece))
+    # Each piece as it is: its hidden and refined cells are left out by the search
+    # (masked_marks), so it keeps its topology and its locator across calls.
+    pieces = list(data)
     many = isinstance(where, PartitionedDataSet)
     empties = []
 
@@ -339,7 +335,8 @@ def _probe_pieces(data, where, fields, levels=None):
     def holds(g, x):
         piece = pieces[g - blocks.local.start]
         with piece.device:
-            cells, held = locators[g]._find_holding(x.astype(piece.dtype.numpy_dtype))
+            cells, held = locators[g]._find_holding(x.astype(piece.dtype.numpy_dtype),
+                                                    hidden=masked_marks(piece))
         cells = arrays.to_host(cells).astype(np.int64)
         owned = cells >= 0
         marks = None if piece.ghosts is None else piece.ghosts.cells

@@ -619,6 +619,17 @@ def visible(data, *arguments):
     return (out, *(carried.get(id(a), a) for a in arguments))
 
 
+def masked_marks(data):
+    """``data``'s cell marks if some cells are hidden or refined (``MASKED_CELLS``),
+    else ``None``: what a cell search takes to leave them out in place
+    (``CellLocator.find``'s ``hidden``) instead of extracting the rest
+    (``visible``)."""
+    ghosts = data.ghosts
+    if ghosts is not None and _has(ghosts.cells, Ghosts.MASKED_CELLS):
+        return ghosts.cells
+    return None
+
+
 @on_inputs_device
 def refuse_hidden(data, what):
     """Refuse ``data`` with hidden or refined cells where ``what`` (a phrase) cannot

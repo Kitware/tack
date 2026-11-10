@@ -46,7 +46,7 @@ from tack.dataset.algorithms._advection import (
 from tack.dataset.algorithms._common import _stand_in, _time_unit
 from tack.dataset.algorithms._extract import _vertices
 from tack.dataset.dataset import DataSet, Field, is_field_key
-from tack.dataset.ghosts import Ghosts, visible
+from tack.dataset.ghosts import Ghosts, masked_marks
 from tack.dataset.locator import cached_locator
 from tack.dataset.partitioned import PartitionedDataSet, common_origin, fields_of
 from tack.dataset.spaces import Values
@@ -230,10 +230,9 @@ def _rounds(data, field, seeds, step_size, steps, integrator, record, unit="time
                 check_piece(piece, field)
 
     origin = common_origin(data, "advection over pieces", check=check)
-    pieces = []
-    for piece in data:                       # each piece's work on its own device
-        with piece.device:
-            pieces.append(visible(piece, field)[0])
+    # Each piece as it is: its hidden and refined cells are left out by the
+    # search (masked_marks), so it keeps its topology and its locator.
+    pieces = list(data)
     # A rank with no pieces takes part through a piece of nothing: its block holds
     # no point, and sends its seeds to the pieces that do.
     nothing = _stand_in(data, origin)
@@ -311,7 +310,8 @@ def _route(blocks, pieces, locators, boxes, pending):
     def holds(g, x):
         piece = pieces[g - blocks.local.start]
         with piece.device:
-            cells, held = locators[g]._find_holding(x.astype(piece.dtype.numpy_dtype))
+            cells, held = locators[g]._find_holding(x.astype(piece.dtype.numpy_dtype),
+                                                    hidden=masked_marks(piece))
         cells = arrays.to_host(cells).astype(np.int64)
         owned = cells >= 0
         marks = None if piece.ghosts is None else piece.ghosts.cells

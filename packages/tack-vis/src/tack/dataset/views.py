@@ -239,8 +239,12 @@ class _PolyhedralCells(_CellsById):
     ``cell_faces[cell_offsets[c] + k]`` is cell ``c``'s facet ``k``, and
     ``cell_face_sides`` the same entry's side: 0 when the facet's stored
     direction (a face's winding, an edge's direction) points out of ``c``, 1
-    when into it. ``point_offsets``/``point_ids`` are the cell's points
-    (derived: its facets' points, sorted and unique). Every method reaches the
+    when into it. ``point_offsets``/``point_ids`` are the cell's points, each
+    once: a ``PolyhedralTopology``'s derived from its facets, sorted; a mixed
+    topology's its run of the connectivity, in the order given (VTK's). Nothing
+    relies on their order: per-cell loops take every point, corner keys and point
+    links each corner's own, and faces are matched by their own points, sorted
+    there (``_face_keys``, ``_match_rings``). Every method reaches the
     arrays through ``cell(c)``, so a subgroup can renumber its cells.
     """
 

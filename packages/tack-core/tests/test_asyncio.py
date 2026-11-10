@@ -249,7 +249,7 @@ def test_sync_async_does_not_wait_for_later_launches(backend):
         pytest.skip("no launch long enough to measure here")
     iters, count = found
 
-    async def main():
+    async def main(count):
         _ramp(short, 1.0)
         waiter = asyncio.create_task(tack.sync_async())
         await asyncio.sleep(0)               # the waiter runs up to its await: marked
@@ -260,7 +260,14 @@ def test_sync_async_does_not_wait_for_later_launches(backend):
         await tack.sync_async()
         return early, time.perf_counter() - t0
 
-    early, whole = asyncio.run(main())
+    def once(count):
+        early, whole = asyncio.run(main(count))
+        return (early, whole), (whole,)
+
+    # The later launches lasted 62 ms in all on CI's hosted Mac, against the
+    # 150 ms calibrated, and the early wait's 38 ms of overhead was then over
+    # half of them (2026-11-09): they are made to last `_MIN_WAIT` first.
+    early, whole = _long_enough(once, count)
     assert early < 0.5 * whole, (early, whole)
 
 

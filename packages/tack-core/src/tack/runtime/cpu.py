@@ -2141,12 +2141,17 @@ class CPUBackend(Backend):
     def _record_parallel_cost(self, compiled: CompiledKernel,
                               worker_rates: list, workers: int,
                               bounds_serial: bool = False,
-                              retire_serial_floor: bool = False):
+                              retire_serial_floor: bool = False,
+                              wall_ns_per_elem: float = 0.0):
         """Learn `r_p` from what the workers themselves reported.
 
         `bounds_serial` says the spans were long enough (see
         `_RP_BOUND_SPAN_RATIO`) for the aggregate rate to also serve as a
         floor under the serial estimate.
+
+        `wall_ns_per_elem` is the whole fan-out's wall time per element,
+        fan-out included (0 when unknown). Only a contended kernel's
+        recheck reads it: see below.
 
         `retire_serial_floor` says every worker of a whole-range dispatch
         finished below that duration. The old inputs' floor is stale;
@@ -2200,7 +2205,15 @@ class CPUBackend(Backend):
             # A P9 recheck. Faster per element than a serial run: the
             # contention has gone (other data, fewer threads), and the
             # rate is believed outright, as a far-lower serial sample is.
-            if sample < compiled.ns_per_elem:
+            # Faster by the wall clock too: the workers' median divided
+            # by their number is an aggregate rate only if they ran at
+            # once. On a busy host they take turns, each meeting less
+            # contention: 4 threads on a loaded M1 Max read 5.0 ns per
+            # element against a serial 7.0 for a fan-out that took 10.7,
+            # and the kernel threaded again until the next arbitration
+            # (`test_timing_a_contended_kernel_settles_serial` on CI).
+            if (sample < compiled.ns_per_elem
+                    and 0.0 < wall_ns_per_elem < compiled.ns_per_elem):
                 compiled.contended = False
                 compiled.ns_per_elem_parallel = sample
         elif (compiled.atomics and bounds_serial
@@ -2286,7 +2299,8 @@ class CPUBackend(Backend):
         # including spans below the rate measurement's clock threshold.
         retire_floor = whole_range and workers > 0 and max(spans) < trusted_span
         self._record_parallel_cost(compiled, [r for r in rates if r > 0.0],
-                                   workers, bounds_serial, retire_floor)
+                                   workers, bounds_serial, retire_floor,
+                                   wall_ns_per_elem=dispatch_ns / max(end - start, 1))
         # The dispatch waits for its slowest worker, so that is the work
         # phase -- and here the max is the right statistic rather than the
         # wrong one it is for `r_p`, because this is the quantity the
@@ -2324,6 +2338,7 @@ class CPUBackend(Backend):
         bounds_serial = bool(measured) and (_worker_median(measured) >= trusted_span)
         retire_floor = whole_range and workers > 0 and max(spans) < trusted_span
         self._record_parallel_cost(compiled, [r for r in rates if r > 0.0],
-                                   workers, bounds_serial, retire_floor)
+                                   workers, bounds_serial, retire_floor,
+                                   wall_ns_per_elem=dispatch_ns / max(end - start, 1))
         self._record_fan_out(float(dispatch_ns), max(spans), float(gap))
         self._last_dispatch_ns = time.perf_counter_ns()

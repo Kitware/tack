@@ -559,14 +559,29 @@ def _surface_of_pieces(pds, fields):
     from tack import communication as tc
     from tack.dataset import _matching
     from tack.dataset.algorithms.generate_global_ids import generate_global_ids
+    from tack.dataset.carry import selected
     from tack.dataset.ghosts import Ghosts, visible
-    from tack.dataset.partitioned import PartitionedDataSet
+    from tack.dataset.partitioned import PartitionedDataSet, agree
+    from tack.dataset.topology import lines_only
 
     world = pds.world
     pieces = [visible(piece) for piece in pds]
+
+    def check():
+        # Refused on every rank, not only where a piece fails, as each piece's
+        # surface (or its faces) would refuse it.
+        for p in pieces:
+            if not isinstance(p.geometry.space, H1):
+                raise TypeError("extract_surface keeps the points, so needs an H1 geometry")
+            if lines_only(p.topology):
+                raise NotImplementedError("extract_surface of pieces matches their faces, "
+                                          "and the faces of a mesh of lines are not derived")
+            selected(p, fields)
+        return all(p.topology.dimension == 2 for p in pieces)
+
     # Every rank's pieces' say: a rank without pieces must not take the shortcut
     # while the others match faces.
-    if all(world._allgather(all(p.topology.dimension == 2 for p in pieces))):
+    if all(agree(world, check)):
         # A surface's pieces are their own surfaces, as one surface is.
         return PartitionedDataSet([extract_surface(p, fields=fields) for p in pieces],
                                   world=world)

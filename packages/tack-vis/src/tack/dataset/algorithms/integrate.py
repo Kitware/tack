@@ -318,12 +318,13 @@ def _no_reference_values(data, field):
 
 def _piece(data, names):
     """One dataset's owned cells' measure and integrals, summed in cell order (f64):
-    ``names`` as ``_names`` gives them, every ``Field`` carried with the cells kept
-    in one ``visible``."""
+    ``names`` as ``_names`` gives them. Each sum is of ``owned_values``, which
+    leaves duplicate, hidden and refined cells out (``Ghosts.SKIPPED_CELLS``), so
+    the dataset is taken as it is, its cell geometry kept, not extracted (#404)."""
     from tack.dataset.algorithms.cell_geometry import cell_geometry
-    from tack.dataset.ghosts import owned_values, visible
+    from tack.dataset.ghosts import owned_values
 
-    data, *given = visible(data, *(field for _, field in names)) if names else (visible(data),)
+    given = [field for _, field in names]
     measures = Field(Values(data, "cells"), _top_cells(data, arrays.materialize(
         cell_geometry(data).measure.values)))
     measure = float(np.sum(np.asarray(owned_values(data, measures).numpy(), np.float64)))

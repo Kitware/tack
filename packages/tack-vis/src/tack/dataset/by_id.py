@@ -870,7 +870,15 @@ class _ViewValues(_ByShape):
     @tack.func
     def value(self, mesh, e, kind, pc, tet):
         c = self.local[e]
-        v = self.tetra.value(c, pc)
+        # The first value, which types v, from the tetrahedra's view: at the cell's
+        # own index only for a tetrahedron. A view stands in for the shapes the
+        # mesh lacks, and another shape's cell's index in its own group ran past
+        # the end of that one (9 hexahedra read at index 32), however the value
+        # was then discarded; index 0 is in every view's group.
+        first = c - c
+        if (self.kinds.PRESENT & 1) != 0 and kind == shapes.TETRA:
+            first = c
+        v = self.tetra.value(first, pc)
         if (self.kinds.PRESENT & 2) != 0 and kind == shapes.HEXAHEDRON:
             v = self.hexa.value(c, pc)
         elif (self.kinds.PRESENT & 4) != 0 and kind == shapes.WEDGE:

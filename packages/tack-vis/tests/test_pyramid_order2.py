@@ -230,6 +230,30 @@ def test_cuts_of_order_2_pyramids(backend, kind, space):
     assert set(cut.topology.types.numpy().tolist()) <= made
 
 
+@pytest.mark.parametrize("curved", [False, True])
+def test_the_surface_of_order_2_pyramids(backend, curved):
+    """Every other pyramid of the cube, so that triangle faces are on the surface: an
+    order-2 field on the surface is the solid's trace there, H1 (its edges' and the
+    base's centre gathered) and L2 (each face's nodes taken into its cell's collapsed
+    coordinates, r and s over 1 - t); a quadratic stays itself."""
+    whole = _mesh("pyramids")
+    if curved:
+        whole.geometry = td.interpolate(whole, _bend, td.H1(whole, order=2),
+                                        dtype=tack.vec3(tack.f64))
+    data = td.extract_cells(whole, np.arange(0, whole.num_cells, 2))
+    data.fields["u"] = td.interpolate(data, _quadratic, td.H1(data, order=2), dtype=tack.f64)
+    data.fields["w"] = td.interpolate(data, _quadratic, td.L2(data, order=2), dtype=tack.f64)
+    surface = td.extract_surface(data)
+    assert int(shapes.TRIANGLE) in set(surface.topology.types.numpy().tolist())
+    assert surface.geometry.space.order == (2 if curved else 1)
+    for name, space in (("u", td.H1(surface, order=2)), ("w", td.L2(surface, order=2))):
+        assert surface.fields[name].space == space
+        np.testing.assert_allclose(
+            surface.fields[name].values.numpy(),
+            td.interpolate(surface, _quadratic, space, dtype=tack.f64).values.numpy(),
+            rtol=0, atol=1e-12)
+
+
 def test_what_pyramids_refuse(backend):
     data = _mesh("pyramids", 1)
     with pytest.raises(NotImplementedError, match="order 2 on pyramids"):

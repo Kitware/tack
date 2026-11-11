@@ -333,7 +333,9 @@ def extract_surface(data, faces=None, fields=None):
     surface's). A 3D mesh's order-2 ``H1`` fields and geometry stay order 2
     on the surface, the trace of the solid's: each face's corners, edge middles
     and (a quad's) center are the surface cell's, so their values are gathered,
-    not evaluated. A 2D mesh's boundary lines take an order-2 field's values at
+    not evaluated. (A pyramid's triangle face holds a centre value too, which an
+    order-2 surface triangle has no node for: the surface keeps the face's
+    quadratic part, the solid's trace wherever that centre is the quadratic's.) A 2D mesh's boundary lines take an order-2 field's values at
     the points. ``L2`` (DG) fields of one order stay in the same space on the
     surface, each face holding its side 0 cell's trace (the cell's field at the
     face's nodes, through the cell's parametric coordinates, exact for every
@@ -538,7 +540,8 @@ def _face_traces(solid, u, surface, t, points, starts, faces, out):
     # Each surface cell's L2 nodes from the solid cell it is a face of: a node's
     # parametric point on the face, taken to the solid's by the face's corners
     # (the surface shape's corner functions weighing the solid corners'
-    # parametric points), where the solid's field is evaluated. The trace of an
+    # parametric points; on a pyramid, r and s then over 1 - t, its coordinates
+    # collapsing toward its apex), where the solid's field is evaluated. The trace of an
     # order-p polynomial on a face is in the face's order-p space, so the
     # surface field is the solid's there.
     for c in solid:
@@ -557,6 +560,12 @@ def _face_traces(solid, u, surface, t, points, starts, faces, out):
                       + surface.shape_function(2, f) * p2)
                 if surface.NUM_POINTS == 4:
                     pc = pc + surface.shape_function(3, f) * p3
+                if solid.ID == shapes.PYRAMID and pc[2] < 1.0:
+                    # A pyramid's coordinates collapse toward its apex: the blend gives t
+                    # (the apex's weight) but (1 - t) times r and s. At the apex itself
+                    # every function but its own is zero, whatever r and s.
+                    pc[0] = pc[0] / (1.0 - pc[2])
+                    pc[1] = pc[1] / (1.0 - pc[2])
                 out[t.dof_index(s, n)] = u.value(c, pc)
 
 

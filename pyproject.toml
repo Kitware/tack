@@ -7,6 +7,7 @@ requires-python = ">=3.11"
 dependencies = [
     "tack-core",
     "tack-vis",
+    "tack-expr",
 ]
 
 [project.optional-dependencies]
@@ -58,11 +59,12 @@ docs = [
 [tool.uv.sources]
 tack-core = { workspace = true }
 tack-vis = { workspace = true }
+tack-expr = { workspace = true }
 
 [tool.uv.workspace]
 # Listed, not globbed: a package directory left behind by a move (holding
 # only ignored __pycache__ files) would otherwise stop `uv sync`.
-members = ["packages/tack-core", "packages/tack-vis"]
+members = ["packages/tack-core", "packages/tack-vis", "packages/tack-expr"]
 
 [tool.ruff]
 line-length = 100
@@ -156,4 +158,5 @@ markers = [
 testpaths = [
     "packages/tack-core/tests",
     "packages/tack-vis/tests",
+    "packages/tack-expr/tests",
 ]

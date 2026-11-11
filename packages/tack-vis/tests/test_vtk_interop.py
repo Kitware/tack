@@ -520,7 +520,7 @@ def test_a_merged_reads_point_fields_are_its_own_and_writable():
     """``vtk_to_dataset(merge_points=True)`` takes over the point data the merge made
     rather than copying it again: the fields are the merged points' values,
     writable, and writing them leaves the caller's grid as it was."""
-    import vtkmodules.vtkCommonDataModel  # noqa: F401
+    pytest.importorskip("vtkmodules.vtkCommonDataModel")
     from vtkmodules.vtkCommonCore import vtkFloatArray, vtkPoints
     from vtkmodules.vtkCommonDataModel import vtkCellArray, vtkUnstructuredGrid
 

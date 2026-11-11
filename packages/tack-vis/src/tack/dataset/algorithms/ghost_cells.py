@@ -37,6 +37,7 @@ from tack import arrays
 from tack import communication as tc
 from tack.dataset import _matching
 from tack.dataset._matching import INDEX_BITS, INDEX_MASK
+from tack.dataset.algorithms._cell_nodes import add_nodes, field_kind, nodes_placed, space_spec
 from tack.dataset.algorithms._common import _csr_rows, _tolerance
 from tack.dataset.algorithms._structured_ghosts import structured_ghost_cells
 from tack.dataset.carry import _take
@@ -45,7 +46,7 @@ from tack.dataset.ghosts import Ghosts
 from tack.dataset.global_ids import GlobalIds
 from tack.dataset.partitioned import PartitionedDataSet, agree, common_origin, field_units
 from tack.dataset.sets import Set
-from tack.dataset.spaces import H1, Constant, Values
+from tack.dataset.spaces import H1, L2, Constant, Values
 from tack.dataset.topology import StructuredTopology, UnstructuredTopology
 
 
@@ -81,8 +82,11 @@ def ghost_cells(data, layers=1, world=None, fields=None, tolerance=0.0):
     ``HIDDENCELL`` and the other bits are copied with each cell.
 
     Point and cell fields (``H1`` of order 1, ``Constant``, values on points
-    or cells) are carried, ``fields`` choosing them as filters do (``None``:
-    all); point and cell sets keep their members, and global ids come along
+    or cells) are carried, and on unstructured pieces fields of higher order and
+    a curved geometry too (``H1`` above order 1, ``L2`` of any order or an order
+    per cell): each ghost cell with its nodes, placed through the grown piece's
+    own numbering, so a node it shares with the piece's cells is one value;
+    ``fields`` chooses them as filters do (``None``: all); point and cell sets keep their members, and global ids come along
     where every piece has them, points then matched by their ids rather than
     their positions. ``update_ghosts`` refreshes
     a field's ghost values from their owners afterwards, after a filter that
@@ -126,7 +130,7 @@ def ghost_cells(data, layers=1, world=None, fields=None, tolerance=0.0):
     names = []
 
     def check():                             # on every rank, in the origin's gather
-        names.extend(_carried(pieces, fields))
+        names.extend(_carried(pieces, fields, high_order=True))
         for i, piece in enumerate(pieces):
             _check_piece(i, piece)
 
@@ -142,6 +146,12 @@ def ghost_cells(data, layers=1, world=None, fields=None, tolerance=0.0):
              (2 if _polyhedral(p.topology) else 0) for g, p in zip(blocks.local, pieces)}
     every = blocks.all_gather(kinds)
     if blocks.count and all(k == 1 for k in every):
+        if any(field_kind(p.geometry) == "nodes" or any(
+                field_kind(p.fields[n]) in ("nodes", "blocks") for n in names) for p in pieces):
+            raise NotImplementedError(
+                "ghost_cells of structured pieces carries point and cell fields; fields of "
+                "higher order and curved geometries are carried on unstructured pieces "
+                "(extract_cells makes a structured piece unstructured)")
         out, plans = structured_ghost_cells(blocks, pieces, int(layers), names, _kind)
         result = PartitionedDataSet(out, world=world)
         result._ghost_plans = plans
@@ -240,7 +250,8 @@ def _gather_updated(fields, blocks, pieces, by_kind):
             kind = _kind(field)
             if kind is None:
                 raise TypeError(f"update_ghosts refreshes point and cell fields; {name!r} "
-                                f"is in {field.space!r}")
+                                f"is in {field.space!r} (a field of higher order comes with "
+                                "its ghost cells from ghost_cells)")
             if not isinstance(field.values, tack.Array):
                 raise TypeError(f"update_ghosts writes the values in place; {name!r} holds "
                                 f"a {type(field.values).__name__}, not a Tack array")
@@ -259,26 +270,35 @@ def _kind(field):
     return None
 
 
-def _carried(pieces, fields, what="ghost_cells"):
+def _carried(pieces, fields, what="ghost_cells", high_order=False):
+    """The names of the fields carried, checked on every piece. ``high_order``: fields
+    above order 1 and curved geometries too (``_cell_nodes``)."""
     if not pieces:
         return []
     # Pieces' cells and points travel with their positions at the points: a
-    # curved geometry's other nodes would be lost, the pieces made straight.
+    # curved geometry's other nodes would be lost, the pieces made straight,
+    # unless they travel with each cell's nodes.
     for i, piece in enumerate(pieces):
         space = piece.geometry.space
-        if isinstance(space, H1) and space.order > 1:
+        if not high_order and isinstance(space, H1) and space.order > 1:
             raise NotImplementedError(
                 f"{what} carries a geometry at the points; partition {i}'s is "
                 f"{space!r}, which would come out straight")
+        if high_order and not isinstance(space, H1):
+            raise NotImplementedError(f"{what} takes an H1 geometry, one position a point; "
+                                      f"partition {i}'s is {space!r}")
     names = list(pieces[0].fields) if fields is None else \
         ([fields] if is_field_key(fields) else list(fields))
     for i, piece in enumerate(pieces):
         for name in names:
             if name not in piece.fields:
                 raise KeyError(f"partition {i} has no field {name!r}")
-            if _kind(piece.fields[name]) is None:
-                raise TypeError(f"{what} carries point and cell fields; {name!r} is in "
-                                f"{piece.fields[name].space!r} (choose others with fields=)")
+            kind = (field_kind if high_order else _kind)(piece.fields[name])
+            if kind is None or (kind == "nodes" and piece.fields[name].space.dofs is not None):
+                raise TypeError(f"{what} carries point and cell fields"
+                                + (", H1 and L2 fields" if high_order else "")
+                                + f"; {name!r} is in {piece.fields[name].space!r} (choose "
+                                "others with fields=)")
     return names
 
 
@@ -431,6 +451,8 @@ def _offers(host, identity, layers):
 
 def _ghost_parts(blocks, pieces, hosts, needed, owners, names, numbered):
     """Each piece's message to each other piece: the cells it needs (``_needed``)."""
+    from tack.dataset.carry import _point_values
+
     outgoing = {}
     for g, piece in zip(blocks.local, pieces):
         host = hosts[g]
@@ -468,8 +490,21 @@ def _ghost_parts(blocks, pieces, hosts, needed, owners, names, numbered):
             cell_ids = tack.array(cells.astype(np.int64), tack.i64, device=device)
             for name in names:
                 field = piece.fields[name]
-                chosen = point_ids if _kind(field) == "points" else cell_ids
-                message["field." + field_label(name)] = _take(field.values, chosen)
+                kind = field_kind(field)
+                label = "field." + field_label(name)
+                if kind in ("nodes", "blocks"):
+                    # Each cell's values in node order, and an H1 field's points'.
+                    add_nodes(message, label, field, cells, device)
+                    if kind == "nodes":
+                        message[label] = _take(_point_values(field.values, piece.num_points),
+                                               point_ids)
+                    elif field.space.varies:
+                        message["order." + label] = _take(field.space.cell_keys(), cell_ids)
+                    continue
+                chosen = point_ids if kind == "points" else cell_ids
+                message[label] = _take(field.values, chosen)
+            if field_kind(piece.geometry) == "nodes":
+                add_nodes(message, "geometry", piece.geometry, cells, device)
             for kind, chosen in (("points", point_ids), ("cells", cell_ids)):
                 if numbered[kind]:
                     message["ids." + kind] = _take(getattr(piece.global_ids, kind), chosen)
@@ -556,9 +591,26 @@ def _appended(g, piece, host, identity, received, names, numbered, blocks):
                                             id_dtype=piece.topology.id_dtype)
         out = DataSet(topology, positions, dtype=geometry_dtype,
                       ghosts=Ghosts(cells=cell_marks, points=point_marks), **piece._frame())
+        # Fields of higher order: the piece's own cells' nodes, then each message's
+        # cells', placed through the grown piece's spaces.
+        own = {"cell_at": tack.arange(n_cells, dtype=tack.i64)}
+        nodes = [own] + [{**message, "cell_at": tack.array(cells_from[source][1], tack.i64)}
+                         for source, message in sources]
+        cells = np.arange(n_cells, dtype=np.int64)
+        if field_kind(piece.geometry) == "nodes":
+            add_nodes(own, "geometry", piece.geometry, cells, blocks.device(g))
+            space = H1(out, **space_spec(piece.geometry.space, None))
+            out.geometry = Field(space, nodes_placed(space, piece.geometry.values, nodes,
+                                                     "geometry", out.geometry.values))
         for name in names:
             field = piece.fields[name]
-            kind = _kind(field)
+            kind = field_kind(field)
+            label = "field." + field_label(name)
+            if kind in ("nodes", "blocks"):
+                add_nodes(own, label, field, cells, blocks.device(g))
+                out.fields[name] = _placed_field(out, field, kind, label, own, nodes, sources,
+                                                 new_from, n_points)
+                continue
             parts = [field.values]
             if kind == "points" and len(new_from):
                 # Each new point's values from the first message that brought it.
@@ -591,6 +643,31 @@ def _appended(g, piece, host, identity, received, names, numbered, blocks):
         if ids:
             out.global_ids = GlobalIds(cells=ids.get("cells"), points=ids.get("points"))
     return out, points_from, cells_from
+
+
+def _placed_field(out, field, kind, label, own, nodes, sources, new_from, n_points):
+    """A field of higher order on the grown piece ``out``: an ``H1`` field's points'
+    values (the piece's, then each new point's from the first message that brought
+    it) and every cell's nodes (``nodes``: the piece's own cells, then each
+    message's); an ``L2`` field's cells' values, an order per cell from both."""
+    from tack.dataset.carry import _point_values
+
+    space = field.space
+    if kind == "nodes":
+        parts = [_point_values(field.values, n_points)]
+        if len(new_from):
+            sent = [message[label] for _, message in sources]
+            parts.append(_take(_joined(sent), tack.array(new_from, tack.i64)))
+        made = H1(out, **space_spec(space, None))
+        return Field(made, nodes_placed(made, field.values, nodes, label, _joined(parts)),
+                     field.unit)
+    spec = space_spec(space, lambda values: None)
+    if space.varies:
+        orders = [arrays.to_host(space.cell_keys())]
+        orders += [arrays.to_host(message["order." + label]) for _, message in sources]
+        spec["order"] = np.concatenate([np.asarray(o).reshape(-1) for o in orders])
+    made = L2(out, **spec)
+    return Field(made, nodes_placed(made, field.values, nodes, label), field.unit)
 
 
 def _polyhedra_with(rings, sources, maps, num_points, id_dtype):

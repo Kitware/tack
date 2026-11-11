@@ -284,8 +284,8 @@ def test_ghost_cells_refuse_what_they_cannot_do():
         td.ghost_cells(list(plain))
     for piece in plain:
         piece.fields["dg"] = td.project(piece, "RTData", td.L2(piece, order=1))
-    with pytest.raises(TypeError, match="point and cell fields"):
-        td.ghost_cells(plain)
+    # A DG field comes with its cells (test_ghost_cells_high_order).
+    assert td.ghost_cells(plain)[0].fields["dg"].space.order == 1
     out = td.ghost_cells(plain, fields=["RTData", "c"])
     assert sorted(out[0].fields) == ["RTData", "c"]
     with pytest.raises(ValueError, match="ghost_cells or ghost_points made"):

@@ -96,13 +96,23 @@ def threshold(data, field, lower, upper, all_points=True, fields=None, subdivisi
 def _threshold_flags(data, field, lower, upper, all_points):
     """Each cell's 1 or 0: whether ``threshold`` keeps it."""
     field = _field(data, field)
-    if not getattr(data.topology, "reference_cells", True):
+    if not getattr(data.topology, "reference_cells", True) and not data.topology.mixed:
         return _polyhedral_flags(data, field, lower, upper, all_points)
     keep = tack.empty((data.num_cells,), tack.i32)
+    values = None
     for group in data.launch_groups("cells", [field]):
-        if group.count:
+        if not group.count:
+            continue
+        if group.shape.REFERENCE:
             _keep_by_corners(data.domain_view("cells", group), field.view(group), lower,
                              upper, 1 if all_points else 0, keep)
+        else:
+            # Polyhedra beside shaped cells: whole cells, by their points or values.
+            if values is None:
+                values = arrays.materialize(field.values)
+            _polyhedral_keep(data.domain_view("cells", group), values, lower, upper,
+                             1 if isinstance(field.space, Constant) else 0,
+                             1 if all_points else 0, keep)
     return keep
 
 

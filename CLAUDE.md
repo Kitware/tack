@@ -4,20 +4,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Monorepo Structure
 
-Tack is split into 2 packages under `packages/`:
+Tack is split into 3 packages under `packages/`:
 
 | Package | Path | Contents |
 |---------|------|----------|
 | `tack-core` | `packages/tack-core/` | Kernels, arrays (and `tack.arrays`' implicit arrays), types, IR, codegen, backends, scan/sort/copy |
 | `tack-vis` | `packages/tack-vis/` | `tack.dataset` (data model and algorithms), VTK/MFEM interop |
+| `tack-expr` | `packages/tack-expr/` | `tack_expr`: VTK calculator expressions over `tack.dataset` fields, compiled to kernels |
 
 The path tracer that was `tack-rendering` is archived in `archive/tack-rendering/`
 (outside the workspace, CI and docs; its design notes are in its `NOTES.md`)
 until the dataset API settles. Ruff excludes `archive/`.
 
-`tack.dataset` and the interop have their own notes in `packages/tack-vis/CLAUDE.md` (the data model, units, time, AMR, higher orders, point clouds, advection, polyhedra, pieces and ghosts), which Claude Code reads when working in that package.
+`tack.dataset` and the interop have their own notes in `packages/tack-vis/CLAUDE.md` (the data model, units, time, AMR, higher orders, point clouds, advection, polyhedra, pieces and ghosts), which Claude Code reads when working in that package. tack-expr's are its `GUIDE.md` (usage) and `README.md` (design, checks and status); it is its own `tack_expr` module, outside the `tack` namespace, with its own version.
 
-Both share the `tack` namespace via `pkgutil.extend_path` in tack-core's `tack/__init__.py`; tack-vis's `tack/` has no `__init__.py` (a namespace portion), so tack-core's runs whichever comes first on the path (`test_namespace.py`; CI's `wheels` job checks the built wheels). `tack` declares `__all__` and is marked typed (`py.typed`; tack-vis's in `dataset/` and `interop/`): a public name re-exported from `tack/__init__.py` must be in `__all__`, or type checkers read it as private. Public submodules (`tack.arrays`, `tack.algorithms`, `tack.math`, `tack.random`, `tack.cache`, `tack.dataset`, `tack.interop`) load on first attribute access (`__getattr__`).
+tack-core and tack-vis share the `tack` namespace via `pkgutil.extend_path` in tack-core's `tack/__init__.py`; tack-vis's `tack/` has no `__init__.py` (a namespace portion), so tack-core's runs whichever comes first on the path (`test_namespace.py`; CI's `wheels` job checks the built wheels). `tack` declares `__all__` and is marked typed (`py.typed`; tack-vis's in `dataset/` and `interop/`): a public name re-exported from `tack/__init__.py` must be in `__all__`, or type checkers read it as private. Public submodules (`tack.arrays`, `tack.algorithms`, `tack.math`, `tack.random`, `tack.cache`, `tack.dataset`, `tack.interop`) load on first attribute access (`__getattr__`).
 
 **One catch worth knowing.** `extend_path` merges the *contents* of same-named directories, but only one `__init__.py` runs — the first found on the path. So only one package may ship a given `tack/<name>/` subpackage: `tack/algorithms/` is tack-core's alone (scan, sort, stats, copy). tack-vis's visualization algorithms are `tack.dataset.algorithms`. `packages/tack-vis/tests/test_namespace.py` checks tack-vis ships no `tack/algorithms/` and that the retired `tack.data`, `tack.deprecated` and `tack.fe` stay gone.
 
@@ -25,12 +26,25 @@ The docs site has the same catch: Griffe (mkdocstrings) loads tack-core's `tack`
 
 **The CHANGELOG is gathered, not edited.** A change's entries go in a file
 of its own in `changelog.d/` (named for the change, under `### Added`,
-`### Changed`, `### Fixed`; `- **Breaking:**` entries under Changed), so pull
-requests never conflict over `CHANGELOG.md`. `python tools/changelog.py
+`### Changed`, `### Deprecated`, `### Fixed`; `- **Breaking:**` entries under
+Changed), so pull requests never conflict over `CHANGELOG.md`. `python tools/changelog.py
 check` (CI's lint job) parses them, `preview` shows the next release's
 sections, and `release VERSION YYYY-MM-DD` writes them into `CHANGELOG.md`
 and deletes the files; edit `CHANGELOG.md` only at a release (its summary).
-`tools/` tests itself alone (`cd tools && uv run --no-project --with pytest
+**Deprecations** go through `tack._deprecation`: declare one with
+`deprecated(what, since=, removed_in=, use=, package=)` in the package's
+declaration module (tack-core's in `_deprecation.py`; any other package's named
+in its `pyproject.toml` under the `tack.deprecations` entry point group, as
+tack-vis names `tack/dataset/_deprecations.py`, so the registry needs no VTK and
+a package built on Tack can add its own), call its `warn()` where the feature is
+used (a `tack.TackDeprecationWarning` at the first line outside Tack's
+directories), and add a `### Deprecated` entry. `due()` reads an editable
+install's version from its `pyproject.toml` (its metadata keeps the version it
+was installed at), so the guard test holds in a checkout too.
+`test_deprecations.py` fails once a package's version reaches a `removed_in`, and
+`docs/_ext/deprecations.py` (an MkDocs hook) writes `reference/deprecations.md`'s
+table from the registry. Deprecate in one minor release, remove in the next or
+later. `tools/` tests itself alone (`cd tools && uv run --no-project --with pytest
 pytest`; its `pytest.ini` keeps the repository's conftest out).
 
 **Every source file opens with an SPDX header** (ParaView's form: `#

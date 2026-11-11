@@ -22,10 +22,19 @@ def tetrahedralize(data, fields=None):
     the pieces of a partitioned dataset split the faces they share alike too. Other cells are left out. The
     points are the same; cell fields go to each cell's tetrahedra.
 
+    Polyhedra beside the shapes (a mixed topology) are cones from a point each
+    adds at its points' mean, over its faces: a triangle as it is, a quad split
+    from its corner of smallest rank as the shapes split theirs (so a shape
+    beside it splits the face alike), a face of five points or more fanned from
+    a point at its points' mean, which both its cells add once. These are the
+    tetrahedra Tack's polyhedral interpolation is linear on, apart from the
+    quads' split; the added points come after the input's, their values the
+    means of the points they average.
+
     Hidden and refined cells make no tetrahedra, and the others split as they
     would without them: an AMR box's hexahedra in 5, as its finer and coarser
     neighbours'. The points stay all of ``data``'s, those only hidden cells use
     included."""
-    if not getattr(data.topology, "reference_cells", True):
+    if not getattr(data.topology, "reference_cells", True) and not data.topology.mixed:
         raise NotImplementedError("tetrahedralize takes cells of the linear shapes")
     return _split(data, "tetrahedra", fields)

@@ -73,6 +73,11 @@ def jump(data, field):
     out = _like(field.values, faces.num_faces)
     if _on_cells(data, field):
         for_each(_cell_jump, data, "faces", materialize(field.values), out)
+    elif data.topology.mixed:
+        # Point data beside polyhedra is order-1 H1, continuous: both sides of
+        # every face, polygons of five or more points too, agree.
+        if faces.num_faces:
+            out.fill(0)
     elif (field.space.max_order if getattr(field.space, "varies", False)
           else getattr(field.space, "order", 1)) <= 1:
         # Up to order 1 a side is linear over the face, so its corner values

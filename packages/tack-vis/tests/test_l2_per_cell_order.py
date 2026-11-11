@@ -82,7 +82,7 @@ _BASES = [("hexahedra", "gauss_lobatto"), ("hexahedra", "gauss_legendre"),
 
 
 @pytest.mark.parametrize("cells, basis", _BASES)
-def test_each_cell_holds_the_polynomials_of_its_order(backend, cells, basis):
+def test_each_cell_holds_the_polynomials_of_its_order(cells, basis):
     """Orders 2 to 5 in one field: each cell's values are its order's nodes, in
     blocks, and a quadratic is itself everywhere, read through each order's view."""
     data = _mesh(cells)
@@ -109,7 +109,7 @@ def test_each_cell_holds_the_polynomials_of_its_order(backend, cells, basis):
                                atol=1e-5 if cells == "wedges" else 1e-12)
 
 
-def test_orders_0_to_5_side_by_side(backend):
+def test_orders_0_to_5_side_by_side():
     """Order 0 is the cell's centre value, order 1 its corners (a closed basis), the
     others their nodes; Gauss-Legendre's order 1 is its 2^d interior nodes."""
     data = _mesh("hexahedra")
@@ -133,7 +133,7 @@ def test_orders_0_to_5_side_by_side(backend):
 
 @pytest.mark.parametrize("cells", ["hexahedra", "tetrahedra"])
 @pytest.mark.parametrize("curved", [False, True])
-def test_integrals_and_gradients(backend, cells, curved):
+def test_integrals_and_gradients(cells, curved):
     """integrate takes points enough for the highest order; the gradient at an L2
     space's nodes of an order per cell is the quadratic's, exactly. (On curved cells
     a quadratic in space is of degree 4 in a cell's coordinates: orders 4 and 5.)"""
@@ -162,7 +162,7 @@ def _node_positions(data, space):
 
 @pytest.mark.parametrize("cells", ["hexahedra", "tetrahedra"])
 @pytest.mark.parametrize("curved", [False, True])
-def test_cuts(backend, cells, curved):
+def test_cuts(cells, curved):
     """contour, clip and threshold subdivide to the highest order, and the
     crossings are the field's roots, in each cell's own order: a sphere's
     contour lies on it; clip's two sides and threshold's parts fill the mesh."""
@@ -188,7 +188,7 @@ def test_cuts(backend, cells, curved):
     assert whole.fields["w"].space.varies           # whole cells keep their orders
 
 
-def test_carry_and_project(backend):
+def test_carry_and_project():
     """extract_cells keeps each cell's order and the basis; project into an order
     per cell puts each cell's nodes at its order; jump of a continuous field is zero
     at every order."""
@@ -216,7 +216,7 @@ def test_carry_and_project(backend):
     np.testing.assert_allclose(td.jump(data, "v").values.numpy(), 0.0, rtol=0, atol=1e-12)
 
 
-def test_subdivide_evaluates_each_cell_at_its_order(backend):
+def test_subdivide_evaluates_each_cell_at_its_order():
     data = _mesh("tetrahedra")
     data.fields["w"] = td.interpolate(data, _quadratic, td.L2(data, order=_orders(data)),
                                       dtype=tack.f64)
@@ -226,7 +226,7 @@ def test_subdivide_evaluates_each_cell_at_its_order(backend):
                                _quadratic_at(refined.positions()), rtol=0, atol=1e-12)
 
 
-def test_what_an_order_per_cell_refuses(backend):
+def test_what_an_order_per_cell_refuses():
     data = _mesh("tetrahedra")
     with pytest.raises(ValueError, match="0 to 15"):
         _ = td.L2(data, order=np.full(data.num_cells, 16)).size

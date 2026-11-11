@@ -88,7 +88,7 @@ def test_the_nodes_and_their_functions(order):
 
 @pytest.mark.parametrize("kind", ["pyramids", "mixed"])
 @pytest.mark.parametrize("order", [3, 4, 5])
-def test_l2_holds_a_cubic(backend, kind, order):
+def test_l2_holds_a_cubic(kind, order):
     """On pyramids alone and beside hexahedra and wedges: a cubic is itself at random
     points, its integral exact, its gradient at the nodes exact (but at the apex,
     which the gradients take from just below it)."""
@@ -111,7 +111,7 @@ def test_l2_holds_a_cubic(backend, kind, order):
                                atol=1e-10)
 
 
-def test_bounds_hold_the_field(backend):
+def test_bounds_hold_the_field():
     """value_range bounds the field over each pyramid from its Bernstein
     coefficients; flatness is zero for a field the corners interpolate."""
     data = _mesh("pyramids", 2)
@@ -134,7 +134,7 @@ def test_bounds_hold_the_field(backend):
     np.testing.assert_allclose(flat_w.numpy(), 0, atol=1e-12)
 
 
-def test_project_and_whole_cells(backend):
+def test_project_and_whole_cells():
     """project from a cubic of order 3 puts it at the pyramid's nodes; extract_cells
     keeps the field as it is."""
     data = _mesh("conforming")
@@ -166,7 +166,7 @@ def _ball(x):
 
 @pytest.mark.parametrize("kind", ["pyramids", "conforming"])
 @pytest.mark.parametrize("order", [3, 4])
-def test_h1_holds_a_cubic_and_is_continuous(backend, kind, order):
+def test_h1_holds_a_cubic_and_is_continuous(kind, order):
     """H1 of order 3 and up on pyramids, its values shared by entity as a wedge's
     (beside hexahedra too): a cubic is itself, and a field that is no polynomial
     is continuous across every face (``jump``, which takes a pyramid's triangle
@@ -181,7 +181,7 @@ def test_h1_holds_a_cubic_and_is_continuous(backend, kind, order):
     np.testing.assert_allclose(td.jump(data, "w").values.numpy(), 0.0, rtol=0, atol=1e-12)
 
 
-def test_jump_of_a_pyramid_field_is_its_own(backend):
+def test_jump_of_a_pyramid_field_is_its_own():
     """Above order 1 each side is read at the face's centre, the same point from both
     sides: an order-2 continuous field (#431's) has no jumps across a pyramid's
     triangle faces either."""
@@ -216,7 +216,7 @@ def test_the_subdivision_fills_the_pyramid(level):
 
 @pytest.mark.parametrize("kind", ["pyramids", "conforming"])
 @pytest.mark.parametrize("space", ["H1", "L2"])
-def test_cuts_at_the_fields_order(backend, kind, space):
+def test_cuts_at_the_fields_order(kind, space):
     """The cuts subdivide pyramids at the field's order (3 here): a closed level
     set's contour is watertight where pyramids meet pyramids and hexahedra, its
     points nearer the sphere than at level 2; clip's two sides fill the cube;
@@ -241,7 +241,7 @@ def test_cuts_at_the_fields_order(backend, kind, space):
                                rtol=0, atol=1e-12)
 
 
-def test_what_pyramids_above_order_2_refuse(backend):
+def test_what_pyramids_above_order_2_refuse():
     """Equispaced nodes only; a curved pyramid above order 2."""
     data = _mesh("pyramids", 1)
     with pytest.raises(NotImplementedError, match="equispaced basis only"):

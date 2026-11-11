@@ -242,6 +242,92 @@ def wedge_bernstein(order):
 
 
 @functools.cache
+# ── Pyramids, at levels 1 and 2 ─────────────────────────────────────
+
+def _pyramid_level(level):
+    level = int(level)
+    if level not in (1, 2):
+        raise NotImplementedError(f"a pyramid's lattice is of level 1 or 2 (its corners, "
+                                  f"or VTK's order-2 nodes), not {level}")
+    return level
+
+
+def pyramid_lattice(level):
+    """A pyramid's lattice nodes as integer collapsed coordinates times ``level``: its
+    corners at level 1; at level 2 the first 14 of VTK's order-2 nodes
+    (``Pyramid.quadratic_node``: the corners, the edges' middles, the base's centre;
+    the triangle faces' centres are no lattice points). An apex edge's middle is at
+    its base corner's ``(r, s)``: the coordinates collapse toward the apex."""
+    level = _pyramid_level(level)
+    rows = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (0, 0, 1)]
+    if level == 2:
+        rows = [(2 * r, 2 * s, 2 * t) for r, s, t in rows] + [
+            (1, 0, 0), (2, 1, 0), (1, 2, 0), (0, 1, 0),             # the base's edges
+            (0, 0, 1), (2, 0, 1), (2, 2, 1), (0, 2, 1),             # the apex edges
+            (1, 1, 0)]                                              # the base's centre
+    out = np.array(rows, np.int32)
+    out.setflags(write=False)
+    return out
+
+
+def _pyramid_dof_tables(order):
+    """``dof_tables`` of a pyramid at level 1 or 2: its corners; then each edge's middle
+    (edge ``e``, place 1) and the base's centre (face 0, place (1, 1))."""
+    level = _pyramid_level(order)
+    n = len(pyramid_lattice(level))
+    kind = np.full(n, CORNER, np.int32)
+    entity = np.arange(n, dtype=np.int32)
+    a = np.zeros(n, np.int32)
+    b = np.zeros(n, np.int32)
+    if level == 2:
+        kind[5:13], entity[5:13], a[5:13] = EDGE, np.arange(8), 1
+        kind[13], entity[13], a[13], b[13] = FACE, 0, 1, 1
+    tables = (kind, entity, a, b, np.arange(5, dtype=np.int32))
+    for t in tables:
+        t.setflags(write=False)
+    return tables
+
+
+def pyramid_subdivision(level):
+    """A pyramid's lattice (``pyramid_lattice``) cut into linear cells: ``(types, rows)``,
+    the cells' VTK types and their lattice nodes, flat. Level 1 is the pyramid
+    itself; level 2 its uniform refinement, 6 pyramids and 4 tetrahedra (the slab
+    under the apex layer: four pyramids on the base's quarters, one upside down
+    between them, and the tetrahedra between those; the top pyramid above), so its
+    base's quarters stay quads and its triangle faces' quarters triangles, as the
+    neighbours' refinements meet them. Each is oriented as VTK's cells are, by its
+    volume in the lattice's own (straight) pyramid."""
+    level = _pyramid_level(level)
+    if level == 1:
+        out = (np.array([int(shapes.PYRAMID)], np.int32), np.arange(5, dtype=np.int32))
+    else:
+        pyramids = [[0, 5, 13, 8, 9], [5, 1, 6, 13, 10], [13, 6, 2, 7, 11], [8, 13, 7, 3, 12],
+                    [9, 10, 11, 12, 4], [9, 12, 11, 10, 13]]
+        tetrahedra = [[8, 13, 9, 12], [13, 6, 10, 11], [5, 13, 9, 10], [13, 7, 12, 11]]
+        # Where each lattice node is in a pyramid of base [0, 2]^2 and apex (1, 1, 2).
+        # (the collapsed coordinates r, s scaled toward the apex: (1 - t) r + t / 2).
+        ijk = pyramid_lattice(2).astype(float)
+        r, s, t = ijk[:, 0] / 2, ijk[:, 1] / 2, ijk[:, 2] / 2
+        x = 2 * np.stack([(1 - t) * r + t / 2, (1 - t) * s + t / 2, t], axis=1)
+        rows = []
+        for p in pyramids:
+            base = x[p[:4]]
+            normal = np.cross(base[1] - base[0], base[3] - base[0])
+            if np.dot(normal, x[p[4]] - base.mean(axis=0)) < 0:
+                p = [p[0], p[3], p[2], p[1], p[4]]
+            rows.append(p)
+        for t in tetrahedra:
+            a, b, c, d = x[t]
+            if np.dot(np.cross(b - a, c - a), d - a) < 0:
+                t = [t[0], t[2], t[1], t[3]]
+            rows.append(t)
+        out = (np.array([int(shapes.PYRAMID)] * 6 + [int(shapes.TETRA)] * 4, np.int32),
+               np.array([n for r in rows for n in r], np.int32))
+    for t in out:
+        t.setflags(write=False)
+    return out
+
+
 def wedge_subdivision(level):
     """A wedge's order-``level`` lattice as ``level^3`` sub-wedges: each of Freudenthal's
     triangles (``simplex_subdivision``) in each layer, corners as the wedge's own
@@ -435,11 +521,14 @@ def simplex_subdivision(shape, level):
 def lattice_ijk(shape, level):
     """Each node of a ``shape`` cell's order-``level`` lattice as integer coordinates,
     in node order: ``(n, d)`` i32, the tensor lattice's ``(i, j, k)`` with the first
-    axis fastest, or the simplex's (``simplex_lattice``)."""
+    axis fastest, or the simplex's (``simplex_lattice``), or a pyramid's at level 1
+    or 2 (``pyramid_lattice``)."""
     if shape in _SIMPLICES:
         return simplex_lattice(shape, level)
     if shape is shapes.Wedge:
         return wedge_lattice(level)
+    if shape is shapes.Pyramid:
+        return pyramid_lattice(level)
     corners = _SHAPES[shape][0]
     d = len(corners[0])
     q = int(level) + 1
@@ -629,6 +718,8 @@ def dof_tables(shape, order):
     if shape is shapes.Wedge:
         corners, edges, faces = _WEDGE
         return _classify(corners, edges, faces, wedge_lattice(order), int(order))
+    if shape is shapes.Pyramid:
+        return _pyramid_dof_tables(order)
     if shape not in _SHAPES:
         raise NotImplementedError(f"bases of any order are on segments, quads, pixels, "
                                   f"hexahedra and voxels, not {shape.__name__}")

@@ -46,7 +46,8 @@ def _where(x):
 def _mesh(kind, n=3):
     """The unit cube in n^3 hexahedra: each split into six pyramids about its centre
     ("pyramids"), or, cell by cell, kept, split into pyramids or into wedges
-    ("mixed")."""
+    ("mixed"; the wedges' triangles meet whole quads, so it does not conform), or
+    kept or split into pyramids ("conforming")."""
     h = 1.0 / n
     points = [[i * h, j * h, k * h] for k in range(n + 1) for j in range(n + 1)
               for i in range(n + 1)]
@@ -59,8 +60,9 @@ def _mesh(kind, n=3):
                 h8 = [pid(i, j, k), pid(i + 1, j, k), pid(i + 1, j + 1, k), pid(i, j + 1, k),
                       pid(i, j, k + 1), pid(i + 1, j, k + 1), pid(i + 1, j + 1, k + 1),
                       pid(i, j + 1, k + 1)]
-                which = "pyramids" if kind == "pyramids" else ("hex", "pyramids", "wedges")[
-                    (i + j + k) % 3]
+                pattern = {"pyramids": ("pyramids",), "mixed": ("hex", "pyramids", "wedges"),
+                           "conforming": ("hex", "pyramids")}[kind]
+                which = pattern[(i + j + k) % len(pattern)]
                 if which == "hex":
                     cells.append((shapes.HEXAHEDRON, h8))
                 elif which == "wedges":
@@ -194,6 +196,40 @@ def test_a_curved_geometry_of_order_2(backend, kind):
     np.testing.assert_allclose(probed, points, rtol=0, atol=1e-9)
 
 
+@tack.func
+def _ball(x):
+    return ((x[0] - 0.5) * (x[0] - 0.5) + (x[1] - 0.5) * (x[1] - 0.5)
+            + (x[2] - 0.5) * (x[2] - 0.5))
+
+
+@pytest.mark.parametrize("kind", ["pyramids", "conforming"])
+@pytest.mark.parametrize("space", ["H1", "L2"])
+def test_cuts_of_order_2_pyramids(backend, kind, space):
+    """Cuts subdivide pyramids at level 2 into 6 pyramids and 4 tetrahedra on their
+    order-2 nodes: a closed level set's contour is watertight where pyramids meet
+    pyramids and hexahedra, and near the level; a clip's two sides fill the cube;
+    threshold keeps whole pyramids and cuts the rest."""
+    data = _mesh(kind)
+    data.fields["u"] = td.interpolate(data, _ball, getattr(td, space)(data, order=2),
+                                      dtype=tack.f64)
+    surface = td.contour(data, "u", [0.09])
+    assert surface.num_cells > 100
+    open_edges = td.feature_edges(surface, boundary=True, feature=False, non_manifold=True,
+                                  manifold=False)
+    assert open_edges.num_cells == 0
+    x = surface.positions()
+    radius = np.linalg.norm(x - 0.5, axis=1)
+    assert np.abs(radius - 0.3).max() < 0.03
+    inside = sum(td.integrate(p).measure for p in td.clip(data, "u", 0.09, inside=True))
+    outside = sum(td.integrate(p).measure for p in td.clip(data, "u", 0.09))
+    np.testing.assert_allclose(inside + outside, 1.0, rtol=0, atol=1e-12)
+    assert 0.08 < inside < 4 / 3 * np.pi * 0.3 ** 3
+    whole, cut = td.threshold(data, "u", -1.0, 0.15)
+    assert whole.num_cells and cut.num_cells
+    made = {int(shapes.PYRAMID), int(shapes.TETRA), int(shapes.HEXAHEDRON)}
+    assert set(cut.topology.types.numpy().tolist()) <= made
+
+
 def test_what_pyramids_refuse(backend):
     data = _mesh("pyramids", 1)
     with pytest.raises(NotImplementedError, match="order 2 on pyramids"):
@@ -204,3 +240,6 @@ def test_what_pyramids_refuse(backend):
         _ = td.L2(data, order=3, layout="cells").layout
     with pytest.raises(NotImplementedError, match="H1 order 3 on Pyramid"):
         _ = td.H1(data, order=3).size
+    data.fields["u"] = td.interpolate(data, _quadratic, td.L2(data, order=2), dtype=tack.f64)
+    with pytest.raises(NotImplementedError, match="level 1 or 2"):
+        td.subdivide(data, 3)

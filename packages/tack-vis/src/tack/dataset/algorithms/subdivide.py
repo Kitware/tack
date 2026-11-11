@@ -741,6 +741,30 @@ def _sub_simplices(cells, slot_of, per_cell, subs, sub, table, rank, conn, paren
 
 
 @tack.kernel
+def _sub_pyramids(cells, slot_of, per_cell, subs, size, table, rank, conn, parent):
+    # Each refined pyramid's sub-cells (bases.pyramid_subdivision), size entries a cell.
+    for c in cells:
+        e = cells.entity_id(c)
+        slot = slot_of[e]
+        if slot >= 0:
+            for k in range(subs):
+                parent[slot * subs + k] = e
+            for v in range(size):
+                conn[slot * size + v] = rank[slot * per_cell + table[v]]
+
+
+@tack.kernel
+def _pattern_rows(pattern_types, pattern_starts, per, size, n, types, offsets):
+    # n cells' sub-cells of one pattern: per of them a cell, size entries in all.
+    for c in range(n):
+        for k in range(per):
+            types[c * per + k] = pattern_types[k]
+            offsets[c * per + k] = c * size + pattern_starts[k]
+        if c == n - 1:
+            offsets[n * per] = n * size
+
+
+@tack.kernel
 def _tensor_values(cells, u, slot_of, per_cell, ijk, steps, corner_at, first, rank, out):
     # _values for a scalar field in a tensor basis: the cell's values gathered once,
     # not once a lattice point, then the same sum (the same bits).
@@ -843,21 +867,24 @@ def _cell_families(data, what):
     One dimension per mesh."""
     groups = [g for g in data.topology.groups() if g.count]
     for group in groups:
-        if not bases.has_bases(group.shape):
+        if not (bases.has_bases(group.shape) or group.shape is shapes.Pyramid):
             raise NotImplementedError(
                 f"{what} is on segments, quads, pixels, hexahedra, voxels, triangles, "
-                f"tetrahedra and wedges; not yet on {group.shape.__name__} cells")
+                f"tetrahedra, wedges and pyramids; not yet on {group.shape.__name__} cells")
     present = {_family(g.shape) for g in groups}
     dims = {g.shape.DIMENSION for g in groups}
     if len(dims) > 1:
         raise NotImplementedError(f"{what} takes cells of one dimension")
-    families = tuple(f for f in ("tensor", "wedge", "simplex") if f in present) or ("tensor",)
+    families = tuple(f for f in ("tensor", "wedge", "simplex", "pyramid")
+                     if f in present) or ("tensor",)
     return (dims.pop() if dims else 3), families
 
 
 def _family(shape):
     if bases.simplex_shape(shape):
         return "simplex"
+    if shape is shapes.Pyramid:
+        return "pyramid"
     return "wedge" if bases.wedge_shape(shape) else "tensor"
 
 
@@ -895,8 +922,14 @@ def _refined(data, flags, level, fields, elsewhere=None, cut=None):
 
     Returns ``(refined, parent)``, ``parent`` each sub-cell's cell."""
     dimension, families = _cell_families(data, "subdivision")
+    if "pyramid" in families and level not in (1, 2):
+        raise NotImplementedError(
+            f"pyramids are cut into level 1 or 2 (their corners, or VTK's order-2 nodes), "
+            f"not {level}: a subdivision or tolerance asking for more is not supported "
+            "on them yet")
     if len(families) == 1:
-        refined, parent, _ = _refined_family(data, flags, level, fields, elsewhere, cut,
+        refined, parent, _ = _refined_family(data, flags, level, fields, elsewhere,
+                                             None if families[0] == "pyramid" else cut,
                                              dimension, families[0])
         return refined, parent
     parts = [_refined_family(data, _family_flags(data, flags, family), level, fields,
@@ -919,7 +952,8 @@ def _refined_family(data, flags, level, fields, elsewhere, cut, dimension, cell_
     point's lattice id (shared by every family holding it)."""
     from math import comb
 
-    simplex = cell_family != "tensor"       # simplices and wedges: table-driven sub-cells
+    pyramid = cell_family == "pyramid"      # pyramids and tetrahedra, at levels 1 and 2
+    simplex = cell_family in ("simplex", "wedge")   # table-driven sub-cells
     topology = data.topology
     n = data.num_cells
     slots = tack.empty((n,), tack.i64)
@@ -933,6 +967,9 @@ def _refined_family(data, flags, level, fields, elsewhere, cut, dimension, cell_
                                                                (level + 1) ** dimension)
     subs = level ** dimension
     sub = {"simplex": dimension + 1, "wedge": 6}.get(cell_family, 2 ** dimension)
+    if pyramid:
+        sub_types, sub_rows = bases.pyramid_subdivision(level)
+        per_cell, subs, sub = len(bases.pyramid_lattice(level)), len(sub_types), len(sub_rows)
     total = count * per_cell
     keys = tack.empty((total,), tack.i64)
     if count:
@@ -941,6 +978,11 @@ def _refined_family(data, flags, level, fields, elsewhere, cut, dimension, cell_
             # not meet in space (a periodic mesh's seam, a mesh displaced by a DG
             # field), so each cell's lattice is its own.
             _own_keys(keys)
+        elif level == 1 and pyramid:
+            corner_of = tack.array(np.arange(5, dtype=np.int32))
+            for group in topology.groups():
+                if group.count and group.shape is shapes.Pyramid:
+                    _corner_keys(group.view(), slot_of, corner_of, keys)
         elif level == 1:
             corner_of = tack.array(np.asarray(bases.dof_tables(
                 next(g.shape for g in topology.groups()
@@ -953,7 +995,9 @@ def _refined_family(data, flags, level, fields, elsewhere, cut, dimension, cell_
             lattice = Field(space, ConstantArray(0.0, space.size, dtype=data.dtype))
             for group in data.launch_groups("cells", [lattice]):
                 if group.count and _family(group.shape) == cell_family:
-                    node_of = tack.array(bases.view_order(group.shape, level))
+                    # A pyramid's level-2 lattice is its first 14 order-2 nodes, in order.
+                    node_of = tack.array(np.arange(per_cell, dtype=np.int32) if pyramid
+                                         else bases.view_order(group.shape, level))
                     _lattice_keys(data.domain_view("cells", group), lattice.view(group),
                                   slot_of, per_cell, node_of, keys)
     by_key = argsort(keys) if total else tack.empty((0,), tack.i64)
@@ -970,8 +1014,9 @@ def _refined_family(data, flags, level, fields, elsewhere, cut, dimension, cell_
         ranks = _cell_ranks(data, slot_of, chosen, count)
         _evaluators(by_key, starts, per_cell, ranks, first)
     geometry = tack.empty((points,), tack.vec(3, data.dtype))
-    idt = ids.at_least(data.id_dtype, max(points, count * subs * sub))
-    conn = tack.empty((count * subs * sub,), idt)
+    size = sub if pyramid else subs * sub            # connectivity a cell
+    idt = ids.at_least(data.id_dtype, max(points, count * size))
+    conn = tack.empty((count * size,), idt)
     parent = tack.empty((count * subs,), data.id_dtype)
     steps = tack.empty((level + 1,), data.dtype)
     tack.copyto(steps, (np.arange(level + 1) / level).astype(data.dtype.numpy_dtype))
@@ -989,6 +1034,12 @@ def _refined_family(data, flags, level, fields, elsewhere, cut, dimension, cell_
                 cells = data.domain_view("cells", group)
                 _positions(cells, slot_of, per_cell, ijk[group.root], steps,
                            corner_at[group.root], first, rank, geometry)
+                if pyramid:
+                    # Positions, at the lattice's nodes; no entity traces (each point
+                    # is evaluated once, by the cell every piece chooses alike).
+                    _sub_pyramids(cells, slot_of, per_cell, subs, size,
+                                  tack.array(np.asarray(sub_rows)), rank, conn, parent)
+                    continue
                 lattice = _lattice_tables(group.shape, level)
                 order = data.geometry.space.order if isinstance(data.geometry.space, H1) else 0
                 if simplex:
@@ -1022,10 +1073,19 @@ def _refined_family(data, flags, level, fields, elsewhere, cut, dimension, cell_
                                   edge_nodes, face_nodes, order + 1,
                                   int(data.geometry.space.basis == bases.BERNSTEIN), geometry)
                 _sub_cells(cells, slot_of, per_cell, level, rank, sub, conn, parent)
-    shape = (shapes.WEDGE if cell_family == "wedge" else
-             {3: shapes.TETRA, 2: shapes.TRIANGLE}[dimension] if simplex else
-             {3: shapes.HEXAHEDRON, 2: shapes.QUAD, 1: shapes.LINE}[dimension])
-    types, offsets = uniform_cells(int(shape), count * subs, idt)
+    if pyramid:
+        types = tack.empty((count * subs,), tack.u8)
+        offsets = tack.empty((count * subs + 1,), idt)
+        starts = np.concatenate([[0], np.cumsum(np.where(np.asarray(sub_types)
+                                                          == int(shapes.PYRAMID), 5, 4))])
+        _pattern_rows(tack.array(np.asarray(sub_types, np.uint8)),
+                      tack.array(starts[:-1].astype(np.int64)), subs, size, count,
+                      types, offsets)
+    else:
+        shape = (shapes.WEDGE if cell_family == "wedge" else
+                 {3: shapes.TETRA, 2: shapes.TRIANGLE}[dimension] if simplex else
+                 {3: shapes.HEXAHEDRON, 2: shapes.QUAD, 1: shapes.LINE}[dimension])
+        types, offsets = uniform_cells(int(shape), count * subs, idt)
     linear = UnstructuredTopology(types, offsets, conn, num_points=points, id_dtype=idt)
     point_fields = {}
     for name, field in fields.items():
@@ -1056,7 +1116,7 @@ def _refined_family(data, flags, level, fields, elsewhere, cut, dimension, cell_
                             _typed(bases.nodes(family, order), steps),
                             _typed(bases.weights(family, order), steps), order + 1,
                             int(family == bases.BERNSTEIN), out)
-                    elif isinstance(field.space, H1):
+                    elif isinstance(field.space, H1) and not pyramid:
                         # A continuous field's shared points from their entities' values.
                         order = field.space.order
                         edge_nodes, face_nodes = _entity_tables(group.shape, order)
@@ -1140,13 +1200,6 @@ def _renumbered(connectivity, offset, rank, out, at):
         out[at + i] = rank[connectivity[i] + offset]
 
 
-@tack.kernel
-def _cell_rows(types, offsets, shape, size, start, at, n):
-    for i in range(n):
-        types[start + i] = shape
-        offsets[start + i] = at + i * size
-
-
 def _joined(data, parts):
     """The families' refined parts, ``(refined, parent, keys)`` each, as one dataset:
     their points joined by key (a point several families hold is one point, with
@@ -1198,8 +1251,10 @@ def _joined(data, parts):
         if sizes[i]:
             _renumbered(conn, int(starts_at[i]), rank, connectivity, at)
         if cells[i]:
-            shape = int(part[0].topology.groups()[0].shape.ID)
-            _cell_rows(types, offsets, shape, sizes[i] // cells[i], cell_at, at, cells[i])
+            # Each part's own types and offsets: a pyramid's sub-cells are pyramids and
+            # tetrahedra, every other family's of one shape.
+            _copy_rows(part[0].topology.types, part[0].topology.offsets, cells[i], cell_at,
+                       at, types, offsets)
         at += sizes[i]
         cell_at += cells[i]
     _last_offset(offsets, sum(cells), at)
@@ -1227,6 +1282,13 @@ def _joined(data, parts):
             cells=tack.concat([m.cells for m, part in zip(marks, parts) if part[0].num_cells]),
             points=take([m.points for m in marks]) if marks[0].points is not None else None)
     return refined, parent
+
+
+@tack.kernel
+def _copy_rows(part_types, part_offsets, n, cell_at, at, types, offsets):
+    for c in range(n):
+        types[cell_at + c] = part_types[c]
+        offsets[cell_at + c] = at + part_offsets[c]
 
 
 @tack.kernel
@@ -1381,7 +1443,8 @@ def subdivides(data, field):
                  or space.default_subdivision > 1)
     groups = [g for g in data.topology.groups() if g.count]
     dims = {g.shape.DIMENSION for g in groups}
-    return nonlinear and len(dims) <= 1 and all(bases.has_bases(g.shape) for g in groups)
+    return nonlinear and len(dims) <= 1 and all(
+        bases.has_bases(g.shape) or g.shape is shapes.Pyramid for g in groups)
 
 
 def subdivided_contour(data, field, value, levels, nlevels, subdivision, cut, tolerance=None,

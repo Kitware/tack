@@ -1295,8 +1295,11 @@ class DataSet:
         for group in groups:
             if not group.count:
                 continue
-            if isinstance(space, L2) and space.tensor and (bases.simplex_shape(group.shape)
-                                                           or bases.wedge_shape(group.shape)):
+            if isinstance(space, L2) and space.tensor and group.shape is shapes.Pyramid:
+                view = self.domain_view("cells", group, (views._PyramidCellNodes,),
+                                        node_offsets=space.offsets)
+            elif isinstance(space, L2) and space.tensor and (bases.simplex_shape(group.shape)
+                                                             or bases.wedge_shape(group.shape)):
                 lattice = bases.lattice_ijk(group.shape, space.order).reshape(-1)
                 ijk = tack.empty((len(lattice),), tack.i32)
                 tack.copyto(ijk, lattice)

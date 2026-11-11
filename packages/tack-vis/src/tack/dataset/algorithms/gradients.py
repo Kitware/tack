@@ -123,10 +123,18 @@ def _gradients(cells, u, out):
 
 @tack.kernel
 def _node_gradients(cells, u, out):
-    # The gradient at each of the cell's nodes of the target space.
+    # The gradient at each of the cell's nodes of the target space; at a
+    # pyramid's apex, where its Jacobian is singular, extrapolated from two
+    # points just below it on the axis, as _corner_gradients does.
     for c in cells:
         for j in range(cells.node_count(c)):
-            out[cells.node_dof(c, j)] = world_gradient(cells, u, c, cells.node_parametric_point(c, j))
+            pc = cells.node_parametric_point(c, j)
+            if cells.ID == shapes.PYRAMID and pc[2] > 0.999:
+                ga = world_gradient(cells, u, c, tack.vec3(0.5, 0.5, 0.998))
+                gb = world_gradient(cells, u, c, tack.vec3(0.5, 0.5, 0.996))
+                out[cells.node_dof(c, j)] = 2.0 * ga - gb
+            else:
+                out[cells.node_dof(c, j)] = world_gradient(cells, u, c, pc)
 
 
 @tack.func

@@ -950,8 +950,8 @@ def _quadratic_at(shape, pcs, values, gradients, nodes, n):
                 nodes[k] = shape.quadratic_node(k)
 
 
-@pytest.mark.parametrize("name", ["Tetra", "Hexahedron", "Voxel", "Wedge", "Triangle", "Quad",
-                                  "Pixel"])
+@pytest.mark.parametrize("name", ["Tetra", "Hexahedron", "Voxel", "Wedge", "Pyramid", "Triangle",
+                                  "Quad", "Pixel"])
 def test_quadratic_bases(backend, name):
     """Each shape's quadratic Lagrange functions: one at their own node and zero at
     the others, summing to one, with gradients their finite differences."""
@@ -982,6 +982,75 @@ def test_quadratic_bases(backend, name):
         up, _ = evaluate(points + h * np.eye(3)[d])
         down, _ = evaluate(points - h * np.eye(3)[d])
         np.testing.assert_allclose((up - down) / (2 * h), gradients[:, :, d], atol=1e-3)
+
+
+@tack.kernel
+def _pyramid_quadratic_at(shape, pcs, corners, nodal, values, positions, hessians, n):
+    # At each point: the world position (the order-1 map), the sum of the 18
+    # functions times the nodes' values, and each function's Hessian.
+    for i in range(n):
+        x = shape.shape_function(0, pcs[i]) * corners[0]
+        for j in range(1, 5):
+            x = x + shape.shape_function(j, pcs[i]) * corners[j]
+        positions[i] = x
+        v = 0.0 * x[0]
+        for k in range(18):
+            v = v + shape.quadratic_function(k, pcs[i]) * nodal[k]
+            h = shape.quadratic_hessian(k, pcs[i])
+            hessians[i * 18 + k] = tack.vec3(h[0, 0], h[0, 1], h[1, 2])
+        values[i] = v
+
+
+def test_the_pyramids_quadratic_functions_hold_every_quadratic(backend):
+    """VTK's 18-node pyramid holds every quadratic of the world on a straight pyramid
+    (its functions are rational there, polynomials in the collapsed coordinates):
+    one interpolated from its values at the nodes is itself everywhere. And the
+    Hessians are the gradients' finite differences."""
+    from tack.dataset import shapes
+
+    pyramid = shapes.Pyramid()
+    corners = np.array([[0, 0, 0], [1.2, 0.1, 0], [1.3, 1.1, 0.1], [-0.1, 0.9, 0], [0.5, 0.4, 1.1]])
+    nodes = tack.empty((27,), tack.vec(3, tack.f32))
+    _quadratic_at(pyramid, _vectors(np.zeros((1, 3))), tack.empty((27,)),
+                  tack.empty((27,), tack.vec(3, tack.f32)), nodes, 1)
+    pcs = np.r_[nodes.numpy()[:18], np.random.default_rng(5).uniform(0.02, 0.9, (40, 3))]
+
+    def world(pc):
+        bilinear = ((1 - pc[:, :1]) * (1 - pc[:, 1:2]) * corners[0] + pc[:, :1] * (1 - pc[:, 1:2])
+                    * corners[1] + pc[:, :1] * pc[:, 1:2] * corners[2]
+                    + (1 - pc[:, :1]) * pc[:, 1:2] * corners[3])
+        return (1 - pc[:, 2:]) * bilinear + pc[:, 2:] * corners[4]
+
+    def quadratic(x):
+        return (0.3 + x[:, 0] - 2 * x[:, 1] + 0.5 * x[:, 2] + x[:, 0] ** 2 - 0.7 * x[:, 1] * x[:, 2]
+                + 1.5 * x[:, 0] * x[:, 2] + 0.25 * x[:, 2] ** 2 - x[:, 1] ** 2)
+
+    def run(points):
+        values = tack.empty((len(points),))
+        positions = tack.empty((len(points),), tack.vec(3, tack.f32))
+        hessians = tack.empty((18 * len(points),), tack.vec(3, tack.f32))
+        _pyramid_quadratic_at(pyramid, _vectors(points), _vectors(corners),
+                              tack.array(quadratic(world(pcs[:18])).astype(np.float32)), values,
+                              positions, hessians, len(points))
+        return values.numpy(), positions.numpy(), hessians.numpy().reshape(-1, 18, 3)
+
+    values, positions, hessians = run(pcs)
+    np.testing.assert_allclose(positions, world(pcs), atol=1e-5)
+    np.testing.assert_allclose(values, quadratic(world(pcs)), atol=2e-4)
+    # The rr, rs and st second derivatives against the gradients' differences.
+    gradients = tack.empty((27 * 2,), tack.vec(3, tack.f32))
+    h = 1e-2
+    for point in pcs[18:24]:
+        diffs = []
+        for d in range(3):
+            pair = np.array([point + h * np.eye(3)[d], point - h * np.eye(3)[d]])
+            _quadratic_at(pyramid, _vectors(pair), tack.empty((54,)), gradients, nodes, 2)
+            g = gradients.numpy().reshape(2, 27, 3)[:, :18]
+            diffs.append((g[0] - g[1]) / (2 * h))
+        _, _, at = run(point[None])
+        np.testing.assert_allclose(at[0, :, 0], diffs[0][:, 0], atol=2e-3)
+        np.testing.assert_allclose(at[0, :, 1], diffs[1][:, 0], atol=2e-3)
+        np.testing.assert_allclose(at[0, :, 2], diffs[2][:, 1], atol=2e-3)
 
 
 # ── Point to cell averaging ─────────────────────────────────────────

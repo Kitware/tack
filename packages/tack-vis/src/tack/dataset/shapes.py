@@ -169,6 +169,116 @@ _WEDGE_FACES = tack.constant(
 _PYRAMID_FACES = tack.constant(
     (0, 3, 2, 1, 0, 1, 4, -1, 1, 2, 4, -1, 2, 3, 4, -1, 3, 0, 4, -1), tack.i32)
 
+# The order-2 pyramid's 18 functions (corners, edges' middles, the base's
+# centre, the triangle faces' centroids; Pyramid.quadratic_node): VTK's
+# HGRAD "C" order-2 pyramid (vtkDGPyr, Basis/HGrad/PyrC2Basis.h) with its face
+# functions scaled by 27/8 as meant (VTK has 27/9, which leaves them 8/9 at
+# their nodes) and its nodes renumbered to Tack's. In Tack's collapsed
+# coordinates VTK's 1/(1 - t) terms cancel: each function is a polynomial of
+# degree 2 in r and s and 3 in t, here in the tensor Bernstein basis (row k
+# holding 12 times the coefficient of B2_i(r) B2_j(s) B3_l(t) at i + 3j + 9l),
+# whose values are in [0, 1], so f32 keeps its digits (in monomials the
+# coefficients reached 162).
+_PYRAMID_QUADRATIC = tack.constant((
+    12, -6, 0, -6, 3, 0, 0, 0, 0, 0, 2, 0, 2, -6, 0, 0, 0, 0, -4, -2, 0, -2, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, -6, 12, 0, 3, -6, 0, 0, 0, 0, 2, 0, 0, -6, 2, 0, 0, 0, 0, -2, -4, 0, -1, -2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 3, -6, 0, -6, 12, 0, 0, 0, 0, -6, 2, 0, 2, 0, 0, 0, 0, 0, -1, -2, 0, -2, -4, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, -6, 3, 0, 12, -6, 0, 0, 0, 0, 2, -6, 0, 0, 2, 0, 0, 0, 0, -2, -1, 0, -4, -2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, -4, 2, -4, 2, -16, 2, -4, 2, -4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12, 12, 12, 12, 12, 12, 12, 12, 12,
+    0, 24, 0, 0, -12, 0, 0, 0, 0, 0, -16, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, -12, 24, 0, 0, 0, 0, 0, 0, 0, 8, -16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, -12, 0, 0, 24, 0, 0, 0, 0, 0, 8, 0, 0, -16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 24, -12, 0, 0, 0, 0, 0, 0, 0, -16, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 16, -16, 0, -16, 28, 0, 0, 0, 0, 16, 8, 0, 8, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -16, 16, 0, 28, -16, 0, 0, 0, 0, 8, 16, 0, 4, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 28, -16, 0, -16, 16, 0, 0, 0, 0, 4, 8, 0, 8, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -16, 28, 0, 16, -16, 0, 0, 0, 0, 8, 4, 0, 16, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 48, 0, 0, 0, 0, 0, 0, 0, 0, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 54, 0, 0, -27, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -27, 54, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -27, 0, 0, 54, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 54, -27, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+), tack.i32)
+
+
+# The order-2 pyramid's nodes by coordinate: bit k set where node k has
+# that coordinate (Pyramid.quadratic_node).
+_PYRAMID_X_ONE = tack.constant((1 << 1) | (1 << 2) | (1 << 6) | (1 << 10) | (1 << 11) | (1 << 15),
+                               tack.i32)
+_PYRAMID_X_HALF = tack.constant((1 << 5) | (1 << 7) | (1 << 13) | (1 << 14) | (1 << 16), tack.i32)
+_PYRAMID_Y_ONE = tack.constant((1 << 2) | (1 << 3) | (1 << 7) | (1 << 11) | (1 << 12) | (1 << 16),
+                               tack.i32)
+_PYRAMID_Y_HALF = tack.constant((1 << 6) | (1 << 8) | (1 << 13) | (1 << 15) | (1 << 17), tack.i32)
+
+
+# The Bernstein polynomials of degree 2 and 3, their derivatives and their
+# second derivatives.
+
+@tack.func
+def _b2(i, x):
+    b = (1.0 - x) * (1.0 - x)
+    if i == 1:
+        b = 2.0 * x * (1.0 - x)
+    if i == 2:
+        b = x * x
+    return b
+
+
+@tack.func
+def _b2_d(i, x):
+    d = -2.0 * (1.0 - x)
+    if i == 1:
+        d = 2.0 - 4.0 * x
+    if i == 2:
+        d = 2.0 * x
+    return d
+
+
+@tack.func
+def _b2_dd(i, x):
+    dd = 2.0 + 0.0 * x
+    if i == 1:
+        dd = -4.0 + 0.0 * x
+    return dd
+
+
+@tack.func
+def _b3(i, x):
+    y = 1.0 - x
+    b = y * y * y
+    if i == 1:
+        b = 3.0 * x * y * y
+    if i == 2:
+        b = 3.0 * x * x * y
+    if i == 3:
+        b = x * x * x
+    return b
+
+
+@tack.func
+def _b3_d(i, x):
+    y = 1.0 - x
+    d = -3.0 * y * y
+    if i == 1:
+        d = 3.0 * y * (1.0 - 3.0 * x)
+    if i == 2:
+        d = 3.0 * x * (2.0 - 3.0 * x)
+    if i == 3:
+        d = 3.0 * x * x
+    return d
+
+
+@tack.func
+def _b3_dd(i, x):
+    dd = 6.0 * (1.0 - x)
+    if i == 1:
+        dd = 18.0 * x - 12.0
+    if i == 2:
+        dd = 6.0 - 18.0 * x
+    if i == 3:
+        dd = 6.0 * x
+    return dd
+
 
 @tack.func
 def _q1d(a, x):
@@ -1259,6 +1369,104 @@ class Pyramid(_Solid):
             h = _symmetric(0.0, 0.0, 0.0, da * db * (1.0 - pc[2]),
                            -da * _linear(b, pc[1]), -_linear(a, pc[0]) * db)
         return h
+
+    #: VTK's order-2 "C" pyramid, 18 nodes: the corners, the edges' middles,
+    #: the base's centre and the four triangle faces' centroids; none inside.
+    NUM_QUADRATIC = 18
+    QUADRATIC_FACES = 5
+
+    @tack.func
+    def quadratic_node(self, k):
+        """Node ``k``'s parametric point. The collapsed coordinates put an apex
+        edge's middle at its base corner's ``(r, s)`` and ``t = 1/2``, and a
+        triangle face's centroid over its base edge's middle at ``t = 1/3``.
+        Each coordinate is a literal (bits of ``k`` in masks), so it takes the
+        caller's float type: 1/3 is exact to that type."""
+        x = 0.0
+        y = 0.0
+        z = 0.0
+        if (_PYRAMID_X_ONE >> k) & 1:
+            x = 1.0
+        if (_PYRAMID_X_HALF >> k) & 1:
+            x = 0.5
+        if (_PYRAMID_Y_ONE >> k) & 1:
+            y = 1.0
+        if (_PYRAMID_Y_HALF >> k) & 1:
+            y = 0.5
+        if k == 4:
+            z = 1.0
+        if k >= 9 and k < 13:
+            z = 0.5
+        if k >= 14:
+            z = 1.0 / 3.0
+        return tack.vec3(x, y, z)
+
+    @tack.func
+    def quadratic_coefficient(self, k, m):
+        """12 times function ``k``'s coefficient of the tensor Bernstein polynomial
+        ``m`` (``B2_i(r) B2_j(s) B3_l(t)`` at ``m = i + 3j + 9l``): an integer."""
+        return _PYRAMID_QUADRATIC[36 * k + m]
+
+    @tack.func
+    def quadratic_function(self, k, pc):
+        v = 0.0 * pc[0]
+        for l in range(4):
+            bt = _b3(l, pc[2])
+            for j in range(3):
+                bs = _b2(j, pc[1])
+                for i in range(3):
+                    c = _PYRAMID_QUADRATIC[36 * k + i + 3 * j + 9 * l]
+                    if c != 0:
+                        br = _b2(i, pc[0])
+                        v = v + c * (br * bs * bt)
+        return v / 12.0
+
+    @tack.func
+    def quadratic_gradient(self, k, pc):
+        g = tack.vec3(0.0 * pc[0])
+        for l in range(4):
+            bt = _b3(l, pc[2])
+            dt = _b3_d(l, pc[2])
+            for j in range(3):
+                bs = _b2(j, pc[1])
+                ds = _b2_d(j, pc[1])
+                for i in range(3):
+                    c = _PYRAMID_QUADRATIC[36 * k + i + 3 * j + 9 * l]
+                    if c != 0:
+                        br = _b2(i, pc[0])
+                        dr = _b2_d(i, pc[0])
+                        g = g + c * tack.vec3(dr * bs * bt, br * ds * bt, br * bs * dt)
+        return g / 12.0
+
+    @tack.func
+    def quadratic_hessian(self, k, pc):
+        rr = 0.0 * pc[0]
+        ss = 0.0 * pc[0]
+        tt = 0.0 * pc[0]
+        rs = 0.0 * pc[0]
+        rt = 0.0 * pc[0]
+        st = 0.0 * pc[0]
+        for l in range(4):
+            bt = _b3(l, pc[2])
+            dt = _b3_d(l, pc[2])
+            ddt = _b3_dd(l, pc[2])
+            for j in range(3):
+                bs = _b2(j, pc[1])
+                ds = _b2_d(j, pc[1])
+                dds = _b2_dd(j, pc[1])
+                for i in range(3):
+                    c = _PYRAMID_QUADRATIC[36 * k + i + 3 * j + 9 * l]
+                    if c != 0:
+                        br = _b2(i, pc[0])
+                        dr = _b2_d(i, pc[0])
+                        ddr = _b2_dd(i, pc[0])
+                        rr = rr + c * ddr * bs * bt
+                        ss = ss + c * br * dds * bt
+                        tt = tt + c * br * bs * ddt
+                        rs = rs + c * dr * ds * bt
+                        rt = rt + c * dr * bs * dt
+                        st = st + c * br * ds * dt
+        return _symmetric(rr / 12.0, ss / 12.0, tt / 12.0, rs / 12.0, rt / 12.0, st / 12.0)
 
     @tack.func
     def world_to_parametric(self, pts, x):

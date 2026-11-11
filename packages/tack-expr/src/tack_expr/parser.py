@@ -224,10 +224,11 @@ def _derived(name):
 
 
 class _Compiler:
-    def __init__(self, text, data, mode, continuous_only=False):
+    def __init__(self, text, data, mode, continuous_only=False, reference=None):
         self.text, self.data, self.mode = text, data, mode
         self.continuous_only = continuous_only
-        self.reference = getattr(data.topology, "reference_cells", True)
+        self.reference = (getattr(data.topology, "reference_cells", True) if reference is None
+                          else reference)
         self.toks = self._tokenize(text)
         self.k = 0
         self.lines = []
@@ -1235,6 +1236,12 @@ class Compiled:
         self.sources, self.kernels = {}, {}
         self.unit = None
         self.incidence = ()
+        #: The kind of cell group it runs on, by ``shape.REFERENCE``; None for every group.
+        self.only = None
+
+    def _runs_on(self, group):
+        return group.count and (self.only is None
+                                or bool(getattr(group.shape, "REFERENCE", True)) == self.only)
 
     @property
     def type(self):
@@ -1277,7 +1284,7 @@ class Compiled:
             kinds = [kind for kind, _ in self.args]
             fields = [p for kind, p in zip(kinds, payloads) if kind == "field"]
             for group in data.launch_groups("cells", [*fields, results[0]]):
-                if not group.count:
+                if not self._runs_on(group):
                     continue
                 variant, nodes = _node_variant(self.space, group.shape)
                 node_list = tack.array(np.asarray(nodes if hasattr(nodes, "__len__") else [0], dtype=np.int32))
@@ -1286,11 +1293,62 @@ class Compiled:
                                      *[p.view(group) if kind == "field" else p
                                        for kind, p in zip(kinds, payloads)],
                                      results[0].view(group), node_list, node_count, *outs, *consts)
-        else:
+        elif self.only is None:
             domain = "faces" if self.mode == "faces" else "cells"
             td.for_each(self.kernel("main"), data, domain, *payloads, *outs, *consts,
                         incidence=self.incidence if domain == "cells" else ())
+        else:
+            fields = [p for p in payloads if isinstance(p, td.Field)]
+            for group in data.launch_groups("cells", fields):
+                if self._runs_on(group):
+                    self.kernel("main")(
+                        data.domain_view("cells", group, incidence=self.incidence),
+                        *(p.view(group) if isinstance(p, td.Field) else p for p in payloads),
+                        *outs, *consts)
         return results[0] if self.names is None else dict(zip(self.names, results))
+
+
+class _Grouped:
+    """Compiled expressions over cells whose groups differ in kind (shapes beside
+    polyhedra or polygons): one ``Compiled`` for the groups with a reference element and
+    one for those without, each run on its own groups into the same outputs."""
+
+    def __init__(self, parts):
+        self.parts = parts
+        first = parts[True]
+        self.text, self.mode, self.space = first.text, first.mode, first.space
+        self.types, self.names = first.types, first.names
+        self.fields = sorted(set().union(*(p.fields for p in parts.values())))
+        self.incidence = tuple(sorted(set().union(*(p.incidence for p in parts.values()))))
+
+    @property
+    def type(self):
+        return self.types[0]
+
+    @property
+    def source(self):
+        return self.parts[True].source
+
+    @property
+    def unit(self):
+        return self.parts[True].unit
+
+    @unit.setter
+    def unit(self, value):
+        for part in self.parts.values():
+            part.unit = value
+
+    def __call__(self, data, out=None):
+        first = self.parts[True]
+        if self.names is None:
+            out = out if out is not None else first._allocate(data, self.types[0])
+        else:
+            given = out or {}
+            out = {n: given.get(n) if given.get(n) is not None else first._allocate(data, t)
+                   for n, t in zip(self.names, self.types)}
+        for part in self.parts.values():
+            result = part(data, out)
+        return result
 
 
 def _output(data, at):
@@ -1309,12 +1367,35 @@ def _output(data, at):
     raise ValueError("node output takes an L2 or H1 space of the dataset's topology")
 
 
+def _kinds_of_cells(data):
+    """The kinds of cell group a mixed topology holds, by ``shape.REFERENCE`` (shapes
+    beside polyhedra or polygons), or None for a topology whose cells are all of one kind."""
+    topology = data.topology
+    if getattr(topology, "reference_cells", True) or not getattr(topology, "mixed", False):
+        return None
+    kinds = {bool(getattr(g.shape, "REFERENCE", True)) for g in topology.groups() if g.count}
+    return kinds if len(kinds) > 1 else None
+
+
 def _compile(texts, data, at, replace_invalid, names):
+    """One Compiled, or on a mixed topology a _Grouped of one for its shapes and one for
+    its polyhedra or polygons, each read as cells of its kind are."""
+    if _kinds_of_cells(data) is None:
+        return _compile_one(texts, data, at, replace_invalid, names)
+    shapes_part = _compile_one(texts, data, at, replace_invalid, names, reference=True)
+    if shapes_part.mode not in ("cells", "corners", "nodes"):
+        return _compile_one(texts, data, at, replace_invalid, names)
+    fanned_part = _compile_one(texts, data, at, replace_invalid, names, reference=False)
+    shapes_part.only, fanned_part.only = True, False
+    return _Grouped({True: shapes_part, False: fanned_part})
+
+
+def _compile_one(texts, data, at, replace_invalid, names, reference=None):
     mode, space = _output(data, at)
     continuous = isinstance(space, td.H1) and mode == "nodes"
 
     def parse_all(mode, continuous):
-        c = _Compiler(texts[0], data, mode, continuous)
+        c = _Compiler(texts[0], data, mode, continuous, reference)
         parsed = [c.parse()]
         for text in texts[1:]:
             c.restart(text)

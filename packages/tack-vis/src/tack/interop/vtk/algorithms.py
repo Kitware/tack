@@ -85,6 +85,7 @@ __all__ = [
     "AsPolyhedra",
     "AverageDown",
     "BoundaryFaces",
+    "Calculator",
     "CellCenters",
     "CellGeometry",
     "CellIds",
@@ -2082,6 +2083,30 @@ class Interpolate(_FieldAlgorithm):
         result = self._function()(data, values.pop("function"), _space(data, self.to),
                                   **values)
         return {self.name: result}
+
+
+class Calculator(_FieldAlgorithm):
+    """``tack_expr.evaluate``: ``expression``, in ``vtkArrayCalculator``'s syntax, over the
+    input's fields, at the points or the cells, as an array ``name``. Fields of any order
+    and curved cells are evaluated through each cell's own map, derivatives exactly.
+    VTK's ``vtkArrayCalculator``; it needs the ``tack-expr`` package."""
+
+    expression = Parameter(None, "the expression, as vtkArrayCalculator writes it "
+                                 "(required)")
+    at = Parameter("points", "where it is evaluated: points or cells")
+    name = Parameter("Result", "the new array's name")
+    replace_invalid = Parameter(None, "a number for NaN and infinite results, as "
+                                      "vtkArrayCalculator's ReplaceInvalidValues")
+
+    def new_fields(self, data):
+        try:
+            import tack_expr
+        except ImportError as error:
+            raise ImportError("Calculator needs the tack-expr package") from error
+        if not self.expression:
+            raise ValueError("Calculator needs an expression")
+        return {self.name: tack_expr.evaluate(self.expression, data, at=self.at,
+                                              replace_invalid=self.replace_invalid)}
 
 
 class Magnitude(_FieldAlgorithm):

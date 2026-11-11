@@ -6,3 +6,5 @@
   field argument for any algorithm, read on each dataset or piece; an
   expression names `normals`, `measures` and `centroids` where the dataset
   stores no field of the name.
+- `tack.interop.vtk.algorithms.Calculator`: an expression in `vtkArrayCalculator`'s
+  syntax as a VTK algorithm, at the points or the cells, through `tack-expr`.

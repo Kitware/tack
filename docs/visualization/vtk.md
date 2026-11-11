@@ -227,7 +227,8 @@ new values their cell data.
 |  | `FaceGeometry` | — | faces (edges) |
 |  | `FaceCenters` | — | faces (edges) |
 |  | `EdgeLengths` | — | faces (edges) |
-| Fields from fields | `Gradients` | `vtkGradientFilter` | fields |
+| Fields from fields | `Calculator` (needs `tack-expr`) | `vtkArrayCalculator` | fields |
+|  | `Gradients` | `vtkGradientFilter` | fields |
 |  | `FlowQuantities` | `vtkGradientFilter` | fields |
 |  | `Project` | `vtkCellDataToPointData`, `vtkPointDataToCellData` | fields |
 |  | `ValuesAtCenters` | — | fields |

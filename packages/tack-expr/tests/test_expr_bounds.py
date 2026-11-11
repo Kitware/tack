@@ -36,7 +36,7 @@ def data(backend):
     d = td.uniform_grid((5, 4, 4), origin=(0.1, 0.2, 0.3), spacing=(0.3, 0.3, 0.25))
     d.fields["u"] = td.interpolate(d, f_u, td.H1(d, order=3))
     d.fields["T"] = td.interpolate(d, f_t, td.H1(d, order=2))
-    d.fields["k"] = td.Field(td.Constant(d), tack.array(np.linspace(0.5, 2.0, d.num_cells)))
+    d.fields["k"] = td.Field(td.Constant(d), tack.array(np.linspace(0.5, 2.0, d.num_cells, dtype=np.float32)))
     return d
 
 

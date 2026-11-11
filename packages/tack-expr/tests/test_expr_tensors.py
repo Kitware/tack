@@ -95,7 +95,7 @@ def test_tensors_with_the_operators_and_units(data):
     assert_close(got.values.numpy(), values("vonmises(S)", data) * 1e6, tol=1e-3)
     s = data.s
     for c, (i, j) in zip(("XX", "YY", "ZZ", "XY", "YZ", "XZ"), ((0, 0), (1, 1), (2, 2), (0, 1), (1, 2), (0, 2))):
-        data.fields[f"Stress{c}"] = td.Field(td.Constant(data), tack.array(np.ascontiguousarray(s[:, i, j])))
+        data.fields[f"Stress{c}"] = td.Field(td.Constant(data), tack.array(np.ascontiguousarray(s[:, i, j], dtype=np.float32)))
     got = fx.evaluate("eigvals(Stress)[0] - eigvals(Stress)[2]", data, fields=fx.cgns(), units="kPa")
     eig = np.linalg.eigvalsh(s)
     assert_close(got.values.numpy(), (eig[:, 2] - eig[:, 0]) * 1e-3, tol=1e-3)

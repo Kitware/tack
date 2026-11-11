@@ -185,6 +185,7 @@ nav:
           - Filters by task:
               - Extract: visualization/extract.md
               - Derive: visualization/derive.md
+              - Compute with expressions: visualization/expressions.md
               - Sample and trace: visualization/sample-and-trace.md
               - Reduce: visualization/reduce.md
               - Points and particles: visualization/points-and-particles.md

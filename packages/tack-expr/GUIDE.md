@@ -36,13 +36,14 @@ result = expr.eval(data)                                    # at cell centers
 speed = fx.mag(U).eval(data, at="points")
 wave = (np.sin(T) * 2 + fx.where(T > 0.5, T, 0)).eval(data, at="points")
 q = fx.qcrit(U).compile(data)                               # call q(data) as often as U changes
-surface = (T * T + fx.mag2(U)).contour(data, 1.0)           # evaluated where the contour reads it
+surface = td.contour(data, (T * T + fx.mag2(U)).field(data), 1.0)  # evaluated where read
 ```
 
 An expression is a tree of operations on the functions its fields represent, evaluated at the
 location asked for, so `U * V` of order-2 fields is the product of the two functions at each
-output node. `eval`, `compile`, `field`, `contour` and `function` write it in the calculator
-syntax and compile it as text is compiled; `str(expr)` shows the text. The dataset passed in
+output node. `eval`, `compile`, `field` and `function` write it in the calculator syntax and
+compile it as text is compiled; `expr.render(data)[0]` shows the text, each field under its name
+in `data.fields` (`str(expr)` names them `_f0`, `_f1`, ...). The dataset passed in
 gives the topology and the geometry, and every field must be on its topology.
 
 A `td.Field` in an expression is that field, read wherever the expression runs, whether or not

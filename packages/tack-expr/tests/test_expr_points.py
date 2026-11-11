@@ -38,11 +38,12 @@ def _vtk_grid():
 
 
 def polyhedra(_):
+    grid = _vtk_grid()
     from vtkmodules.vtkFiltersCore import vtkAppendFilter
 
     from tack.interop.vtk import vtk_to_dataset
 
-    return vtk_to_dataset(vtkAppendFilter()(_vtk_grid()), polyhedral=True)
+    return vtk_to_dataset(vtkAppendFilter()(grid), polyhedral=True)
 
 
 def mixed_vtk():

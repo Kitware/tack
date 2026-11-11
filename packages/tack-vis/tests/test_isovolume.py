@@ -56,7 +56,7 @@ def _volume(out):
 
 
 @pytest.mark.parametrize("cells", ["hexahedra", "tetrahedra", "polyhedra"])
-def test_a_linear_field_between_two_values(backend, cells):
+def test_a_linear_field_between_two_values(cells):
     """A slab of x: its volume, the two clips' cells, both ends' points kept, and a
     cell field going to each piece from its cell."""
     data = _mesh(cells)
@@ -72,7 +72,7 @@ def test_a_linear_field_between_two_values(backend, cells):
                                   twice.fields["c"].values.numpy())
 
 
-def test_an_implicit_function_and_a_field_not_held(backend):
+def test_an_implicit_function_and_a_field_not_held():
     """A slab between two offsets of a plane, and a Field the dataset does not hold:
     the range's field never reaches the output."""
     data = _mesh("hexahedra")
@@ -86,7 +86,7 @@ def test_an_implicit_function_and_a_field_not_held(backend):
     assert set(out.fields) == {"c"} and _RANGE not in out.fields
 
 
-def test_what_isovolume_refuses(backend):
+def test_what_isovolume_refuses():
     data = _mesh("hexahedra")
     with pytest.raises(ValueError, match="above its upper"):
         td.isovolume(data, "x", 0.6, 0.3)
@@ -106,7 +106,7 @@ def _shell_points(part, level):
 
 @pytest.mark.parametrize("space", ["H1", "L2"])
 @pytest.mark.parametrize("cells", ["hexahedra", "tetrahedra"])
-def test_a_shell_of_a_quadratic_field(backend, cells, space):
+def test_a_shell_of_a_quadratic_field(cells, space):
     """The shell between two spheres of an order-2 field on straight cells, cut at
     subdivision 3: every crossing on a sub-cell's edge is on its sphere at both ends
     (a hexahedron's centroid points, averages of crossings, are not crossings);
@@ -133,7 +133,7 @@ def test_a_shell_of_a_quadratic_field(backend, cells, space):
         assert np.abs(value - level).max() > 1e-4
 
 
-def test_a_thin_shell_on_curved_cells(backend):
+def test_a_thin_shell_on_curved_cells():
     """A shell thinner than a lattice step, on a bent geometry: second crossings
     between a lattice point and a first crossing on its sub-edge are at the roots
     too, so the cut's points at either end are where the field takes it."""
@@ -151,7 +151,7 @@ def test_a_thin_shell_on_curved_cells(backend):
         np.testing.assert_allclose(probed, level, rtol=0, atol=1e-10)
 
 
-def test_pieces_cut_their_shared_edges_alike(backend):
+def test_pieces_cut_their_shared_edges_alike():
     """With a ghost layer, the pieces' owned points of the cut part are the whole's,
     bit for bit, at both ends."""
 

@@ -23,7 +23,14 @@ per attribute and cell type, its function space, basis, order and DOF sharing
   the nodes of Tack's equispaced space of that order (``vtkCellGridEvaluator``'s
   interpolate-only mode), per cell into ``L2``, shared into ``H1``. Where the two
   spaces are the same polynomials (every one but the enriched ``F`` bases and
-  pyramids above order 1, which are left out) this is exact, to rounding.
+  pyramids' other bases, which are left out) this is exact, to rounding.
+- Pyramids' ``HGRAD`` ``C2`` (VTK's 18-node pyramid, Tack's order 2 there), the
+  shape's or an attribute's, shared or per cell: copied node by node, each VTK
+  node matched to Tack's by its reference coordinates (VTK's ``C2`` basis numbers
+  its corners from ``(1, 1, 0)``, not as the cell's). Copying takes a coefficient
+  as its node's value, as the miniapps write them; VTK's own ``C2`` pyramid basis
+  is 8/9 at its triangle faces' nodes (a VTK bug), so VTK draws such data a little
+  differently inside a pyramid.
 - ``HCURL`` and ``HDIV`` have no Tack space: left out, with a warning.
 
 Reference coordinates: VTK's tensor axes (an edge's, a quad's, a hexahedron's,
@@ -170,6 +177,100 @@ def _resampled(grid, attribute, cell_types, counts, order):
     return (np.concatenate(parts) if parts else np.zeros((0, width))), per_cell
 
 
+#: The reference coordinates of VTK's C2 pyramid nodes (``Basis/HGrad/PyrC2Basis.h``),
+#: in its basis' order: the corners from ``(1, 1, 0)`` round the base, the apex, the
+#: base's edges' and the apex edges' middles in that corner order, the base's
+#: centre, the triangle faces' centroids. Found by evaluating the basis: each
+#: function is 1 at its node (but the face functions, 8/9: a VTK bug).
+_PYRAMID_C2 = np.array([
+    (1, 1, 0), (-1, 1, 0), (-1, -1, 0), (1, -1, 0), (0, 0, 1),
+    (0, 1, 0), (-1, 0, 0), (0, -1, 0), (1, 0, 0),
+    (0.5, 0.5, 0.5), (-0.5, 0.5, 0.5), (-0.5, -0.5, 0.5), (0.5, -0.5, 0.5), (0, 0, 0),
+    (0, 2 / 3, 1 / 3), (-2 / 3, 0, 1 / 3), (0, -2 / 3, 1 / 3), (2 / 3, 0, 1 / 3)])
+#: vtkDGPyr's corners (its C1 basis' nodes).
+_PYRAMID_C1 = np.array([(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0), (0, 0, 1)], float)
+#: Tack's order-2 pyramid nodes by corners: the corners, the edges (shapes' order),
+#: the base's centre, the triangle faces (shapes.Pyramid.quadratic_node).
+_TACK_PYRAMID = ([(j,) for j in range(5)]
+                 + [(0, 1), (1, 2), (2, 3), (3, 0), (0, 4), (1, 4), (2, 4), (3, 4)]
+                 + [(0, 1, 2, 3), (0, 1, 4), (1, 2, 4), (2, 3, 4), (3, 0, 4)])
+
+
+def _pyramid_corner_parameters(shape_info, corners):
+    """Where Tack's corners of a grid's pyramids are in VTK's reference pyramid:
+    ``(5, 3)``, each found by its point among the shape's own nodes (whose places
+    its basis gives: C1's are vtkDGPyr's corners, C2's ``_PYRAMID_C2``). The same
+    for every cell, or refused."""
+    connectivity = shape_info.connectivity
+    places = _PYRAMID_C2 if shape_info.order == 2 else _PYRAMID_C1
+    columns = np.empty((len(corners), 5), np.int64)
+    for j in range(5):
+        hits = connectivity[:, :5] == corners[:, j:j + 1]
+        if not hits.any(axis=1).all():
+            raise NotImplementedError("a pyramid whose corners are not its shape's corners")
+        columns[:, j] = hits.argmax(axis=1)
+    if len(columns) and not (columns == columns[0]).all():
+        raise NotImplementedError("pyramids whose corners sit differently in their shape "
+                                  "from cell to cell")
+    return places[columns[0] if len(columns) else np.arange(5)]
+
+
+def _pyramid_corner_order(shape_info, corners):
+    """The columns of ``corners`` (a grid's pyramids' corners, ``(n, 5)``) that put its
+    corner ``j`` at vtkDGPyr's corner ``j``."""
+    places = _pyramid_corner_parameters(shape_info, corners)
+    order = [int(np.flatnonzero(np.abs(places - target).max(axis=1) < 1e-9)[0])
+             for target in _PYRAMID_C1]
+    if sorted(order) != list(range(5)):
+        raise NotImplementedError("a pyramid's corners are not its shape's corners")
+    return order
+
+
+def _pyramid_node_order(corner_parameters):
+    """For each of Tack's 18 order-2 pyramid nodes, the VTK C2 node at its reference
+    coordinates (Tack's nodes placed by its corners' VTK coordinates: an edge's
+    middle, the base's centre, a face's centroid)."""
+    order = np.empty(18, np.int64)
+    for k, by in enumerate(_TACK_PYRAMID):
+        place = corner_parameters[list(by)].mean(axis=0)
+        found = np.flatnonzero(np.abs(_PYRAMID_C2 - place).max(axis=1) < 1e-9)
+        if len(found) != 1:
+            raise NotImplementedError("a pyramid's corners do not make VTK's reference "
+                                      "pyramid")
+        order[k] = found[0]
+    return order
+
+
+def _copied_pyramids(grid, attribute, info, cell_types, counts, corners, shape_infos=None):
+    """An attribute at Tack's order-2 nodes, cell by cell in ``cell_types`` order, as
+    ``_resampled`` gives it: its pyramids' C2 coefficients copied node by node
+    (``_pyramid_node_order``), its other cell types resampled by VTK at order 2;
+    ``info`` its per-type ``_Info`` (the shape's when ``shape_infos`` is ``None``)."""
+    shape_infos = shape_infos or info
+    parts, per_cell = [], []
+    for k, (cell_type, count) in enumerate(zip(cell_types, counts, strict=True)):
+        shape = SHAPES[cell_type]
+        if shape is not shapes.Pyramid:
+            values, sizes = _resampled(grid, attribute, [cell_type], [count], 2)
+            parts.append(values)
+            per_cell += sizes
+            continue
+        per_cell.append(18)
+        if not count:
+            continue
+        order = _pyramid_node_order(_pyramid_corner_parameters(shape_infos[cell_type],
+                                                               corners[k]))
+        width = attribute.GetNumberOfComponents()
+        mine = info[cell_type]
+        if mine.sharing:
+            values = mine.values.reshape(-1, width)[mine.connectivity[:, order]]
+        else:
+            values = mine.values.reshape(count, 18, width)[:, order]
+        parts.append(values.reshape(-1, width))
+    width = attribute.GetNumberOfComponents()
+    return (np.concatenate(parts) if parts else np.zeros((0, width))), per_cell
+
+
 def _corners(grid, cell_type, shape_info):
     """``cell_type``'s cells' corner ids: its cell spec's first corners, or (without
     one) those of a corner-first shape basis's connectivity."""
@@ -208,9 +309,10 @@ def to_dataset(grid, dtype=tack.f32, id_dtype=None, shift=(0.0, 0.0, 0.0)):
             raise NotImplementedError(
                 f"a cell grid's shape is an HGRAD attribute with shared values, not "
                 f"{info.space or 'none'} {'shared' if info.sharing else 'per cell'} on {t}")
-        if info.order > 1 and SHAPES[t] is shapes.Pyramid:
+        if info.order > 1 and SHAPES[t] is shapes.Pyramid and (info.basis, info.order) != ("C", 2):
             raise NotImplementedError(
-                f"a curved pyramid ({info.basis}{info.order}): Tack's pyramids are of order 1")
+                f"a curved pyramid ({info.basis}{info.order}): Tack's curved pyramids are "
+                "VTK's C2 (18 nodes)")
         if info.connectivity is None:
             raise NotImplementedError(f"a cell grid's shape on {t} without a connectivity")
     if len({infos[t].values_name for t in cell_types}) > 1:
@@ -218,6 +320,12 @@ def to_dataset(grid, dtype=tack.f32, id_dtype=None, shift=(0.0, 0.0, 0.0)):
                                   "in different arrays")
     points = infos[cell_types[0]].values.reshape(-1, 3) if cell_types else np.zeros((0, 3))
     corners = [_corners(grid, t, infos[t]) for t in cell_types]
+    for k, t in enumerate(cell_types):
+        if SHAPES[t] is shapes.Pyramid and counts[k]:
+            # Tack's corner j at vtkDGPyr's corner j, whichever order the cell spec
+            # lists them in (a C2 shape's own lists them as its basis does, from
+            # (1, 1, 0)): then Tack's reference pyramid is VTK's, for every attribute.
+            corners[k] = corners[k][:, _pyramid_corner_order(infos[t], corners[k])]
     sizes = [SHAPES[t].NUM_POINTS for t in cell_types]
     n = sum(counts)
     connectivity = np.concatenate([c.reshape(-1) for c in corners]) if corners else \
@@ -242,7 +350,11 @@ def to_dataset(grid, dtype=tack.f32, id_dtype=None, shift=(0.0, 0.0, 0.0)):
     data = DataSet(topology, positions, origin=shift)
     if order > 1:
         space = H1(data, order=order, basis="equispaced")
-        nodes, per_cell = _resampled(grid, shape_attribute, cell_types, counts, order)
+        if any(SHAPES[t] is shapes.Pyramid for t in cell_types):
+            nodes, per_cell = _copied_pyramids(grid, shape_attribute, infos, cell_types,
+                                               counts, corners)
+        else:
+            nodes, per_cell = _resampled(grid, shape_attribute, cell_types, counts, order)
         if len(set(per_cell)) > 1:
             raise NotImplementedError("a curved cell grid of several cell types")
         values = np.zeros((space.size, 3))
@@ -285,11 +397,17 @@ def to_dataset(grid, dtype=tack.f32, id_dtype=None, shift=(0.0, 0.0, 0.0)):
             else:
                 values = np.concatenate([i.values.reshape(-1, width) for i in info.values()])
                 data.fields[name] = Field(L2(data), _array(values, element, dtype))
-        elif space_name in ("HGRAD", "Bezier") and basis != "F" and \
-                shapes.Pyramid not in [SHAPES[t] for t in cell_types]:
-            # Pyramids' other bases are rational (and Tack's order 1 is not): left out.
+        elif space_name in ("HGRAD", "Bezier") and basis != "F" and (
+                shapes.Pyramid not in [SHAPES[t] for t in cell_types]
+                or (space_name, basis, field_order) == ("HGRAD", "C", 2)):
+            # Pyramids' C2 is copied (Tack's order 2 there); their other bases are
+            # rational, or not Tack's: left out.
             target = max(field_order, 1)
-            nodes, per_cell = _resampled(grid, attribute, cell_types, counts, target)
+            if shapes.Pyramid in [SHAPES[t] for t in cell_types]:
+                nodes, per_cell = _copied_pyramids(grid, attribute, info, cell_types, counts,
+                                                   corners, shape_infos=infos)
+            else:
+                nodes, per_cell = _resampled(grid, attribute, cell_types, counts, target)
             if shared and target == 1:
                 space = H1(data)
                 values = np.zeros((len(points), width))
@@ -354,6 +472,34 @@ def _host(values, width):
     from tack import arrays
 
     return np.asarray(arrays.to_host(arrays.materialize(values)), np.float64).reshape(-1, width)
+
+
+def _nodes_written(shape, order):
+    """The nodes of ``shape`` a written attribute of ``order`` holds a cell: VTK's
+    order-2 pyramid's 18, else Tack's equispaced lattice's."""
+    return 18 if shape is shapes.Pyramid else len(_lattice(shape, order))
+
+
+def _basis_written(shape, order):
+    """``(basis, order)`` an attribute of ``order`` is written in on ``shape``: VTK's C2
+    on pyramids (it has no arbitrary-order pyramid), its arbitrary-order A elsewhere."""
+    if shape is shapes.Pyramid:
+        if order != 2:
+            raise NotImplementedError(f"a pyramid of order {order} in a cell grid: VTK's "
+                                      "pyramids are of order 1 or 2 (C)")
+        return "C", 2
+    return "A", order
+
+
+def _to_vtk_order(shape, rows):
+    """``rows`` (a row a cell, Tack's nodes along axis 1) in VTK's numbering: a pyramid's
+    in its C2 basis' order, Tack's corners being vtkDGPyr's; other shapes' as they are."""
+    if shape is not shapes.Pyramid:
+        return rows
+    order = _pyramid_node_order(_PYRAMID_C1)
+    out = np.empty_like(rows)
+    out[:, order] = rows
+    return out
 
 
 def to_cell_grid(data):
@@ -422,11 +568,13 @@ def to_cell_grid(data):
     left_out = []
 
     def table(space, shape):
-        """Each of ``shape``'s cells' nodes' places in ``space`` (lexicographic)."""
-        per_cell = len(_lattice(shape, space.order))
+        """Each of ``shape``'s cells' nodes' places in ``space`` (lexicographic; a
+        pyramid's in VTK's C2 order)."""
+        per_cell = _nodes_written(shape, space.order)
         if len(present) > 1:
             raise NotImplementedError("a curved or high-order cell grid of several shapes")
-        return _h1_indices(data, space, per_cell)[cells[shape]]
+        ids = _h1_indices(data, space, per_cell)[cells[shape]]
+        return _to_vtk_order(shape, ids)
 
     def attribute(name, width, shape_attribute=False):
         out = vtkCellAttribute()
@@ -462,7 +610,7 @@ def to_cell_grid(data):
         for shape in present:
             ids = _vtk_array(table(equispaced, shape), f"{out.GetName().Data()} conn", ids=True)
             grid.GetAttributes(CELL_TYPES[shape]).AddArray(ids)
-            out.SetCellTypeInfo(CELL_TYPES[shape], group, "HGRAD", "A", space.order)
+            out.SetCellTypeInfo(CELL_TYPES[shape], group, "HGRAD", *_basis_written(shape, space.order))
             out.SetArrayForCellTypeAndRole(CELL_TYPES[shape], "values", array)
             out.SetArrayForCellTypeAndRole(CELL_TYPES[shape], "connectivity", ids)
 
@@ -475,16 +623,18 @@ def to_cell_grid(data):
             field = project(data, field, space)
         values = _host(field.values, width)
         def count(shape):
-            return shape.NUM_POINTS if target == 1 else len(_lattice(shape, target))
+            return shape.NUM_POINTS if target == 1 else _nodes_written(shape, target)
 
         starts = np.concatenate([[0], np.cumsum([count(by_id[int(t)]) for t in types])])
         for shape in present:
             n = count(shape)
-            rows = np.stack([values[starts[c]:starts[c] + n].reshape(-1) for c in cells[shape]])
-            array = _vtk_array(rows, out.GetName().Data())
+            rows = np.stack([values[starts[c]:starts[c] + n] for c in cells[shape]])
+            if target > 1:
+                rows = _to_vtk_order(shape, rows)
+            array = _vtk_array(rows.reshape(len(rows), -1), out.GetName().Data())
             grid.GetAttributes(CELL_TYPES[shape]).AddArray(array)
-            out.SetCellTypeInfo(CELL_TYPES[shape], "", "HGRAD", "C" if target == 1 else "A",
-                                target)
+            out.SetCellTypeInfo(CELL_TYPES[shape], "", "HGRAD",
+                                *(("C", 1) if target == 1 else _basis_written(shape, target)))
             out.SetArrayForCellTypeAndRole(CELL_TYPES[shape], "values", array)
 
     shape = attribute("shape", 3, shape_attribute=True)

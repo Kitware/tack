@@ -243,15 +243,19 @@ def _h1_indices(data, space, per_cell):
     """``(cells, nodes)``: where ``space`` keeps each cell's lexicographic node (the
     nodes it stores: serendipity's corners and edges)."""
     from tack.arrays import ConstantArray
-    from tack.dataset import Field, bases
+    from tack.dataset import Field, bases, shapes
     from tack.dataset.ids import at_least
 
     indices = tack.empty((data.num_cells * per_cell,), at_least(data.id_dtype, space.size))
     field = Field(space, ConstantArray(0.0, space.size))
     for group in data.launch_groups("cells", [field]):
         if group.count:
-            order = bases.view_order(group.shape, space.order, space._any_order(group.shape))
-            order = order[space.stored_nodes(group.shape)]      # serendipity's own
+            if group.shape is shapes.Pyramid:
+                order = np.arange(per_cell)          # order 2's nodes, in the view's order
+            else:
+                order = bases.view_order(group.shape, space.order,
+                                         space._any_order(group.shape))
+                order = order[space.stored_nodes(group.shape)]      # serendipity's own
             _tensor_layout(data.domain_view("cells", group), field.view(group),
                            tack.array(np.asarray(order, np.int32)), indices, per_cell)
     return indices.numpy().reshape(data.num_cells, per_cell)

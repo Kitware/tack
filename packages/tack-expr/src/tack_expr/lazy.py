@@ -15,8 +15,7 @@ again, over the fields carried there, and writers store its values.
 
 import itertools
 import re
-
-import numpy as np
+import warnings
 
 import tack
 import tack.dataset as td
@@ -49,13 +48,22 @@ class ExpressionSpace(Space):
 
     def rebind(self, field, data):
         """The expression on ``data``, a filter's output, over the fields carried there;
-        None where one of them was not."""
+        None, with a warning, where one of them was not."""
+        names = {}
+        for bound, f in self.names.items():
+            stored = next((n for n, g in self._data.fields.items() if g is f), None)
+            if stored is None or stored not in data.fields:
+                warnings.warn(f"{self.text!r} is not carried to the output: a field it reads is not there",
+                              stacklevel=2)
+                return None
+            names[bound] = data.fields[stored]
         try:
-            with P.bound({**(P._BINDINGS.get() or {}), **self.names}):
+            with P.bound({**(P._BINDINGS.get() or {}), **names}):
                 f = _field(self.text, data)
-        except (P.ExprError, KeyError, TypeError, ValueError):
+        except (P.ExprError, KeyError, TypeError, ValueError) as error:
+            warnings.warn(f"{self.text!r} is not carried to the output: {error}", stacklevel=2)
             return None
-        f.space.names = self.names
+        f.space.names = {**f.space.names, **names}
         return td.Field(f.space, f.values, field.unit)
 
     def stored(self, field, data):
@@ -124,7 +132,7 @@ def field(text, data=None, fields=None, units=None):
         text, names, unit = _front.prepare(text, data, fields, units)
         with P.bound({**(P._BINDINGS.get() or {}), **names}):
             f = _field(text, data)
-        f.space.names = names
+        f.space.names = {**f.space.names, **names}
         return td.Field(f.space, f.values, unit)
     return _field(text, data)
 
@@ -178,9 +186,10 @@ def _field(text, data):
     space.integration_order = 2 * space.default_subdivision
     space.source = source
     space.text = text
-    space.names = {}
-    real = np.float64 if data.dtype is tack.f64 else np.float32
-    return td.Field(space, tack.zeros((data.num_cells,), tack.f64 if real is np.float64 else tack.f32))
+    # The bound fields it reads, so a later expression or a filter's output can read it again.
+    space.names = {n: c.bindings[n] for n in c.fields_read if n in c.bindings}
+    dtype = tack.f64 if data.dtype is tack.f64 else tack.f32
+    return td.Field(space, tack.zeros((data.num_cells,), dtype, device=data.device))
 
 
 def _derivative_methods(text, data, parts):
@@ -246,7 +255,7 @@ class _Ranges:
             return None
         if name not in self.keys:
             self.keys[name] = len(self.args)
-            getter = (lambda d, m, f=field: f) if name in self.bindings else (lambda d, m, n=name: d.fields[n])
+            getter = (lambda d, m, f=field: f) if name in self.bindings else (lambda d, m, n=name: P._named_field(d, n, "cells"))
             self.args.append(("field", getter))
             k = len(self.lines)
             self.lines.append(f"rl{k}, rh{k} = self.R{self.keys[name]}.value_range(c)")
@@ -326,7 +335,7 @@ class _Ranges:
             return self.tmp(f"{fn}({lo}, {bl})", f"{fn}({hi}, {bh})")
         if fn == "clamp" and len(ranges) == 3:
             (xl, xh), (cl, ch) = ranges[1], ranges[2]
-            return self.tmp(f"min(max({xl}, {lo}), {ch})", f"min(max({xh}, {lo}), {ch})")
+            return self.tmp(f"min(max({xl}, {lo}), {cl})", f"min(max({xh}, {hi}), {ch})")
         if fn == "if" and len(ranges) == 3:
             (al, ah), (bl, bh) = ranges[1], ranges[2]
             return self.tmp(f"min({al}, {bl})", f"max({ah}, {bh})")

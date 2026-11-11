@@ -286,10 +286,14 @@ class Derivative:
         if fn == "clamp":
             check(S, S, S)
             v = self.emit(f"min(max({c[1]}, {c[0]}), {c[2]})", S)
-            if g[1] is None:
+            if all(x is None for x in g):
                 return v, S, None
-            inside = self.emit(f"tack.select({c[1]} > {c[0]}, tack.select({c[1]} < {c[2]}, 1.0, 0.0), 0.0)", S)
-            return v, S, self.d(f"{inside} * {g[1]}")
+            # The derivative of whichever of lo, x and hi the value is.
+            top = self.emit(f"tack.select(max({c[1]}, {c[0]}) >= {c[2]}, 1.0, 0.0)", S)
+            above = self.emit(f"(1.0 - {top}) * tack.select({c[1]} > {c[0]}, 1.0, 0.0)", S)
+            return v, S, self.sum([f"(1.0 - {top} - {above}) * {g[0]}" if g[0] else None,
+                                   f"{above} * {g[1]}" if g[1] else None,
+                                   f"{top} * {g[2]}" if g[2] else None], S)
         if fn == "not":
             check(S)
             return self.emit(f"tack.select({c[0]} == 0.0, 1.0, 0.0)", S), S, None

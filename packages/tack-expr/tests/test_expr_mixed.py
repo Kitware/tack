@@ -55,14 +55,14 @@ def _meshes():
 
 @pytest.mark.parametrize("text, at", [("cells(s)", "cells"), ("C * 2 + 1", "cells"),
                                       ("points(C)", "points"), ("mag(v) + s", "points")])
-def test_expressions_on_shapes_beside_polyhedra(backend, text, at):
+def test_expressions_on_shapes_beside_polyhedra(f64_backend, text, at):
     hexes, mixed = _meshes()
     expected = fx.evaluate(text, hexes, at=at).values.numpy()
     np.testing.assert_allclose(fx.evaluate(text, mixed, at=at).values.numpy(), expected,
                                rtol=1e-12)
 
 
-def test_an_expression_needing_a_basis_names_the_polyhedra(backend):
+def test_an_expression_needing_a_basis_names_the_polyhedra(f64_backend):
     _, mixed = _meshes()
     with pytest.raises(fx.ExprError, match="polyhedral cells have no parametric coordinates"):
         fx.evaluate("grad(s)", mixed, at="cells")

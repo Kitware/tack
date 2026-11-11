@@ -275,22 +275,24 @@ class Second:
         if fn == "atan2":
             want(2)
             y, x = self.scalar(a[0], pos), self.scalar(a[1], pos)
-            q = self.mul(y, self.recip(x))
+            # atan2(y, x) = 2 atan(y / (r + x)), finite at x = 0 off the branch cut
+            r2 = self.add(self.mul(x, x), self.mul(y, y))
+            s = self.e(f"sqrt({r2[0]})")
+            r = self.chain(s, r2, f"0.5 / {s}", f"-0.25 / ({s} * {s} * {s})")
+            q = self.mul(y, self.recip(self.add(r, x)))
             c = q[0]
-            r = self.chain(self.e(f"atan2({y[0]}, {x[0]})"), q, f"1.0 / (1.0 + {c} * {c})",
-                           f"-2.0 * {c} / ((1.0 + {c} * {c}) * (1.0 + {c} * {c}))")
-            return r
+            return self.chain(self.e(f"atan2({y[0]}, {x[0]})"), q, f"2.0 / (1.0 + {c} * {c})",
+                              f"-4.0 * {c} / ((1.0 + {c} * {c}) * (1.0 + {c} * {c}))")
         if fn == "pow":
             want(2)
             return self.power(self.scalar(a[0], pos), self.scalar(a[1], pos))
         if fn == "clamp":
             want(3)
             lo, x, hi = (self.scalar(t, pos) for t in a)
-            m = self.e(f"tack.select({x[0]} > {lo[0]}, tack.select({x[0]} < {hi[0]}, 1.0, 0.0), 0.0)")
-            v = self.e(f"min(max({x[0]}, {lo[0]}), {hi[0]})")
-            g = self.e(f"{m} * {x[1]}") if x[1] else None
-            H = self.e(f"{m} * {x[2]}") if x[2] else None
-            return (v, g, H)
+            # the derivatives of whichever of lo, x and hi the value is
+            low = self.blend(self.e(f"tack.select({x[0]} > {lo[0]}, 1.0, 0.0)"), x, lo)
+            _, g, H = self.blend(self.e(f"tack.select({low[0]} >= {hi[0]}, 1.0, 0.0)"), hi, low)
+            return (self.e(f"min(max({x[0]}, {lo[0]}), {hi[0]})"), g, H)
         if fn in ("dot", "mag2", "mag", "norm", "cross"):
             if fn == "dot":
                 want(2)

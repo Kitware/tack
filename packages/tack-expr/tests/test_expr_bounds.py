@@ -41,7 +41,8 @@ def data(backend):
 
 
 EXPRESSIONS = ("u * T + 1", "exp(-u) - T ^ 2", "abs(u) * k - sqrt(abs(T))", "max(u, T) / 2 - min(u, 0.1)",
-               "if(T > 0, u, -u) + sin(T)", "(u - 0.2) ^ 3")
+               "if(T > 0, u, -u) + sin(T)", "(u - 0.2) ^ 3",
+               "clamp(T, u - 3, T + k)", "clamp(T - 3, u, T)")
 
 
 @pytest.mark.parametrize("text", EXPRESSIONS)

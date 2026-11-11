@@ -3289,6 +3289,8 @@
       
         
       
+        
+      
     
     
     
@@ -4332,6 +4334,34 @@
     
   
     Glossary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/deprecations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deprecations
   
 
     
@@ -7864,7 +7894,7 @@ so the paths are the whole mesh's, up to rounding, wherever a step
 a particle crosses by the short step to the boundary and the push out, so
 it differs by about a step. Pieces whose shared faces are not one surface
 (a hexahedron's bilinear face against a polyhedron's fanned one, in a
-<code>polyhedral="split"</code> reading) leave slivers that no piece holds: a particle
+deprecated <code>polyhedral="split"</code> reading) leave slivers that no piece holds: a particle
 pushed into one goes on from where the push would have ended going the way
 to the boundary again, if a piece holds that, the move counted in its time
 and length and drawn in its stretch. <code>advect</code> returns a <code>PartitionedDataSet</code> of the
@@ -7913,7 +7943,7 @@ surfaces search the bins as before, and polyhedra after their last cell.</p>
 <tbody>
 <tr>
 <td><code>tack.interop.vtk.vtk_to_dataset(grid, dtype=tack.f32, polyhedral=None, orient=False, id_dtype=None, merge_points=None)</code></td>
-<td>a <code>vtkUnstructuredGrid</code>, <code>vtkPolyData</code> (as the unstructured grid of its cells; strips as their triangles), rectilinear grid or image (<code>vtkImageData</code>, as <code>UniformCoordinates</code>). Point data becomes <code>H1</code>, cell data <code>Constant</code>. A grid with polyhedra becomes polyhedral (<code>polyhedral=True</code> forces it); <code>orient</code> repairs inconsistent winding; <code>merge_points</code> (<code>True</code> or a tolerance) merges an unstructured grid's coincident points first</td>
+<td>a <code>vtkUnstructuredGrid</code>, <code>vtkPolyData</code> (as the unstructured grid of its cells; strips as their triangles), rectilinear grid or image (<code>vtkImageData</code>, as <code>UniformCoordinates</code>). Point data becomes <code>H1</code>, cell data <code>Constant</code>. A grid with polyhedra holds them beside its shaped cells, and polygons stand beside triangles and quads, in one <code>UnstructuredTopology</code> (<code>polyhedral="all"</code> makes every cell a polyhedron or polygon); <code>orient</code> repairs inconsistent winding; <code>merge_points</code> (<code>True</code> or a tolerance) merges an unstructured grid's coincident points first</td>
 </tr>
 <tr>
 <td><code>tack.interop.vtk.dataset_to_vtk(data)</code></td>

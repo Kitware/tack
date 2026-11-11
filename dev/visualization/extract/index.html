@@ -3476,6 +3476,8 @@
       
         
       
+        
+      
     
     
     
@@ -4082,6 +4084,34 @@
     
   
     Glossary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/deprecations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deprecations
   
 
     
@@ -5469,8 +5499,13 @@ the normal points to, and <code>clip(data, sphere)</code> keeps the outside. Pas
 <code>inside=True</code> to keep the inside of a function's region. <code>extract_geometry</code>,
 below, is the other way round: it keeps the inside by default.</p>
 <p>A polyhedral mesh is clipped into polyhedra: each cut cell becomes the
-polyhedron of its kept part, capped by its iso-polygons. Polygon and polyline
-meshes are not clipped yet. The full signature is in the
+polyhedron of its kept part, capped by its iso-polygons. A mesh with polyhedra
+beside shaped cells (as <code>vtk_to_dataset</code> reads one) keeps each whole shape as
+it is, but every cut cell, shaped or not, becomes a polyhedron: a cut
+hexahedron's pieces would not meet a neighbouring polyhedron's clipped face, so
+the output is a mixed mesh of whole shapes and polyhedra, where clipping a
+mesh of shapes alone cuts each cell into the clip tables' shapes. Polygon and
+polyline meshes are not clipped yet. The full signature is in the
 <a href="../../vis-guide/reference/algorithms/#tack.dataset.algorithms.clip.clip">reference</a>.</p>
 <h2 id="keep-cells-whose-field-lies-in-a-range">Keep cells whose field lies in a range<a class="headerlink" href="#keep-cells-whose-field-lies-in-a-range" title="Permanent link">&para;</a></h2>
 <p><code>threshold(data, field, lower, upper)</code> keeps the cells whose field lies in

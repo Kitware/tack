@@ -3482,6 +3482,8 @@
       
         
       
+        
+      
     
     
     
@@ -4088,6 +4090,34 @@
     
   
     Glossary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/deprecations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deprecations
   
 
     
@@ -5425,7 +5455,7 @@ the cell's points. That decides which fields these cells can hold.</p>
 element. Projecting between point data and cell data works in both
 directions (see <a href="../../visualization/derive/">Derive</a>).</p>
 <h2 id="what-a-cell-must-be">What a cell must be<a class="headerlink" href="#what-a-cell-must-be" title="Permanent link">&para;</a></h2>
-<p>Tack checks what it can, and refuses cells it cannot work in. Three
+<p>Tack checks what it can, and refuses cells it cannot work in. Four
 conditions matter.</p>
 <p><strong>Faces are wound outward.</strong> Each face's points run counterclockwise seen
 from outside the cell, as VTK specifies. A cell wound inward has a negative
@@ -5443,6 +5473,11 @@ inside out and overlap the others. Concave cells are fine as long as this
 holds, as the dented cube shows. A C-shaped prism, whose points' mean lies
 in its notch, is not. The cell locator refuses such cells, and so do
 <code>probe</code> and advection, which use it.</p>
+<p><strong>A face belongs to at most two cells.</strong> A face (an edge, in 2D) shared by
+three cells or more is refused when the faces are derived, whatever the
+cells are: polyhedra, polygons, shaped cells, or shaped cells beside
+polyhedra or polygons. So is a face two cells claim the same side of. VTK
+allows such non-manifold faces; Tack has no use for them yet (#308).</p>
 <p><strong>A warped face is its fan.</strong> A face whose points do not lie in one plane is
 taken as the fan of triangles from its face point. Volumes, normals and
 fluxes are those of that surface.</p>
@@ -5561,9 +5596,8 @@ the same moved hexahedra cost this many times their time as hexahedra
 </tbody>
 </table>
 <p>So keep shaped cells as shapes where you can. A VTK grid that mixes shapes
-and polyhedra can be read as two pieces over the same points with
-<code>vtk_to_dataset(grid, polyhedral="split")</code>: the shaped cells in one piece,
-the polyhedra in the other, each on its fastest path.</p>
+and polyhedra reads that way by default: the polyhedra beside the shaped cells
+in one <code>UnstructuredTopology</code>, each cell on its fastest path.</p>
 <h3 id="limits">Limits<a class="headerlink" href="#limits" title="Permanent link">&para;</a></h3>
 <p>Polyhedra, polygons and polylines hold fields of order 1 and cell data, and
 nothing of higher order. Higher-order polygons and polyhedra, such as VTK's

@@ -3465,6 +3465,8 @@
       
         
       
+        
+      
     
     
     
@@ -4071,6 +4073,34 @@
     
   
     Glossary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/deprecations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deprecations
   
 
     
@@ -5477,8 +5507,10 @@ own:</p>
 </tbody>
 </table>
 <p>Triangles and quads are polygons too, and a line is a two-point polyline.
-These topologies hold one kind of cell each, so polygons cannot sit beside
-tetrahedra in one mesh. A field on such cells is linear on pieces of each
+These topologies hold one kind of cell each. An <code>UnstructuredTopology</code> may
+also hold polyhedra beside solid shapes, or polygons beside triangles and
+quads, and that is how <code>vtk_to_dataset</code> reads them; polygons still cannot sit
+beside tetrahedra in one mesh. A field on such cells is linear on pieces of each
 cell, such as the triangles that fan a polygon from its centre.
 <a href="../polyhedra/">Polyhedra, polygons and polylines</a> explains how values live in them and
 how to build them.</p>
@@ -5505,13 +5537,13 @@ the searches over them.</p>
 </tr>
 <tr>
 <td><code>UnstructuredTopology</code></td>
-<td>any mix of the shapes with a reference element</td>
-<td><code>vtkUnstructuredGrid</code>, or a <code>vtkPolyData</code> of triangles and quads</td>
+<td>any mix of the shapes with a reference element, with polyhedra beside the solids or polygons beside the triangles and quads</td>
+<td><code>vtkUnstructuredGrid</code>, or a <code>vtkPolyData</code> of polygons</td>
 </tr>
 <tr>
 <td><code>PolygonalTopology</code></td>
 <td>polygons</td>
-<td>a <code>vtkPolyData</code> with larger polygons</td>
+<td><code>vtk_to_dataset(..., polyhedral="all")</code> of polygons</td>
 </tr>
 <tr>
 <td><code>PolylineTopology</code></td>
@@ -5521,7 +5553,7 @@ the searches over them.</p>
 <tr>
 <td><code>PolyhedralTopology</code></td>
 <td>polyhedra</td>
-<td>a <code>vtkUnstructuredGrid</code> of <code>VTK_POLYHEDRON</code> cells</td>
+<td><code>vtk_to_dataset(..., polyhedral="all")</code> of a grid with <code>VTK_POLYHEDRON</code> cells</td>
 </tr>
 </tbody>
 </table>

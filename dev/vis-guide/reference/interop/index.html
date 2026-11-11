@@ -3289,6 +3289,8 @@
       
         
       
+        
+      
     
     
     
@@ -3967,6 +3969,34 @@
     
   
     Glossary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/deprecations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deprecations
   
 
     
@@ -4977,26 +5007,24 @@
 This catalog records format mappings and geometric restrictions.</p>
 <h2 id="reading-and-writing-other-formats">Reading and writing other formats<a class="headerlink" href="#reading-and-writing-other-formats" title="Permanent link">&para;</a></h2>
 <p><strong>VTK unstructured grids.</strong> Linear cells read as the shapes above. A grid with
-polyhedra reads as a <code>PolyhedralTopology</code>, every cell a polyhedron of its faces,
-since one topology holds either shapes or polyhedra for now (a topology holding
-both is planned). For a large mesh that mixes them, read it with
-<code>vtk_to_dataset(grid, polyhedral="split")</code>: a <code>PartitionedDataSet</code> of two
-pieces over the same points, the shaped cells as themselves and the polyhedra
-as polyhedra, each point owned by one of them so reductions count it once
-(filters' outputs need <code>generate_global_ids</code> for that, or ghost cells:
-<code>ghost_cells</code> of the two with the shaped piece made polyhedral). A
-CFD mesh of 21M hexahedra and 508K polyhedra reads in under 5 seconds this way
-(with <code>copy=False</code>); read as polyhedra throughout, 27 seconds and 19 GB.</p>
+polyhedra reads as one <code>UnstructuredTopology</code> with the polyhedra beside the
+shaped cells, as VTK holds them: one numbering of points and cells, each cell on
+its own path (a hexahedron through its shape functions, a polyhedron through its
+faces), and a face a hexahedron and a polyhedron share one face with both.
+<code>polyhedral="all"</code> reads every cell as a polyhedron instead, a
+<code>PolyhedralTopology</code>. A CFD mesh of 21M hexahedra and 508K polyhedra reads in
+about 10 seconds this way, with <code>merge_points</code> and <code>orient</code>; as polyhedra
+throughout, in 35. <code>polyhedral="split"</code>, two pieces over the same points, is
+<a href="../../../reference/deprecations/">deprecated</a>: the pieces' surfaces differ where
+a hexahedron and a polyhedron share a face that is not planar, leaving slivers
+no piece holds.</p>
 <p>A mesh written per processor and put together without merging (OpenFOAM's
 <code>foamToVTK</code> of a decomposed case) repeats every point on a processor
 boundary. <code>vtk_to_dataset(grid, merge_points=True)</code> (or a tolerance in VTK's
 coordinates) merges them before anything else is read, as
 <a href="../algorithms/#tack.dataset.algorithms.merge_points.merge_points"><code>merge_points</code></a>
 would after: the polyhedra's faces are matched once, so the boundary is the
-mesh's, and with <code>polyhedral="split"</code> each piece's owned points are decided
-on the merged points, so every point is owned once. Merging after a split
-reading is not the same: ownership was decided on the copies, and the pieces
-merged apart can disagree on it.</p>
+mesh's.</p>
 <p>Cells whose corners are in the reverse of VTK's order -- inside out, with negative
 volumes and inward faces, as some converters write prisms -- are found on every
 read and named in a warning; <code>vtk_to_dataset(grid, orient=True)</code> turns them

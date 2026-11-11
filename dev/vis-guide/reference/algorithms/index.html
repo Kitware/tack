@@ -3289,6 +3289,8 @@
       
         
       
+        
+      
     
     
     
@@ -5196,6 +5198,34 @@
     
   
     Glossary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/deprecations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deprecations
   
 
     
@@ -8324,69 +8354,7 @@ each came from.</p>
 <span class="normal">528</span>
 <span class="normal">529</span>
 <span class="normal">530</span>
-<span class="normal">531</span>
-<span class="normal">532</span>
-<span class="normal">533</span>
-<span class="normal">534</span>
-<span class="normal">535</span>
-<span class="normal">536</span>
-<span class="normal">537</span>
-<span class="normal">538</span>
-<span class="normal">539</span>
-<span class="normal">540</span>
-<span class="normal">541</span>
-<span class="normal">542</span>
-<span class="normal">543</span>
-<span class="normal">544</span>
-<span class="normal">545</span>
-<span class="normal">546</span>
-<span class="normal">547</span>
-<span class="normal">548</span>
-<span class="normal">549</span>
-<span class="normal">550</span>
-<span class="normal">551</span>
-<span class="normal">552</span>
-<span class="normal">553</span>
-<span class="normal">554</span>
-<span class="normal">555</span>
-<span class="normal">556</span>
-<span class="normal">557</span>
-<span class="normal">558</span>
-<span class="normal">559</span>
-<span class="normal">560</span>
-<span class="normal">561</span>
-<span class="normal">562</span>
-<span class="normal">563</span>
-<span class="normal">564</span>
-<span class="normal">565</span>
-<span class="normal">566</span>
-<span class="normal">567</span>
-<span class="normal">568</span>
-<span class="normal">569</span>
-<span class="normal">570</span>
-<span class="normal">571</span>
-<span class="normal">572</span>
-<span class="normal">573</span>
-<span class="normal">574</span>
-<span class="normal">575</span>
-<span class="normal">576</span>
-<span class="normal">577</span>
-<span class="normal">578</span>
-<span class="normal">579</span>
-<span class="normal">580</span>
-<span class="normal">581</span>
-<span class="normal">582</span>
-<span class="normal">583</span>
-<span class="normal">584</span>
-<span class="normal">585</span>
-<span class="normal">586</span>
-<span class="normal">587</span>
-<span class="normal">588</span>
-<span class="normal">589</span>
-<span class="normal">590</span>
-<span class="normal">591</span>
-<span class="normal">592</span>
-<span class="normal">593</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">531</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">contour</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">,</span> <span class="n">value</span><span class="p">,</span> <span class="n">merge_points</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">dimension</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
             <span class="n">subdivision</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">tolerance</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">exact</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Where ``field`` crosses ``value``: a surface of a 3D mesh, as triangles</span>
@@ -8504,78 +8472,16 @@ each came from.</p>
         <span class="k">return</span> <span class="n">_contour_lines</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">,</span> <span class="n">levels</span><span class="p">,</span> <span class="n">nlevels</span><span class="p">,</span> <span class="n">several</span><span class="p">,</span> <span class="n">fields</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">dimension</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
         <span class="k">return</span> <span class="n">_contour_vertices</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">,</span> <span class="n">levels</span><span class="p">,</span> <span class="n">nlevels</span><span class="p">,</span> <span class="n">several</span><span class="p">,</span> <span class="n">merge_points</span><span class="p">,</span> <span class="n">fields</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">data</span><span class="o">.</span><span class="n">topology</span><span class="o">.</span><span class="n">mixed</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">_mixed_contour</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">,</span> <span class="n">levels</span><span class="p">,</span> <span class="n">nlevels</span><span class="p">,</span> <span class="n">several</span><span class="p">,</span> <span class="n">fields</span><span class="p">)</span>
     <span class="k">if</span> <span class="ow">not</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">topology</span><span class="p">,</span> <span class="s2">&quot;reference_cells&quot;</span><span class="p">,</span> <span class="kc">True</span><span class="p">):</span>
         <span class="k">return</span> <span class="n">_polyhedral_contour</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">,</span> <span class="n">levels</span><span class="p">,</span> <span class="n">nlevels</span><span class="p">,</span> <span class="n">several</span><span class="p">,</span> <span class="n">fields</span><span class="p">)</span>
     <span class="n">field</span> <span class="o">=</span> <span class="n">_with_basis</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">)</span>
-    <span class="n">space</span> <span class="o">=</span> <span class="n">field</span><span class="o">.</span><span class="n">space</span>
-    <span class="k">if</span> <span class="ow">not</span> <span class="n">space</span><span class="o">.</span><span class="n">interpolated</span> <span class="ow">or</span> <span class="n">space</span><span class="o">.</span><span class="n">on</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;cells&quot;</span><span class="p">,</span> <span class="s2">&quot;points&quot;</span><span class="p">):</span>
-        <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;contour needs a field with a basis on the cells, not </span><span class="si">{</span><span class="n">space</span><span class="si">!r}</span><span class="s2">&quot;</span><span class="p">)</span>
-    <span class="n">per_cell</span> <span class="o">=</span> <span class="mi">0</span> <span class="k">if</span> <span class="n">space</span><span class="o">.</span><span class="n">continuous</span> <span class="ow">and</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">space</span><span class="p">,</span> <span class="n">H1</span><span class="p">)</span> <span class="k">else</span> <span class="mi">1</span>
-    <span class="n">groups</span> <span class="o">=</span> <span class="p">[</span><span class="n">g</span> <span class="k">for</span> <span class="n">g</span> <span class="ow">in</span> <span class="n">data</span><span class="o">.</span><span class="n">launch_groups</span><span class="p">(</span><span class="s2">&quot;cells&quot;</span><span class="p">,</span> <span class="p">[</span><span class="n">field</span><span class="p">])</span>
-              <span class="k">if</span> <span class="n">g</span><span class="o">.</span><span class="n">count</span> <span class="ow">and</span> <span class="n">g</span><span class="o">.</span><span class="n">shape</span><span class="o">.</span><span class="n">CONTOUR_TRIANGLES</span><span class="p">]</span>
-    <span class="n">n_cells</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">num_cells</span>
-    <span class="n">idt</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">id_dtype</span>
-    <span class="n">odt</span> <span class="o">=</span> <span class="n">ids</span><span class="o">.</span><span class="n">for_output</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="mi">15</span> <span class="o">*</span> <span class="n">n_cells</span> <span class="o">*</span> <span class="n">nlevels</span><span class="p">)</span>     <span class="c1"># up to five triangles a cell</span>
-    <span class="c1"># Keys hold the level beside a point or cell id.</span>
-    <span class="n">kdt</span> <span class="o">=</span> <span class="n">ids</span><span class="o">.</span><span class="n">at_least</span><span class="p">(</span><span class="n">idt</span><span class="p">,</span> <span class="p">(</span><span class="n">n_cells</span> <span class="k">if</span> <span class="n">per_cell</span> <span class="k">else</span> <span class="n">data</span><span class="o">.</span><span class="n">num_points</span><span class="p">)</span> <span class="o">*</span> <span class="n">nlevels</span><span class="p">)</span>
-    <span class="n">counts</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n_cells</span><span class="p">,),</span> <span class="n">tack</span><span class="o">.</span><span class="n">i32</span><span class="p">)</span>
-    <span class="k">for</span> <span class="n">group</span> <span class="ow">in</span> <span class="n">groups</span><span class="p">:</span>
-        <span class="n">_contour_counts</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">domain_view</span><span class="p">(</span><span class="s2">&quot;cells&quot;</span><span class="p">,</span> <span class="n">group</span><span class="p">),</span> <span class="n">field</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">group</span><span class="p">),</span> <span class="n">levels</span><span class="p">,</span> <span class="n">nlevels</span><span class="p">,</span>
-                        <span class="n">counts</span><span class="p">)</span>
-    <span class="n">starts</span><span class="p">,</span> <span class="n">triangles</span> <span class="o">=</span> <span class="n">_scanned</span><span class="p">(</span><span class="n">counts</span><span class="p">,</span> <span class="n">n_cells</span><span class="p">,</span> <span class="n">odt</span><span class="p">)</span>
-
-    <span class="n">n</span> <span class="o">=</span> <span class="mi">3</span> <span class="o">*</span> <span class="n">triangles</span>
-    <span class="n">points</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">n</span><span class="p">,),</span> <span class="n">tack</span><span class="o">.</span><span class="n">vec</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">data</span><span class="o">.</span><span class="n">dtype</span><span class="p">))</span>
-    <span class="n">edges</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">n</span><span class="p">,),</span> <span class="n">tack</span><span class="o">.</span><span class="n">vec</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="n">idt</span><span class="p">))</span>
-    <span class="n">weights</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">n</span><span class="p">,),</span> <span class="n">arrays</span><span class="o">.</span><span class="n">dtype_of</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">values</span><span class="p">))</span>
-    <span class="n">sources</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">n</span><span class="p">,),</span> <span class="n">idt</span><span class="p">)</span>
-    <span class="n">keys</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">n</span><span class="p">,),</span> <span class="n">tack</span><span class="o">.</span><span class="n">vec</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="n">kdt</span><span class="p">))</span>
-    <span class="n">which</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">n</span><span class="p">,),</span> <span class="n">tack</span><span class="o">.</span><span class="n">i32</span><span class="p">)</span>
-    <span class="k">for</span> <span class="n">group</span> <span class="ow">in</span> <span class="n">groups</span><span class="p">:</span>
-        <span class="n">_contour_points</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">domain_view</span><span class="p">(</span><span class="s2">&quot;cells&quot;</span><span class="p">,</span> <span class="n">group</span><span class="p">),</span> <span class="n">field</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">group</span><span class="p">),</span> <span class="n">levels</span><span class="p">,</span> <span class="n">nlevels</span><span class="p">,</span>
-                        <span class="n">per_cell</span><span class="p">,</span> <span class="n">starts</span><span class="p">,</span> <span class="n">points</span><span class="p">,</span> <span class="n">edges</span><span class="p">,</span> <span class="n">weights</span><span class="p">,</span> <span class="n">sources</span><span class="p">,</span> <span class="n">keys</span><span class="p">,</span> <span class="n">which</span><span class="p">)</span>
-    <span class="k">del</span> <span class="n">counts</span><span class="p">,</span> <span class="n">starts</span>                    <span class="c1"># the cells&#39; bookkeeping, before the merge</span>
-    <span class="k">if</span> <span class="n">triangles</span><span class="p">:</span>
-        <span class="n">keep</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">triangles</span><span class="p">,),</span> <span class="n">tack</span><span class="o">.</span><span class="n">i32</span><span class="p">)</span>
-        <span class="n">_distinct_triangles</span><span class="p">(</span><span class="n">keys</span><span class="p">,</span> <span class="n">keep</span><span class="p">)</span>
-        <span class="n">slots</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">triangles</span><span class="p">,),</span> <span class="n">odt</span><span class="p">)</span>
-        <span class="n">kept</span> <span class="o">=</span> <span class="n">exclusive_scan</span><span class="p">(</span><span class="n">keep</span><span class="p">,</span> <span class="n">slots</span><span class="p">,</span> <span class="n">triangles</span><span class="p">)</span>
-        <span class="k">if</span> <span class="n">kept</span> <span class="o">&lt;</span> <span class="n">triangles</span><span class="p">:</span>
-            <span class="n">arrays_in</span> <span class="o">=</span> <span class="p">(</span><span class="n">points</span><span class="p">,</span> <span class="n">edges</span><span class="p">,</span> <span class="n">weights</span><span class="p">,</span> <span class="n">sources</span><span class="p">,</span> <span class="n">keys</span><span class="p">,</span> <span class="n">which</span><span class="p">)</span>
-            <span class="n">arrays_out</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">_like</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="mi">3</span> <span class="o">*</span> <span class="n">kept</span><span class="p">)</span> <span class="k">for</span> <span class="n">a</span> <span class="ow">in</span> <span class="n">arrays_in</span><span class="p">)</span>
-            <span class="n">_kept_triangles</span><span class="p">(</span><span class="n">keep</span><span class="p">,</span> <span class="n">slots</span><span class="p">,</span> <span class="o">*</span><span class="n">arrays_in</span><span class="p">,</span> <span class="o">*</span><span class="n">arrays_out</span><span class="p">)</span>
-            <span class="c1"># The copies alone from here: the tuple held the originals through</span>
-            <span class="c1"># the merge.</span>
-            <span class="k">del</span> <span class="n">arrays_in</span>
-            <span class="n">points</span><span class="p">,</span> <span class="n">edges</span><span class="p">,</span> <span class="n">weights</span><span class="p">,</span> <span class="n">sources</span><span class="p">,</span> <span class="n">keys</span><span class="p">,</span> <span class="n">which</span> <span class="o">=</span> <span class="n">arrays_out</span>
-            <span class="k">del</span> <span class="n">arrays_out</span>
-            <span class="n">triangles</span><span class="p">,</span> <span class="n">n</span> <span class="o">=</span> <span class="n">kept</span><span class="p">,</span> <span class="mi">3</span> <span class="o">*</span> <span class="n">kept</span>
-        <span class="k">del</span> <span class="n">keep</span><span class="p">,</span> <span class="n">slots</span>
-    <span class="n">triangle_cells</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">triangles</span><span class="p">,),</span> <span class="n">idt</span><span class="p">)</span>
-    <span class="n">triangle_levels</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">triangles</span><span class="p">,),</span> <span class="n">tack</span><span class="o">.</span><span class="n">i32</span><span class="p">)</span>
-    <span class="k">if</span> <span class="n">triangles</span><span class="p">:</span>
-        <span class="n">_triangle_cells</span><span class="p">(</span><span class="n">sources</span><span class="p">,</span> <span class="n">which</span><span class="p">,</span> <span class="n">triangle_cells</span><span class="p">,</span> <span class="n">triangle_levels</span><span class="p">)</span>
-
-    <span class="k">if</span> <span class="n">merge_points</span> <span class="ow">and</span> <span class="n">n</span><span class="p">:</span>
-        <span class="c1"># A key is the edge&#39;s (low, high) points, or (within cells) (cell, local edge),</span>
-        <span class="c1"># its first part times the levels plus the level.</span>
-        <span class="n">order</span> <span class="o">=</span> <span class="n">key_order</span><span class="p">(</span><span class="n">keys</span><span class="p">,</span> <span class="p">(</span><span class="n">n_cells</span> <span class="k">if</span> <span class="n">per_cell</span> <span class="k">else</span> <span class="n">data</span><span class="o">.</span><span class="n">num_points</span><span class="p">)</span> <span class="o">*</span> <span class="n">nlevels</span><span class="p">,</span>
-                                <span class="n">odt</span><span class="p">)</span>
-        <span class="n">offsets</span><span class="p">,</span> <span class="n">count</span> <span class="o">=</span> <span class="n">run_offsets</span><span class="p">(</span><span class="n">keys</span><span class="p">,</span> <span class="n">order</span><span class="p">)</span>
-        <span class="n">merged</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">count</span><span class="p">,),</span> <span class="n">tack</span><span class="o">.</span><span class="n">vec</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">data</span><span class="o">.</span><span class="n">dtype</span><span class="p">))</span>
-        <span class="n">merged_edges</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">count</span><span class="p">,),</span> <span class="n">tack</span><span class="o">.</span><span class="n">vec</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="n">idt</span><span class="p">))</span>
-        <span class="n">merged_weights</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">count</span><span class="p">,),</span> <span class="n">weights</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
-        <span class="n">_first_of_runs</span><span class="p">(</span><span class="n">order</span><span class="p">,</span> <span class="n">offsets</span><span class="p">,</span> <span class="n">points</span><span class="p">,</span> <span class="n">edges</span><span class="p">,</span> <span class="n">weights</span><span class="p">,</span> <span class="n">merged</span><span class="p">,</span> <span class="n">merged_edges</span><span class="p">,</span>
-                       <span class="n">merged_weights</span><span class="p">,</span> <span class="n">count</span><span class="p">)</span>
-        <span class="n">rows</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">n</span><span class="p">,),</span> <span class="n">odt</span><span class="p">)</span>
-        <span class="n">_run_of_each</span><span class="p">(</span><span class="n">order</span><span class="p">,</span> <span class="n">offsets</span><span class="p">,</span> <span class="n">rows</span><span class="p">,</span> <span class="n">count</span><span class="p">)</span>
-        <span class="n">points</span><span class="p">,</span> <span class="n">edges</span><span class="p">,</span> <span class="n">weights</span> <span class="o">=</span> <span class="n">merged</span><span class="p">,</span> <span class="n">merged_edges</span><span class="p">,</span> <span class="n">merged_weights</span>
-    <span class="k">else</span><span class="p">:</span>
-        <span class="n">rows</span><span class="p">,</span> <span class="n">count</span> <span class="o">=</span> <span class="n">CountingArray</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">odt</span><span class="p">),</span> <span class="n">n</span>          <span class="c1"># each triangle its own points</span>
-
+    <span class="p">(</span><span class="n">rows</span><span class="p">,</span> <span class="n">count</span><span class="p">,</span> <span class="n">edges</span><span class="p">,</span> <span class="n">weights</span><span class="p">,</span> <span class="n">points</span><span class="p">,</span> <span class="n">triangle_cells</span><span class="p">,</span> <span class="n">triangle_levels</span><span class="p">,</span>
+     <span class="n">triangles</span><span class="p">)</span> <span class="o">=</span> <span class="n">_triangle_parts</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">,</span> <span class="n">levels</span><span class="p">,</span> <span class="n">nlevels</span><span class="p">,</span> <span class="n">merge_points</span><span class="p">)</span>
     <span class="c1"># Every cell a triangle, three points each: the types and offsets are</span>
     <span class="c1"># implicit, and the connectivity is the triangles&#39; rows of merged points.</span>
-    <span class="n">types</span><span class="p">,</span> <span class="n">tri_offsets</span> <span class="o">=</span> <span class="n">uniform_cells</span><span class="p">(</span><span class="n">shapes</span><span class="o">.</span><span class="n">TRIANGLE</span><span class="p">,</span> <span class="n">triangles</span><span class="p">,</span> <span class="n">odt</span><span class="p">)</span>
+    <span class="n">types</span><span class="p">,</span> <span class="n">tri_offsets</span> <span class="o">=</span> <span class="n">uniform_cells</span><span class="p">(</span><span class="n">shapes</span><span class="o">.</span><span class="n">TRIANGLE</span><span class="p">,</span> <span class="n">triangles</span><span class="p">,</span> <span class="n">arrays</span><span class="o">.</span><span class="n">dtype_of</span><span class="p">(</span><span class="n">rows</span><span class="p">))</span>
     <span class="n">surface</span> <span class="o">=</span> <span class="n">UnstructuredTopology</span><span class="p">(</span><span class="n">types</span><span class="p">,</span> <span class="n">tri_offsets</span><span class="p">,</span> <span class="n">rows</span><span class="p">,</span> <span class="n">num_points</span><span class="o">=</span><span class="n">count</span><span class="p">)</span>
     <span class="k">return</span> <span class="n">_with_levels</span><span class="p">(</span><span class="n">carry</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">surface</span><span class="p">,</span> <span class="n">points</span><span class="o">=</span><span class="n">Interpolate</span><span class="p">(</span><span class="n">edges</span><span class="p">,</span> <span class="n">weights</span><span class="p">),</span>
                               <span class="n">cells</span><span class="o">=</span><span class="n">Pieces</span><span class="p">(</span><span class="n">triangle_cells</span><span class="p">),</span> <span class="n">geometry</span><span class="o">=</span><span class="n">Field</span><span class="p">(</span><span class="n">H1</span><span class="p">(</span><span class="n">surface</span><span class="p">),</span> <span class="n">points</span><span class="p">),</span>
@@ -8792,7 +8698,14 @@ so faces two cells share stay one face) and its iso-polygons -- as
 <code>contour</code> traces them, by López's method -- as caps wound out of it; the
 output is a <code>PolyhedralTopology</code>. A point at exactly <code>value</code> is kept on
 either side (<code>inside</code> keeps at or below). Polygons and polylines are not
-clipped yet.</p>
+clipped yet. Polyhedra beside shapes (a mixed <code>UnstructuredTopology</code>) are
+clipped the same way, and so is every cut shape beside them, since a shape's
+pieces would split faces a polyhedron holds whole; a shape kept whole stays
+as it is, so the output is mixed too, its whole shapes first. There a cell is
+kept only if a point is strictly above <code>value</code> (below, with <code>inside</code>): a
+cell that touches it from the other side is dropped, where the shapes' tables
+(and VTK's) keep a piece of it of no volume, so a clip through a plane of mesh
+points has fewer cells than VTK's, all of its volume.</p>
 <p>A curved geometry or a field above order 1 (or <code>subdivision</code> above 1, or a
 <code>tolerance</code>) is clipped through subdivision, as <code>contour</code> cuts it, and the
 result is <code>PartitionedDataSet([whole, part])</code>: <code>whole</code> the cells the field's
@@ -8971,7 +8884,19 @@ between the lattice values does.</p>
 <span class="normal">416</span>
 <span class="normal">417</span>
 <span class="normal">418</span>
-<span class="normal">419</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">419</span>
+<span class="normal">420</span>
+<span class="normal">421</span>
+<span class="normal">422</span>
+<span class="normal">423</span>
+<span class="normal">424</span>
+<span class="normal">425</span>
+<span class="normal">426</span>
+<span class="normal">427</span>
+<span class="normal">428</span>
+<span class="normal">429</span>
+<span class="normal">430</span>
+<span class="normal">431</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">clip</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">by</span><span class="p">,</span> <span class="n">value</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">inside</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">subdivision</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">tolerance</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
          <span class="n">exact</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;The part of ``data`` where ``by`` -- point data (a field or its name) or an</span>
@@ -8999,7 +8924,14 @@ between the lattice values does.</p>
 <span class="sd">    ``contour`` traces them, by López&#39;s method -- as caps wound out of it; the</span>
 <span class="sd">    output is a ``PolyhedralTopology``. A point at exactly ``value`` is kept on</span>
 <span class="sd">    either side (``inside`` keeps at or below). Polygons and polylines are not</span>
-<span class="sd">    clipped yet.</span>
+<span class="sd">    clipped yet. Polyhedra beside shapes (a mixed ``UnstructuredTopology``) are</span>
+<span class="sd">    clipped the same way, and so is every cut shape beside them, since a shape&#39;s</span>
+<span class="sd">    pieces would split faces a polyhedron holds whole; a shape kept whole stays</span>
+<span class="sd">    as it is, so the output is mixed too, its whole shapes first. There a cell is</span>
+<span class="sd">    kept only if a point is strictly above ``value`` (below, with ``inside``): a</span>
+<span class="sd">    cell that touches it from the other side is dropped, where the shapes&#39; tables</span>
+<span class="sd">    (and VTK&#39;s) keep a piece of it of no volume, so a clip through a plane of mesh</span>
+<span class="sd">    points has fewer cells than VTK&#39;s, all of its volume.</span>
 
 <span class="sd">    A curved geometry or a field above order 1 (or ``subdivision`` above 1, or a</span>
 <span class="sd">    ``tolerance``) is clipped through subdivision, as ``contour`` cuts it, and the</span>
@@ -9016,8 +8948,9 @@ between the lattice values does.</p>
     <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.ghosts</span><span class="w"> </span><span class="kn">import</span> <span class="n">visible</span>
     <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.polyhedra</span><span class="w"> </span><span class="kn">import</span> <span class="n">PolygonalTopology</span><span class="p">,</span> <span class="n">PolyhedralTopology</span>
 
-    <span class="n">polyhedral</span> <span class="o">=</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">topology</span><span class="p">,</span> <span class="n">PolyhedralTopology</span><span class="p">)</span> <span class="ow">and</span> \
-        <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">topology</span><span class="p">,</span> <span class="n">PolygonalTopology</span><span class="p">)</span>
+    <span class="n">mixed</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">topology</span><span class="o">.</span><span class="n">has_polyhedra</span>
+    <span class="n">polyhedral</span> <span class="o">=</span> <span class="n">mixed</span> <span class="ow">or</span> <span class="p">(</span><span class="nb">isinstance</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">topology</span><span class="p">,</span> <span class="n">PolyhedralTopology</span><span class="p">)</span>
+                           <span class="ow">and</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">topology</span><span class="p">,</span> <span class="n">PolygonalTopology</span><span class="p">))</span>
     <span class="k">if</span> <span class="ow">not</span> <span class="n">polyhedral</span> <span class="ow">and</span> <span class="ow">not</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">topology</span><span class="p">,</span> <span class="s2">&quot;reference_cells&quot;</span><span class="p">,</span> <span class="kc">True</span><span class="p">):</span>
         <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s2">&quot;clip takes cells of the linear shapes or polyhedra, not &quot;</span>
                                   <span class="s2">&quot;polygons or polylines&quot;</span><span class="p">)</span>
@@ -9057,6 +8990,10 @@ between the lattice values does.</p>
         <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;clip takes point data or an implicit function, not </span><span class="si">{</span><span class="n">space</span><span class="si">!r}</span><span class="s2">&quot;</span><span class="p">)</span>
     <span class="n">precision</span> <span class="o">=</span> <span class="n">_floating_dtype</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">values</span><span class="p">)</span>
     <span class="n">values</span> <span class="o">=</span> <span class="n">_converted</span><span class="p">(</span><span class="n">_point_values</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">values</span><span class="p">,</span> <span class="n">data</span><span class="o">.</span><span class="n">num_points</span><span class="p">),</span> <span class="n">precision</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">mixed</span><span class="p">:</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.algorithms._clip_polyhedra</span><span class="w"> </span><span class="kn">import</span> <span class="n">clip_mixed</span>
+
+        <span class="k">return</span> <span class="n">clip_mixed</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">arrays</span><span class="o">.</span><span class="n">materialize</span><span class="p">(</span><span class="n">values</span><span class="p">),</span> <span class="nb">float</span><span class="p">(</span><span class="n">value</span><span class="p">),</span> <span class="n">inside</span><span class="p">,</span> <span class="n">fields</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">polyhedral</span><span class="p">:</span>
         <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.algorithms._clip_polyhedra</span><span class="w"> </span><span class="kn">import</span> <span class="n">clip_polyhedra</span>
 
@@ -9279,16 +9216,7 @@ them where the pieces had no ghost cells).</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/algorithms/extract_surface.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">317</span>
-<span class="normal">318</span>
-<span class="normal">319</span>
-<span class="normal">320</span>
-<span class="normal">321</span>
-<span class="normal">322</span>
-<span class="normal">323</span>
-<span class="normal">324</span>
-<span class="normal">325</span>
-<span class="normal">326</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">326</span>
 <span class="normal">327</span>
 <span class="normal">328</span>
 <span class="normal">329</span>
@@ -9376,7 +9304,21 @@ them where the pieces had no ghost cells).</p>
 <span class="normal">411</span>
 <span class="normal">412</span>
 <span class="normal">413</span>
-<span class="normal">414</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">414</span>
+<span class="normal">415</span>
+<span class="normal">416</span>
+<span class="normal">417</span>
+<span class="normal">418</span>
+<span class="normal">419</span>
+<span class="normal">420</span>
+<span class="normal">421</span>
+<span class="normal">422</span>
+<span class="normal">423</span>
+<span class="normal">424</span>
+<span class="normal">425</span>
+<span class="normal">426</span>
+<span class="normal">427</span>
+<span class="normal">428</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">extract_surface</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">faces</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;The ``faces`` -- a face ``Set`` (as ``boundary_faces`` returns), a set&#39;s name</span>
 <span class="sd">    in ``data.sets``, or face ids (a field or an array); by default the boundary</span>
@@ -9440,25 +9382,30 @@ them where the pieces had no ghost cells).</p>
         <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.algorithms.boundary_faces</span><span class="w"> </span><span class="kn">import</span> <span class="n">boundary_faces</span>
         <span class="n">faces</span> <span class="o">=</span> <span class="n">boundary_faces</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
     <span class="n">ids</span> <span class="o">=</span> <span class="n">_face_ids</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">faces</span><span class="p">)</span>
-    <span class="k">if</span> <span class="ow">not</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">topology</span><span class="p">,</span> <span class="s2">&quot;reference_cells&quot;</span><span class="p">,</span> <span class="kc">True</span><span class="p">):</span>
+    <span class="n">topology</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">topology</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">topology</span><span class="p">,</span> <span class="s2">&quot;reference_cells&quot;</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">topology</span><span class="o">.</span><span class="n">mixed</span><span class="p">:</span>
         <span class="k">return</span> <span class="n">_polygon_surface</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">ids</span><span class="p">,</span> <span class="n">fields</span><span class="p">)</span>
-    <span class="n">faces</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">topology</span><span class="o">.</span><span class="n">faces</span><span class="p">()</span>
+    <span class="n">faces</span> <span class="o">=</span> <span class="n">topology</span><span class="o">.</span><span class="n">faces</span><span class="p">()</span>
     <span class="n">idt</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">id_dtype</span>
     <span class="n">n</span> <span class="o">=</span> <span class="n">ids</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="c1"># Polyhedra beside shapes: their faces of five points or more become polygons</span>
+    <span class="c1"># beside the triangles and quads (a mixed surface).</span>
+    <span class="n">face_offsets</span><span class="p">,</span> <span class="n">face_points</span> <span class="o">=</span> <span class="p">((</span><span class="n">topology</span><span class="o">.</span><span class="n">face_offsets</span><span class="p">,</span> <span class="n">topology</span><span class="o">.</span><span class="n">face_points</span><span class="p">)</span>
+                                 <span class="k">if</span> <span class="n">topology</span><span class="o">.</span><span class="n">mixed</span> <span class="k">else</span> <span class="p">(</span><span class="n">ids</span><span class="p">,</span> <span class="n">ids</span><span class="p">))</span>
     <span class="c1"># Up to 4 points a face: past the topology&#39;s own bound (12 a cell) for a</span>
-    <span class="c1"># surface of faces that share no points.</span>
-    <span class="n">odt</span> <span class="o">=</span> <span class="n">id_types</span><span class="o">.</span><span class="n">for_output</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="mi">4</span> <span class="o">*</span> <span class="n">n</span><span class="p">)</span>
+    <span class="c1"># surface of faces that share no points; a polygon&#39;s as many as it has.</span>
+    <span class="n">odt</span> <span class="o">=</span> <span class="n">id_types</span><span class="o">.</span><span class="n">for_output</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="mi">4</span> <span class="o">*</span> <span class="n">n</span> <span class="o">+</span> <span class="p">(</span><span class="n">arrays</span><span class="o">.</span><span class="n">size_of</span><span class="p">(</span><span class="n">face_points</span><span class="p">)</span> <span class="k">if</span> <span class="n">topology</span><span class="o">.</span><span class="n">mixed</span> <span class="k">else</span> <span class="mi">0</span><span class="p">))</span>
     <span class="n">sizes</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">n</span><span class="p">,),</span> <span class="n">tack</span><span class="o">.</span><span class="n">i32</span><span class="p">)</span>
     <span class="n">starts</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">n</span><span class="p">,),</span> <span class="n">odt</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">n</span><span class="p">:</span>
-        <span class="n">_surface_sizes</span><span class="p">(</span><span class="n">ids</span><span class="p">,</span> <span class="n">faces</span><span class="o">.</span><span class="n">kinds</span><span class="p">,</span> <span class="n">sizes</span><span class="p">)</span>
+        <span class="n">_surface_sizes</span><span class="p">(</span><span class="n">ids</span><span class="p">,</span> <span class="n">faces</span><span class="o">.</span><span class="n">kinds</span><span class="p">,</span> <span class="n">face_offsets</span><span class="p">,</span> <span class="n">sizes</span><span class="p">)</span>
     <span class="n">length</span> <span class="o">=</span> <span class="n">exclusive_scan</span><span class="p">(</span><span class="n">sizes</span><span class="p">,</span> <span class="n">starts</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span> <span class="k">if</span> <span class="n">n</span> <span class="k">else</span> <span class="mi">0</span>
     <span class="n">types</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">n</span><span class="p">,),</span> <span class="n">tack</span><span class="o">.</span><span class="n">u8</span><span class="p">)</span>
     <span class="n">offsets</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,),</span> <span class="n">odt</span><span class="p">)</span>
     <span class="n">connectivity</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">length</span><span class="p">,),</span> <span class="n">odt</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">n</span><span class="p">:</span>
-        <span class="n">_surface_cells</span><span class="p">(</span><span class="n">ids</span><span class="p">,</span> <span class="n">faces</span><span class="o">.</span><span class="n">kinds</span><span class="p">,</span> <span class="n">faces</span><span class="o">.</span><span class="n">rows</span><span class="p">,</span> <span class="n">starts</span><span class="p">,</span> <span class="n">types</span><span class="p">,</span> <span class="n">offsets</span><span class="p">,</span> <span class="n">connectivity</span><span class="p">,</span>
-                       <span class="n">length</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span>
+        <span class="n">_surface_cells</span><span class="p">(</span><span class="n">ids</span><span class="p">,</span> <span class="n">faces</span><span class="o">.</span><span class="n">kinds</span><span class="p">,</span> <span class="n">faces</span><span class="o">.</span><span class="n">rows</span><span class="p">,</span> <span class="n">face_offsets</span><span class="p">,</span> <span class="n">face_points</span><span class="p">,</span> <span class="n">starts</span><span class="p">,</span> <span class="n">types</span><span class="p">,</span>
+                       <span class="n">offsets</span><span class="p">,</span> <span class="n">connectivity</span><span class="p">,</span> <span class="n">length</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span>
     <span class="n">cells</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">n</span><span class="p">,),</span> <span class="n">idt</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">n</span><span class="p">:</span>
         <span class="n">_face_cells</span><span class="p">(</span><span class="n">ids</span><span class="p">,</span> <span class="n">faces</span><span class="o">.</span><span class="n">sides</span><span class="p">,</span> <span class="n">cells</span><span class="p">)</span>
@@ -9711,24 +9658,7 @@ left out. The geometry must be <code>H1</code>.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/algorithms/feature_edges.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">108</span>
-<span class="normal">109</span>
-<span class="normal">110</span>
-<span class="normal">111</span>
-<span class="normal">112</span>
-<span class="normal">113</span>
-<span class="normal">114</span>
-<span class="normal">115</span>
-<span class="normal">116</span>
-<span class="normal">117</span>
-<span class="normal">118</span>
-<span class="normal">119</span>
-<span class="normal">120</span>
-<span class="normal">121</span>
-<span class="normal">122</span>
-<span class="normal">123</span>
-<span class="normal">124</span>
-<span class="normal">125</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">125</span>
 <span class="normal">126</span>
 <span class="normal">127</span>
 <span class="normal">128</span>
@@ -9796,7 +9726,28 @@ left out. The geometry must be <code>H1</code>.</p>
 <span class="normal">190</span>
 <span class="normal">191</span>
 <span class="normal">192</span>
-<span class="normal">193</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">193</span>
+<span class="normal">194</span>
+<span class="normal">195</span>
+<span class="normal">196</span>
+<span class="normal">197</span>
+<span class="normal">198</span>
+<span class="normal">199</span>
+<span class="normal">200</span>
+<span class="normal">201</span>
+<span class="normal">202</span>
+<span class="normal">203</span>
+<span class="normal">204</span>
+<span class="normal">205</span>
+<span class="normal">206</span>
+<span class="normal">207</span>
+<span class="normal">208</span>
+<span class="normal">209</span>
+<span class="normal">210</span>
+<span class="normal">211</span>
+<span class="normal">212</span>
+<span class="normal">213</span>
+<span class="normal">214</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">feature_edges</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">angle</span><span class="o">=</span><span class="mf">30.0</span><span class="p">,</span> <span class="n">boundary</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">feature</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">non_manifold</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
                   <span class="n">manifold</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;A surface&#39;s edges of the kinds asked for, as line cells on the same points,</span>
@@ -9845,6 +9796,8 @@ left out. The geometry must be <code>H1</code>.</p>
             <span class="k">if</span> <span class="n">group</span><span class="o">.</span><span class="n">shape</span> <span class="ow">in</span> <span class="n">_ROUND</span><span class="p">:</span>
                 <span class="n">_loop_sizes</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">domain_view</span><span class="p">(</span><span class="s2">&quot;cells&quot;</span><span class="p">,</span> <span class="n">group</span><span class="p">),</span> <span class="nb">len</span><span class="p">(</span><span class="n">_ROUND</span><span class="p">[</span><span class="n">group</span><span class="o">.</span><span class="n">shape</span><span class="p">]),</span> <span class="n">sizes</span><span class="p">,</span>
                             <span class="n">marks</span><span class="p">,</span> <span class="n">hidden</span><span class="p">)</span>
+            <span class="k">elif</span> <span class="n">group</span><span class="o">.</span><span class="n">shape</span> <span class="ow">is</span> <span class="n">shapes</span><span class="o">.</span><span class="n">Polygon</span><span class="p">:</span>                <span class="c1"># beside shapes</span>
+                <span class="n">_own_sizes</span><span class="p">(</span><span class="n">group</span><span class="o">.</span><span class="n">view</span><span class="p">(),</span> <span class="n">sizes</span><span class="p">,</span> <span class="n">marks</span><span class="p">,</span> <span class="n">hidden</span><span class="p">)</span>
         <span class="n">offsets</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">n_cells</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,),</span> <span class="n">tack</span><span class="o">.</span><span class="n">i64</span><span class="p">)</span>
         <span class="n">total</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">exclusive_scan</span><span class="p">(</span><span class="n">sizes</span><span class="p">,</span> <span class="n">offsets</span><span class="p">,</span> <span class="n">n_cells</span><span class="p">,</span> <span class="n">close</span><span class="o">=</span><span class="kc">True</span><span class="p">))</span>
         <span class="n">loops</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">total</span><span class="p">,),</span> <span class="n">idt</span><span class="p">)</span>
@@ -9852,6 +9805,8 @@ left out. The geometry must be <code>H1</code>.</p>
             <span class="k">if</span> <span class="n">group</span><span class="o">.</span><span class="n">shape</span> <span class="ow">in</span> <span class="n">_ROUND</span><span class="p">:</span>
                 <span class="n">order</span> <span class="o">=</span> <span class="n">_table</span><span class="p">((</span><span class="s2">&quot;round&quot;</span><span class="p">,</span> <span class="n">group</span><span class="o">.</span><span class="n">shape</span><span class="p">),</span> <span class="n">_ROUND</span><span class="p">[</span><span class="n">group</span><span class="o">.</span><span class="n">shape</span><span class="p">])</span>
                 <span class="n">_shape_loops</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">domain_view</span><span class="p">(</span><span class="s2">&quot;cells&quot;</span><span class="p">,</span> <span class="n">group</span><span class="p">),</span> <span class="n">order</span><span class="p">,</span> <span class="n">offsets</span><span class="p">,</span> <span class="n">loops</span><span class="p">)</span>
+            <span class="k">elif</span> <span class="n">group</span><span class="o">.</span><span class="n">shape</span> <span class="ow">is</span> <span class="n">shapes</span><span class="o">.</span><span class="n">Polygon</span><span class="p">:</span>
+                <span class="n">_own_loops</span><span class="p">(</span><span class="n">group</span><span class="o">.</span><span class="n">view</span><span class="p">(),</span> <span class="n">offsets</span><span class="p">,</span> <span class="n">loops</span><span class="p">)</span>
     <span class="n">total</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">loops</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
     <span class="n">positions</span> <span class="o">=</span> <span class="n">_point_values</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">values</span><span class="p">,</span> <span class="n">data</span><span class="o">.</span><span class="n">num_points</span><span class="p">)</span>
     <span class="n">keys</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">total</span><span class="p">,),</span> <span class="n">tack</span><span class="o">.</span><span class="n">vec</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="n">idt</span><span class="p">))</span>
@@ -9975,49 +9930,49 @@ winding, and keeps its own.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/algorithms/surface_normals.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">255</span>
-<span class="normal">256</span>
-<span class="normal">257</span>
-<span class="normal">258</span>
-<span class="normal">259</span>
-<span class="normal">260</span>
-<span class="normal">261</span>
-<span class="normal">262</span>
-<span class="normal">263</span>
-<span class="normal">264</span>
-<span class="normal">265</span>
-<span class="normal">266</span>
-<span class="normal">267</span>
-<span class="normal">268</span>
-<span class="normal">269</span>
-<span class="normal">270</span>
-<span class="normal">271</span>
-<span class="normal">272</span>
-<span class="normal">273</span>
-<span class="normal">274</span>
-<span class="normal">275</span>
-<span class="normal">276</span>
-<span class="normal">277</span>
-<span class="normal">278</span>
-<span class="normal">279</span>
-<span class="normal">280</span>
-<span class="normal">281</span>
-<span class="normal">282</span>
-<span class="normal">283</span>
-<span class="normal">284</span>
-<span class="normal">285</span>
-<span class="normal">286</span>
-<span class="normal">287</span>
-<span class="normal">288</span>
-<span class="normal">289</span>
-<span class="normal">290</span>
-<span class="normal">291</span>
-<span class="normal">292</span>
-<span class="normal">293</span>
-<span class="normal">294</span>
-<span class="normal">295</span>
-<span class="normal">296</span>
-<span class="normal">297</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">310</span>
+<span class="normal">311</span>
+<span class="normal">312</span>
+<span class="normal">313</span>
+<span class="normal">314</span>
+<span class="normal">315</span>
+<span class="normal">316</span>
+<span class="normal">317</span>
+<span class="normal">318</span>
+<span class="normal">319</span>
+<span class="normal">320</span>
+<span class="normal">321</span>
+<span class="normal">322</span>
+<span class="normal">323</span>
+<span class="normal">324</span>
+<span class="normal">325</span>
+<span class="normal">326</span>
+<span class="normal">327</span>
+<span class="normal">328</span>
+<span class="normal">329</span>
+<span class="normal">330</span>
+<span class="normal">331</span>
+<span class="normal">332</span>
+<span class="normal">333</span>
+<span class="normal">334</span>
+<span class="normal">335</span>
+<span class="normal">336</span>
+<span class="normal">337</span>
+<span class="normal">338</span>
+<span class="normal">339</span>
+<span class="normal">340</span>
+<span class="normal">341</span>
+<span class="normal">342</span>
+<span class="normal">343</span>
+<span class="normal">344</span>
+<span class="normal">345</span>
+<span class="normal">346</span>
+<span class="normal">347</span>
+<span class="normal">348</span>
+<span class="normal">349</span>
+<span class="normal">350</span>
+<span class="normal">351</span>
+<span class="normal">352</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">surface_normals</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">consistent</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">weights</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;A surface -- triangles, quads, pixels or polygons -- with its normals: the</span>
 <span class="sd">    unit normal of each cell (Newell&#39;s, round its corners) as the cell field</span>
@@ -10608,13 +10563,14 @@ walks each of its edges exactly twice, once each way. A cell that does not --
 a face with the wrong side, an open cell, an edge of three faces -- is listed.
 Combinatorial: geometry plays no part. For polygons: the cells whose edges,
 walked their way, do not close into a loop. Polylines have no winding, and
-shape-based cells take their faces from their shape's table, so are refused.</p>
+shape-based cells take their faces from their shape's table, so are refused;
+beside polyhedra (a mixed topology) they are never listed, the polyhedra
+checked.</p>
 
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/algorithms/check_winding.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 77</span>
-<span class="normal"> 78</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 78</span>
 <span class="normal"> 79</span>
 <span class="normal"> 80</span>
 <span class="normal"> 81</span>
@@ -10648,7 +10604,12 @@ shape-based cells take their faces from their shape's table, so are refused.</p>
 <span class="normal">109</span>
 <span class="normal">110</span>
 <span class="normal">111</span>
-<span class="normal">112</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">112</span>
+<span class="normal">113</span>
+<span class="normal">114</span>
+<span class="normal">115</span>
+<span class="normal">116</span>
+<span class="normal">117</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">check_winding</span><span class="p">(</span><span class="n">data</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;The cells whose faces do not wind consistently, as a cell ``Set``.</span>
 
@@ -10657,7 +10618,9 @@ shape-based cells take their faces from their shape's table, so are refused.</p>
 <span class="sd">    a face with the wrong side, an open cell, an edge of three faces -- is listed.</span>
 <span class="sd">    Combinatorial: geometry plays no part. For polygons: the cells whose edges,</span>
 <span class="sd">    walked their way, do not close into a loop. Polylines have no winding, and</span>
-<span class="sd">    shape-based cells take their faces from their shape&#39;s table, so are refused.</span>
+<span class="sd">    shape-based cells take their faces from their shape&#39;s table, so are refused;</span>
+<span class="sd">    beside polyhedra (a mixed topology) they are never listed, the polyhedra</span>
+<span class="sd">    checked.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="n">t</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="s2">&quot;topology&quot;</span><span class="p">,</span> <span class="n">data</span><span class="p">)</span>
     <span class="k">if</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">t</span><span class="p">,</span> <span class="s2">&quot;reference_cells&quot;</span><span class="p">,</span> <span class="kc">True</span><span class="p">):</span>
@@ -10669,16 +10632,18 @@ shape-based cells take their faces from their shape's table, so are refused.</p>
         <span class="k">return</span> <span class="n">_check_loops</span><span class="p">(</span><span class="n">t</span><span class="p">)</span>
     <span class="n">edges</span> <span class="o">=</span> <span class="n">t</span><span class="o">.</span><span class="n">edges</span><span class="p">()</span>
     <span class="n">n</span> <span class="o">=</span> <span class="n">t</span><span class="o">.</span><span class="n">num_cells</span>
+    <span class="c1"># A mixed topology&#39;s per cell, a shape&#39;s range empty.</span>
+    <span class="n">cell_offsets</span> <span class="o">=</span> <span class="n">t</span><span class="o">.</span><span class="n">cell_face_offsets</span> <span class="k">if</span> <span class="n">t</span><span class="o">.</span><span class="n">has_polyhedra</span> <span class="k">else</span> <span class="n">t</span><span class="o">.</span><span class="n">cell_offsets</span>
     <span class="n">sizes</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">n</span><span class="p">,),</span> <span class="n">tack</span><span class="o">.</span><span class="n">i32</span><span class="p">)</span>
     <span class="n">starts</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">n</span><span class="p">,),</span> <span class="n">t</span><span class="o">.</span><span class="n">id_dtype</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">n</span><span class="p">:</span>
-        <span class="n">_cell_sizes</span><span class="p">(</span><span class="n">t</span><span class="o">.</span><span class="n">cell_offsets</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">cell_faces</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">face_offsets</span><span class="p">,</span> <span class="n">sizes</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span>
+        <span class="n">_cell_sizes</span><span class="p">(</span><span class="n">cell_offsets</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">cell_faces</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">face_offsets</span><span class="p">,</span> <span class="n">sizes</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span>
     <span class="n">total</span> <span class="o">=</span> <span class="n">exclusive_scan</span><span class="p">(</span><span class="n">sizes</span><span class="p">,</span> <span class="n">starts</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span> <span class="k">if</span> <span class="n">n</span> <span class="k">else</span> <span class="mi">0</span>
     <span class="n">bad</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n</span><span class="p">,),</span> <span class="n">tack</span><span class="o">.</span><span class="n">i32</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">total</span><span class="p">:</span>
         <span class="n">keys</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">total</span><span class="p">,),</span> <span class="n">tack</span><span class="o">.</span><span class="n">vec</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">id_dtype</span><span class="p">))</span>
         <span class="n">directions</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">total</span><span class="p">,),</span> <span class="n">tack</span><span class="o">.</span><span class="n">i32</span><span class="p">)</span>
-        <span class="n">_directed_edges</span><span class="p">(</span><span class="n">t</span><span class="o">.</span><span class="n">cell_offsets</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">cell_faces</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">cell_face_sides</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">face_offsets</span><span class="p">,</span>
+        <span class="n">_directed_edges</span><span class="p">(</span><span class="n">cell_offsets</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">cell_faces</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">cell_face_sides</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">face_offsets</span><span class="p">,</span>
                         <span class="n">edges</span><span class="o">.</span><span class="n">face_edge</span><span class="p">,</span> <span class="n">edges</span><span class="o">.</span><span class="n">face_edge_sign</span><span class="p">,</span> <span class="n">starts</span><span class="p">,</span> <span class="n">keys</span><span class="p">,</span> <span class="n">directions</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span>
         <span class="n">order</span> <span class="o">=</span> <span class="n">key_order</span><span class="p">(</span><span class="n">keys</span><span class="p">,</span> <span class="n">n</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">id_dtype</span><span class="p">)</span>
         <span class="n">offsets</span><span class="p">,</span> <span class="n">runs</span> <span class="o">=</span> <span class="n">run_offsets</span><span class="p">(</span><span class="n">keys</span><span class="p">,</span> <span class="n">order</span><span class="p">)</span>
@@ -10729,9 +10694,7 @@ first, as every filter that makes cells drops them.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/algorithms/merge_points.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">164</span>
-<span class="normal">165</span>
-<span class="normal">166</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">166</span>
 <span class="normal">167</span>
 <span class="normal">168</span>
 <span class="normal">169</span>
@@ -10784,7 +10747,23 @@ first, as every filter that makes cells drops them.</p>
 <span class="normal">216</span>
 <span class="normal">217</span>
 <span class="normal">218</span>
-<span class="normal">219</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">219</span>
+<span class="normal">220</span>
+<span class="normal">221</span>
+<span class="normal">222</span>
+<span class="normal">223</span>
+<span class="normal">224</span>
+<span class="normal">225</span>
+<span class="normal">226</span>
+<span class="normal">227</span>
+<span class="normal">228</span>
+<span class="normal">229</span>
+<span class="normal">230</span>
+<span class="normal">231</span>
+<span class="normal">232</span>
+<span class="normal">233</span>
+<span class="normal">234</span>
+<span class="normal">235</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">merge_points</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">tolerance</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;``data`` with each set of coincident points made one: points at most</span>
 <span class="sd">    ``tolerance`` apart (inclusive; 0, the default, merges only points of equal</span>
@@ -10835,6 +10814,20 @@ first, as every filter that makes cells drops them.</p>
         <span class="n">merged</span> <span class="o">=</span> <span class="n">PolylineTopology</span><span class="p">(</span><span class="n">topology</span><span class="o">.</span><span class="n">line_offsets</span><span class="p">,</span>
                                   <span class="n">_renumber</span><span class="p">(</span><span class="n">topology</span><span class="o">.</span><span class="n">line_points</span><span class="p">,</span> <span class="n">new_id</span><span class="p">,</span> <span class="n">data</span><span class="o">.</span><span class="n">id_dtype</span><span class="p">),</span>
                                   <span class="n">num_points</span><span class="o">=</span><span class="n">count</span><span class="p">,</span> <span class="n">id_dtype</span><span class="o">=</span><span class="n">data</span><span class="o">.</span><span class="n">id_dtype</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">topology</span><span class="o">.</span><span class="n">has_polyhedra</span><span class="p">:</span>
+        <span class="c1"># The polyhedra&#39;s faces matched again as a polyhedral topology&#39;s are, the</span>
+        <span class="c1"># shapes beside them renumbered. Face ids change (the shapes&#39; faces come</span>
+        <span class="c1"># after the polyhedra&#39;s), so values on faces are not carried.</span>
+        <span class="n">polyhedra</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">_merged_polyhedra</span><span class="p">(</span><span class="n">SimpleNamespace</span><span class="p">(</span>
+            <span class="n">num_faces</span><span class="o">=</span><span class="n">topology</span><span class="o">.</span><span class="n">num_polyhedral_faces</span><span class="p">,</span> <span class="n">face_offsets</span><span class="o">=</span><span class="n">topology</span><span class="o">.</span><span class="n">face_offsets</span><span class="p">,</span>
+            <span class="n">face_points</span><span class="o">=</span><span class="n">topology</span><span class="o">.</span><span class="n">face_points</span><span class="p">,</span> <span class="n">cell_offsets</span><span class="o">=</span><span class="n">topology</span><span class="o">.</span><span class="n">cell_face_offsets</span><span class="p">,</span>
+            <span class="n">cell_faces</span><span class="o">=</span><span class="n">topology</span><span class="o">.</span><span class="n">cell_faces</span><span class="p">,</span> <span class="n">cell_face_sides</span><span class="o">=</span><span class="n">topology</span><span class="o">.</span><span class="n">cell_face_sides</span><span class="p">,</span>
+            <span class="n">id_dtype</span><span class="o">=</span><span class="n">topology</span><span class="o">.</span><span class="n">id_dtype</span><span class="p">),</span> <span class="n">new_id</span><span class="p">,</span> <span class="n">count</span><span class="p">)</span>
+        <span class="n">merged</span> <span class="o">=</span> <span class="n">UnstructuredTopology</span><span class="p">(</span>
+            <span class="n">topology</span><span class="o">.</span><span class="n">types</span><span class="p">,</span> <span class="n">topology</span><span class="o">.</span><span class="n">offsets</span><span class="p">,</span>
+            <span class="n">_renumber</span><span class="p">(</span><span class="n">topology</span><span class="o">.</span><span class="n">connectivity</span><span class="p">,</span> <span class="n">new_id</span><span class="p">,</span> <span class="n">data</span><span class="o">.</span><span class="n">id_dtype</span><span class="p">),</span> <span class="n">num_points</span><span class="o">=</span><span class="n">count</span><span class="p">,</span>
+            <span class="n">polyhedra</span><span class="o">=</span><span class="p">(</span><span class="n">polyhedra</span><span class="o">.</span><span class="n">face_offsets</span><span class="p">,</span> <span class="n">polyhedra</span><span class="o">.</span><span class="n">face_points</span><span class="p">,</span> <span class="n">polyhedra</span><span class="o">.</span><span class="n">cell_offsets</span><span class="p">,</span>
+                       <span class="n">polyhedra</span><span class="o">.</span><span class="n">cell_faces</span><span class="p">,</span> <span class="n">polyhedra</span><span class="o">.</span><span class="n">cell_face_sides</span><span class="p">))</span>
     <span class="k">else</span><span class="p">:</span>
         <span class="n">merged</span> <span class="o">=</span> <span class="n">UnstructuredTopology</span><span class="p">(</span><span class="n">topology</span><span class="o">.</span><span class="n">types</span><span class="p">,</span> <span class="n">topology</span><span class="o">.</span><span class="n">offsets</span><span class="p">,</span>
                                       <span class="n">_renumber</span><span class="p">(</span><span class="n">topology</span><span class="o">.</span><span class="n">connectivity</span><span class="p">,</span> <span class="n">new_id</span><span class="p">,</span> <span class="n">data</span><span class="o">.</span><span class="n">id_dtype</span><span class="p">),</span>
@@ -10926,6 +10919,14 @@ quadrilateral face split from its own smallest corner (a hexahedron or
 voxel in 6, a wedge in 3, a pyramid in 2), which fills a convex cell. So
 the pieces of a partitioned dataset split the faces they share alike too. Other cells are left out. The
 points are the same; cell fields go to each cell's tetrahedra.</p>
+<p>Polyhedra beside the shapes (a mixed topology) are cones from a point each
+adds at its points' mean, over its faces: a triangle as it is, a quad split
+from its corner of smallest rank as the shapes split theirs (so a shape
+beside it splits the face alike), a face of five points or more fanned from
+a point at its points' mean, which both its cells add once. These are the
+tetrahedra Tack's polyhedral interpolation is linear on, apart from the
+quads' split; the added points come after the input's, their values the
+means of the points they average.</p>
 <p>Hidden and refined cells make no tetrahedra, and the others split as they
 would without them: an AMR box's hexahedra in 5, as its finer and coarser
 neighbours'. The points stay all of <code>data</code>'s, those only hidden cells use
@@ -10953,7 +10954,16 @@ included.</p>
 <span class="normal">28</span>
 <span class="normal">29</span>
 <span class="normal">30</span>
-<span class="normal">31</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">31</span>
+<span class="normal">32</span>
+<span class="normal">33</span>
+<span class="normal">34</span>
+<span class="normal">35</span>
+<span class="normal">36</span>
+<span class="normal">37</span>
+<span class="normal">38</span>
+<span class="normal">39</span>
+<span class="normal">40</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">tetrahedralize</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Every 3D cell as tetrahedra that meet face to face: two cells sharing a face</span>
 <span class="sd">    split it along one diagonal, as VTK&#39;s vtkDataSetTriangleFilter does. A</span>
@@ -10966,11 +10976,20 @@ included.</p>
 <span class="sd">    the pieces of a partitioned dataset split the faces they share alike too. Other cells are left out. The</span>
 <span class="sd">    points are the same; cell fields go to each cell&#39;s tetrahedra.</span>
 
+<span class="sd">    Polyhedra beside the shapes (a mixed topology) are cones from a point each</span>
+<span class="sd">    adds at its points&#39; mean, over its faces: a triangle as it is, a quad split</span>
+<span class="sd">    from its corner of smallest rank as the shapes split theirs (so a shape</span>
+<span class="sd">    beside it splits the face alike), a face of five points or more fanned from</span>
+<span class="sd">    a point at its points&#39; mean, which both its cells add once. These are the</span>
+<span class="sd">    tetrahedra Tack&#39;s polyhedral interpolation is linear on, apart from the</span>
+<span class="sd">    quads&#39; split; the added points come after the input&#39;s, their values the</span>
+<span class="sd">    means of the points they average.</span>
+
 <span class="sd">    Hidden and refined cells make no tetrahedra, and the others split as they</span>
 <span class="sd">    would without them: an AMR box&#39;s hexahedra in 5, as its finer and coarser</span>
 <span class="sd">    neighbours&#39;. The points stay all of ``data``&#39;s, those only hidden cells use</span>
 <span class="sd">    included.&quot;&quot;&quot;</span>
-    <span class="k">if</span> <span class="ow">not</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">topology</span><span class="p">,</span> <span class="s2">&quot;reference_cells&quot;</span><span class="p">,</span> <span class="kc">True</span><span class="p">):</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">topology</span><span class="p">,</span> <span class="s2">&quot;reference_cells&quot;</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">data</span><span class="o">.</span><span class="n">topology</span><span class="o">.</span><span class="n">mixed</span><span class="p">:</span>
         <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s2">&quot;tetrahedralize takes cells of the linear shapes&quot;</span><span class="p">)</span>
     <span class="k">return</span> <span class="n">_split</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="s2">&quot;tetrahedra&quot;</span><span class="p">,</span> <span class="n">fields</span><span class="p">)</span>
 </code></pre></div></td></tr></table></div>
@@ -11002,9 +11021,7 @@ of <code>data</code>'s.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/algorithms/triangulate.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">16</span>
-<span class="normal">17</span>
-<span class="normal">18</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">18</span>
 <span class="normal">19</span>
 <span class="normal">20</span>
 <span class="normal">21</span>
@@ -11032,7 +11049,11 @@ of <code>data</code>'s.</p>
 <span class="normal">43</span>
 <span class="normal">44</span>
 <span class="normal">45</span>
-<span class="normal">46</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">46</span>
+<span class="normal">47</span>
+<span class="normal">48</span>
+<span class="normal">49</span>
+<span class="normal">50</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">triangulate</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Every 2D cell as triangles: a quad or pixel in 2, a polygon of ``n`` corners in</span>
 <span class="sd">    ``n - 2`` by ear cutting in its plane (as VTK&#39;s vtkTriangleFilter), so a concave</span>
@@ -11043,6 +11064,8 @@ of <code>data</code>'s.</p>
     <span class="n">t</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">topology</span>
     <span class="k">if</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">t</span><span class="p">,</span> <span class="s2">&quot;reference_cells&quot;</span><span class="p">,</span> <span class="kc">True</span><span class="p">):</span>
         <span class="k">return</span> <span class="n">_split</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="s2">&quot;triangles&quot;</span><span class="p">,</span> <span class="n">fields</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">t</span><span class="o">.</span><span class="n">mixed</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">_mixed_triangles</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">fields</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">t</span><span class="o">.</span><span class="n">dimension</span> <span class="o">!=</span> <span class="mi">2</span><span class="p">:</span>
         <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;triangulate takes 2D cells, not </span><span class="si">{</span><span class="n">t</span><span class="o">.</span><span class="n">dimension</span><span class="si">}</span><span class="s2">D ones&quot;</span><span class="p">)</span>
     <span class="n">loop_offsets</span><span class="p">,</span> <span class="n">loop_points</span> <span class="o">=</span> <span class="n">t</span><span class="o">.</span><span class="n">loops</span><span class="p">()</span>
@@ -11095,38 +11118,7 @@ edges, and sets carry over; fields needing a reference element are dropped.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/algorithms/as_polyhedra.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 56</span>
-<span class="normal"> 57</span>
-<span class="normal"> 58</span>
-<span class="normal"> 59</span>
-<span class="normal"> 60</span>
-<span class="normal"> 61</span>
-<span class="normal"> 62</span>
-<span class="normal"> 63</span>
-<span class="normal"> 64</span>
-<span class="normal"> 65</span>
-<span class="normal"> 66</span>
-<span class="normal"> 67</span>
-<span class="normal"> 68</span>
-<span class="normal"> 69</span>
-<span class="normal"> 70</span>
-<span class="normal"> 71</span>
-<span class="normal"> 72</span>
-<span class="normal"> 73</span>
-<span class="normal"> 74</span>
-<span class="normal"> 75</span>
-<span class="normal"> 76</span>
-<span class="normal"> 77</span>
-<span class="normal"> 78</span>
-<span class="normal"> 79</span>
-<span class="normal"> 80</span>
-<span class="normal"> 81</span>
-<span class="normal"> 82</span>
-<span class="normal"> 83</span>
-<span class="normal"> 84</span>
-<span class="normal"> 85</span>
-<span class="normal"> 86</span>
-<span class="normal"> 87</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 87</span>
 <span class="normal"> 88</span>
 <span class="normal"> 89</span>
 <span class="normal"> 90</span>
@@ -11161,7 +11153,51 @@ edges, and sets carry over; fields needing a reference element are dropped.</p>
 <span class="normal">119</span>
 <span class="normal">120</span>
 <span class="normal">121</span>
-<span class="normal">122</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">122</span>
+<span class="normal">123</span>
+<span class="normal">124</span>
+<span class="normal">125</span>
+<span class="normal">126</span>
+<span class="normal">127</span>
+<span class="normal">128</span>
+<span class="normal">129</span>
+<span class="normal">130</span>
+<span class="normal">131</span>
+<span class="normal">132</span>
+<span class="normal">133</span>
+<span class="normal">134</span>
+<span class="normal">135</span>
+<span class="normal">136</span>
+<span class="normal">137</span>
+<span class="normal">138</span>
+<span class="normal">139</span>
+<span class="normal">140</span>
+<span class="normal">141</span>
+<span class="normal">142</span>
+<span class="normal">143</span>
+<span class="normal">144</span>
+<span class="normal">145</span>
+<span class="normal">146</span>
+<span class="normal">147</span>
+<span class="normal">148</span>
+<span class="normal">149</span>
+<span class="normal">150</span>
+<span class="normal">151</span>
+<span class="normal">152</span>
+<span class="normal">153</span>
+<span class="normal">154</span>
+<span class="normal">155</span>
+<span class="normal">156</span>
+<span class="normal">157</span>
+<span class="normal">158</span>
+<span class="normal">159</span>
+<span class="normal">160</span>
+<span class="normal">161</span>
+<span class="normal">162</span>
+<span class="normal">163</span>
+<span class="normal">164</span>
+<span class="normal">165</span>
+<span class="normal">166</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">as_polyhedra</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;A shape-based dataset as a polyhedral one, every cell a polyhedron.</span>
 
@@ -11185,9 +11221,10 @@ edges, and sets carry over; fields needing a reference element are dropped.</p>
                              <span class="s2">&quot;topology is of 3D cells (as_polygons takes 2D ones)&quot;</span><span class="p">)</span>
     <span class="n">faces</span> <span class="o">=</span> <span class="n">topology</span><span class="o">.</span><span class="n">faces</span><span class="p">()</span>
     <span class="n">same_way</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="mi">1</span><span class="p">,),</span> <span class="n">tack</span><span class="o">.</span><span class="n">i32</span><span class="p">)</span>
-    <span class="k">for</span> <span class="n">group</span> <span class="ow">in</span> <span class="n">topology</span><span class="o">.</span><span class="n">groups</span><span class="p">():</span>
-        <span class="k">if</span> <span class="n">group</span><span class="o">.</span><span class="n">count</span><span class="p">:</span>
-            <span class="n">_same_way</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">domain_view</span><span class="p">(</span><span class="s2">&quot;cells&quot;</span><span class="p">,</span> <span class="n">group</span><span class="p">,</span> <span class="n">incidence</span><span class="o">=</span><span class="s2">&quot;faces&quot;</span><span class="p">),</span> <span class="n">same_way</span><span class="p">)</span>
+    <span class="c1"># The shapes&#39; only: a mixed topology&#39;s polyhedra are on the sides they say.</span>
+    <span class="n">shaped</span> <span class="o">=</span> <span class="p">[</span><span class="n">g</span> <span class="k">for</span> <span class="n">g</span> <span class="ow">in</span> <span class="n">topology</span><span class="o">.</span><span class="n">groups</span><span class="p">()</span> <span class="k">if</span> <span class="n">g</span><span class="o">.</span><span class="n">count</span> <span class="ow">and</span> <span class="n">g</span><span class="o">.</span><span class="n">shape</span><span class="o">.</span><span class="n">REFERENCE</span><span class="p">]</span>
+    <span class="k">for</span> <span class="n">group</span> <span class="ow">in</span> <span class="n">shaped</span><span class="p">:</span>
+        <span class="n">_same_way</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">domain_view</span><span class="p">(</span><span class="s2">&quot;cells&quot;</span><span class="p">,</span> <span class="n">group</span><span class="p">,</span> <span class="n">incidence</span><span class="o">=</span><span class="s2">&quot;faces&quot;</span><span class="p">),</span> <span class="n">same_way</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">same_way</span><span class="p">[</span><span class="mi">0</span><span class="p">]:</span>
         <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">same_way</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2"> faces are wound the same way by both their cells &quot;</span>
                          <span class="s2">&quot;(an inside-out cell beside an upright one, as cell_geometry&#39;s &quot;</span>
@@ -11197,29 +11234,41 @@ edges, and sets carry over; fields needing a reference element are dropped.</p>
     <span class="n">idt</span> <span class="o">=</span> <span class="n">topology</span><span class="o">.</span><span class="n">id_dtype</span>
     <span class="c1"># The faces&#39; points: 4 a face, past 12 a cell when faces are not shared (a</span>
     <span class="c1"># hexahedron has 24), and the polyhedral topology holds twice that.</span>
-    <span class="n">fdt</span> <span class="o">=</span> <span class="n">ids</span><span class="o">.</span><span class="n">at_least</span><span class="p">(</span><span class="n">idt</span><span class="p">,</span> <span class="mi">8</span> <span class="o">*</span> <span class="n">nf</span><span class="p">)</span>
+    <span class="c1"># A mixed topology&#39;s faces start with its polyhedra&#39;s, of any size.</span>
+    <span class="n">stored</span> <span class="o">=</span> <span class="n">topology</span><span class="o">.</span><span class="n">num_polyhedral_faces</span> <span class="k">if</span> <span class="n">topology</span><span class="o">.</span><span class="n">has_polyhedra</span> <span class="k">else</span> <span class="mi">0</span>
+    <span class="n">fdt</span> <span class="o">=</span> <span class="n">ids</span><span class="o">.</span><span class="n">at_least</span><span class="p">(</span><span class="n">idt</span><span class="p">,</span> <span class="mi">8</span> <span class="o">*</span> <span class="n">nf</span> <span class="o">+</span> <span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">size_of</span><span class="p">(</span><span class="n">topology</span><span class="o">.</span><span class="n">face_points</span><span class="p">)</span> <span class="k">if</span> <span class="n">stored</span> <span class="k">else</span> <span class="mi">0</span><span class="p">))</span>
     <span class="n">sizes</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">nf</span><span class="p">,),</span> <span class="n">tack</span><span class="o">.</span><span class="n">i32</span><span class="p">)</span>
     <span class="n">starts</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">nf</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,),</span> <span class="n">fdt</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">nf</span><span class="p">:</span>
         <span class="n">_face_sizes</span><span class="p">(</span><span class="n">faces</span><span class="o">.</span><span class="n">kinds</span><span class="p">,</span> <span class="n">sizes</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">stored</span><span class="p">:</span>
+        <span class="n">_stored_sizes</span><span class="p">(</span><span class="n">topology</span><span class="o">.</span><span class="n">face_offsets</span><span class="p">,</span> <span class="n">sizes</span><span class="p">)</span>
     <span class="n">total</span> <span class="o">=</span> <span class="n">exclusive_scan</span><span class="p">(</span><span class="n">sizes</span><span class="p">,</span> <span class="n">starts</span><span class="p">,</span> <span class="n">nf</span><span class="p">,</span> <span class="n">close</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
     <span class="n">face_points</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">total</span><span class="p">,),</span> <span class="n">fdt</span><span class="p">)</span>
-    <span class="k">if</span> <span class="n">nf</span><span class="p">:</span>
-        <span class="n">_face_rows</span><span class="p">(</span><span class="n">faces</span><span class="o">.</span><span class="n">rows</span><span class="p">,</span> <span class="n">starts</span><span class="p">,</span> <span class="n">sizes</span><span class="p">,</span> <span class="n">face_points</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">nf</span> <span class="o">&gt;</span> <span class="n">stored</span><span class="p">:</span>
+        <span class="n">_face_rows</span><span class="p">(</span><span class="n">faces</span><span class="o">.</span><span class="n">rows</span><span class="p">,</span> <span class="n">starts</span><span class="p">,</span> <span class="n">sizes</span><span class="p">,</span> <span class="n">face_points</span><span class="p">,</span> <span class="n">stored</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">stored</span><span class="p">:</span>
+        <span class="n">_stored_faces</span><span class="p">(</span><span class="n">topology</span><span class="o">.</span><span class="n">face_offsets</span><span class="p">,</span> <span class="n">topology</span><span class="o">.</span><span class="n">face_points</span><span class="p">,</span> <span class="n">starts</span><span class="p">,</span> <span class="n">face_points</span><span class="p">)</span>
 
     <span class="n">n</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">num_cells</span>
     <span class="n">counts</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n</span><span class="p">,),</span> <span class="n">tack</span><span class="o">.</span><span class="n">i32</span><span class="p">)</span>
     <span class="k">for</span> <span class="n">group</span> <span class="ow">in</span> <span class="n">topology</span><span class="o">.</span><span class="n">groups</span><span class="p">():</span>
         <span class="k">if</span> <span class="n">group</span><span class="o">.</span><span class="n">count</span><span class="p">:</span>
-            <span class="n">_cell_face_counts</span><span class="p">(</span><span class="n">group</span><span class="o">.</span><span class="n">view</span><span class="p">(),</span> <span class="n">counts</span><span class="p">)</span>
+            <span class="p">(</span><span class="n">_cell_face_counts</span> <span class="k">if</span> <span class="n">group</span><span class="o">.</span><span class="n">shape</span><span class="o">.</span><span class="n">REFERENCE</span>
+             <span class="k">else</span> <span class="n">_polyhedral_face_counts</span><span class="p">)(</span><span class="n">group</span><span class="o">.</span><span class="n">view</span><span class="p">(),</span> <span class="n">counts</span><span class="p">)</span>
     <span class="n">cell_offsets</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">n</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,),</span> <span class="n">idt</span><span class="p">)</span>
     <span class="n">entries</span> <span class="o">=</span> <span class="n">exclusive_scan</span><span class="p">(</span><span class="n">counts</span><span class="p">,</span> <span class="n">cell_offsets</span><span class="p">,</span> <span class="n">n</span><span class="p">,</span> <span class="n">close</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
     <span class="n">cell_faces</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">entries</span><span class="p">,),</span> <span class="n">idt</span><span class="p">)</span>
     <span class="n">cell_face_sides</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">entries</span><span class="p">,),</span> <span class="n">tack</span><span class="o">.</span><span class="n">u8</span><span class="p">)</span>
     <span class="k">for</span> <span class="n">group</span> <span class="ow">in</span> <span class="n">topology</span><span class="o">.</span><span class="n">groups</span><span class="p">():</span>
-        <span class="k">if</span> <span class="n">group</span><span class="o">.</span><span class="n">count</span><span class="p">:</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">group</span><span class="o">.</span><span class="n">count</span><span class="p">:</span>
+            <span class="k">continue</span>
+        <span class="k">if</span> <span class="n">group</span><span class="o">.</span><span class="n">shape</span><span class="o">.</span><span class="n">REFERENCE</span><span class="p">:</span>
             <span class="n">_cell_face_entries</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">domain_view</span><span class="p">(</span><span class="s2">&quot;cells&quot;</span><span class="p">,</span> <span class="n">group</span><span class="p">,</span> <span class="n">incidence</span><span class="o">=</span><span class="s2">&quot;faces&quot;</span><span class="p">),</span>
                                <span class="n">cell_offsets</span><span class="p">,</span> <span class="n">cell_faces</span><span class="p">,</span> <span class="n">cell_face_sides</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">_polyhedral_face_entries</span><span class="p">(</span><span class="n">group</span><span class="o">.</span><span class="n">view</span><span class="p">(),</span> <span class="n">cell_offsets</span><span class="p">,</span> <span class="n">cell_faces</span><span class="p">,</span>
+                                     <span class="n">cell_face_sides</span><span class="p">)</span>
     <span class="n">out</span> <span class="o">=</span> <span class="n">PolyhedralTopology</span><span class="p">(</span><span class="n">starts</span><span class="p">,</span> <span class="n">face_points</span><span class="p">,</span> <span class="n">cell_offsets</span><span class="p">,</span> <span class="n">cell_faces</span><span class="p">,</span> <span class="n">cell_face_sides</span><span class="p">,</span>
                              <span class="n">num_points</span><span class="o">=</span><span class="n">data</span><span class="o">.</span><span class="n">num_points</span><span class="p">)</span>
 
@@ -11251,27 +11300,13 @@ edges, and sets carry over; fields needing a reference element are dropped.</p>
 one: each cell's points in order become its loop. Fields carry as
 <code>as_polyhedra</code>'s do, but values on faces and edges, whose numbering the
 polygonal topology derives afresh, are dropped. A polygonal dataset comes
-back as it is (a new dataset on the same topology).</p>
+back as it is (a new dataset on the same topology); polygons beside shapes
+keep their loops.</p>
 
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/algorithms/as_polygons.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">32</span>
-<span class="normal">33</span>
-<span class="normal">34</span>
-<span class="normal">35</span>
-<span class="normal">36</span>
-<span class="normal">37</span>
-<span class="normal">38</span>
-<span class="normal">39</span>
-<span class="normal">40</span>
-<span class="normal">41</span>
-<span class="normal">42</span>
-<span class="normal">43</span>
-<span class="normal">44</span>
-<span class="normal">45</span>
-<span class="normal">46</span>
-<span class="normal">47</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">47</span>
 <span class="normal">48</span>
 <span class="normal">49</span>
 <span class="normal">50</span>
@@ -11284,14 +11319,30 @@ back as it is (a new dataset on the same topology).</p>
 <span class="normal">57</span>
 <span class="normal">58</span>
 <span class="normal">59</span>
-<span class="normal">60</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">60</span>
+<span class="normal">61</span>
+<span class="normal">62</span>
+<span class="normal">63</span>
+<span class="normal">64</span>
+<span class="normal">65</span>
+<span class="normal">66</span>
+<span class="normal">67</span>
+<span class="normal">68</span>
+<span class="normal">69</span>
+<span class="normal">70</span>
+<span class="normal">71</span>
+<span class="normal">72</span>
+<span class="normal">73</span>
+<span class="normal">74</span>
+<span class="normal">75</span>
+<span class="normal">76</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">as_polygons</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;A shape-based dataset of 2D cells -- triangles, quads, pixels -- as a polygonal</span>
 <span class="sd">    one: each cell&#39;s points in order become its loop. Fields carry as</span>
 <span class="sd">    ``as_polyhedra``&#39;s do, but values on faces and edges, whose numbering the</span>
 <span class="sd">    polygonal topology derives afresh, are dropped. A polygonal dataset comes</span>
-<span class="sd">    back as it is (a new dataset on the same topology).&quot;&quot;&quot;</span>
-
+<span class="sd">    back as it is (a new dataset on the same topology); polygons beside shapes</span>
+<span class="sd">    keep their loops.&quot;&quot;&quot;</span>
     <span class="n">topology</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">topology</span>
     <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">topology</span><span class="p">,</span> <span class="n">PolygonalTopology</span><span class="p">):</span>
         <span class="k">return</span> <span class="n">carry</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">topology</span><span class="p">,</span> <span class="n">points</span><span class="o">=</span><span class="n">Same</span><span class="p">(),</span> <span class="n">cells</span><span class="o">=</span><span class="n">Same</span><span class="p">(),</span> <span class="n">fields</span><span class="o">=</span><span class="n">fields</span><span class="p">)</span>
@@ -11303,13 +11354,14 @@ back as it is (a new dataset on the same topology).</p>
     <span class="n">sizes</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n</span><span class="p">,),</span> <span class="n">tack</span><span class="o">.</span><span class="n">i32</span><span class="p">)</span>
     <span class="k">for</span> <span class="n">group</span> <span class="ow">in</span> <span class="n">topology</span><span class="o">.</span><span class="n">groups</span><span class="p">():</span>
         <span class="k">if</span> <span class="n">group</span><span class="o">.</span><span class="n">count</span><span class="p">:</span>
-            <span class="n">_polygon_sizes</span><span class="p">(</span><span class="n">group</span><span class="o">.</span><span class="n">view</span><span class="p">(),</span> <span class="n">sizes</span><span class="p">)</span>
+            <span class="p">(</span><span class="n">_polygon_sizes</span> <span class="k">if</span> <span class="n">group</span><span class="o">.</span><span class="n">shape</span><span class="o">.</span><span class="n">REFERENCE</span> <span class="k">else</span> <span class="n">_own_sizes</span><span class="p">)(</span><span class="n">group</span><span class="o">.</span><span class="n">view</span><span class="p">(),</span> <span class="n">sizes</span><span class="p">)</span>
     <span class="n">offsets</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">n</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,),</span> <span class="n">idt</span><span class="p">)</span>
     <span class="n">total</span> <span class="o">=</span> <span class="n">exclusive_scan</span><span class="p">(</span><span class="n">sizes</span><span class="p">,</span> <span class="n">offsets</span><span class="p">,</span> <span class="n">n</span><span class="p">,</span> <span class="n">close</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
     <span class="n">loops</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">total</span><span class="p">,),</span> <span class="n">idt</span><span class="p">)</span>
     <span class="k">for</span> <span class="n">group</span> <span class="ow">in</span> <span class="n">topology</span><span class="o">.</span><span class="n">groups</span><span class="p">():</span>
         <span class="k">if</span> <span class="n">group</span><span class="o">.</span><span class="n">count</span><span class="p">:</span>
-            <span class="n">_polygon_loops</span><span class="p">(</span><span class="n">group</span><span class="o">.</span><span class="n">view</span><span class="p">(),</span> <span class="n">offsets</span><span class="p">,</span> <span class="n">loops</span><span class="p">)</span>
+            <span class="p">(</span><span class="n">_polygon_loops</span> <span class="k">if</span> <span class="n">group</span><span class="o">.</span><span class="n">shape</span><span class="o">.</span><span class="n">REFERENCE</span> <span class="k">else</span> <span class="n">_own_loops</span><span class="p">)(</span><span class="n">group</span><span class="o">.</span><span class="n">view</span><span class="p">(),</span> <span class="n">offsets</span><span class="p">,</span>
+                                                                      <span class="n">loops</span><span class="p">)</span>
     <span class="n">out</span> <span class="o">=</span> <span class="n">PolygonalTopology</span><span class="p">(</span><span class="n">offsets</span><span class="p">,</span> <span class="n">loops</span><span class="p">,</span> <span class="n">num_points</span><span class="o">=</span><span class="n">data</span><span class="o">.</span><span class="n">num_points</span><span class="p">)</span>
     <span class="c1"># The same points and cells; edge numbering is derived afresh.</span>
     <span class="k">return</span> <span class="n">carry</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">out</span><span class="p">,</span> <span class="n">points</span><span class="o">=</span><span class="n">Same</span><span class="p">(),</span> <span class="n">cells</span><span class="o">=</span><span class="n">Same</span><span class="p">(),</span> <span class="n">fields</span><span class="o">=</span><span class="n">fields</span><span class="p">)</span>
@@ -11366,8 +11418,7 @@ edges with it.</p>
 <span class="normal">49</span>
 <span class="normal">50</span>
 <span class="normal">51</span>
-<span class="normal">52</span>
-<span class="normal">53</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">52</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">shrink</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">factor</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Every cell shrunk toward its centroid (the mean of its corners) by ``factor``,</span>
 <span class="sd">    as Viskores&#39; Shrink and VTK&#39;s vtkShrinkFilter. Viskores gives each cell its</span>
@@ -11375,7 +11426,6 @@ edges with it.</p>
 <span class="sd">    topology, and point data becomes ``L2`` the same way (each cell&#39;s own copy</span>
 <span class="sd">    of its corners&#39; values). Everything else is kept, the topology&#39;s faces and</span>
 <span class="sd">    edges with it.&quot;&quot;&quot;</span>
-
     <span class="k">if</span> <span class="ow">not</span> <span class="mi">0</span> <span class="o">&lt;=</span> <span class="n">factor</span> <span class="o">&lt;=</span> <span class="mi">1</span><span class="p">:</span>
         <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;factor must lie in [0, 1], not </span><span class="si">{</span><span class="n">factor</span><span class="si">!r}</span><span class="s2">&quot;</span><span class="p">)</span>
     <span class="n">corners</span> <span class="o">=</span> <span class="n">project</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">data</span><span class="o">.</span><span class="n">geometry</span><span class="p">,</span> <span class="n">L2</span><span class="p">(</span><span class="n">data</span><span class="p">))</span>
@@ -12236,7 +12286,13 @@ spread evenly.</p>
 <span class="normal">38</span>
 <span class="normal">39</span>
 <span class="normal">40</span>
-<span class="normal">41</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">41</span>
+<span class="normal">42</span>
+<span class="normal">43</span>
+<span class="normal">44</span>
+<span class="normal">45</span>
+<span class="normal">46</span>
+<span class="normal">47</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">cell_centers</span><span class="p">(</span><span class="n">data</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Each cell&#39;s center, where the geometry maps its parametric center: a field on cells.</span>
 <span class="sd">    That is ``values_at_centers(data, data.geometry)``, and not the centroid on a</span>
@@ -12248,13 +12304,19 @@ spread evenly.</p>
 <span class="sd">    its faces from. That is not the centroid either, unless the points are</span>
 <span class="sd">    spread evenly.&quot;&quot;&quot;</span>
     <span class="n">out</span> <span class="o">=</span> <span class="n">_vectors</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">num_cells</span><span class="p">,</span> <span class="n">data</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
-    <span class="k">if</span> <span class="ow">not</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">topology</span><span class="p">,</span> <span class="s2">&quot;reference_cells&quot;</span><span class="p">,</span> <span class="kc">True</span><span class="p">):</span>
-        <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.algorithms.project</span><span class="w"> </span><span class="kn">import</span> <span class="n">_distinct_point_means</span>
-
-        <span class="n">for_each</span><span class="p">(</span><span class="n">_distinct_point_means</span><span class="p">,</span> <span class="n">data</span><span class="p">,</span> <span class="s2">&quot;cells&quot;</span><span class="p">,</span> <span class="n">materialize</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">values</span><span class="p">),</span> <span class="n">out</span><span class="p">,</span>
-                 <span class="nb">float</span><span class="p">(</span><span class="s2">&quot;nan&quot;</span><span class="p">))</span>
-    <span class="k">else</span><span class="p">:</span>
+    <span class="k">if</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">topology</span><span class="p">,</span> <span class="s2">&quot;reference_cells&quot;</span><span class="p">,</span> <span class="kc">True</span><span class="p">):</span>
         <span class="n">for_each</span><span class="p">(</span><span class="n">_centers</span><span class="p">,</span> <span class="n">data</span><span class="p">,</span> <span class="s2">&quot;cells&quot;</span><span class="p">,</span> <span class="n">out</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">Field</span><span class="p">(</span><span class="n">Values</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="s2">&quot;cells&quot;</span><span class="p">),</span> <span class="n">out</span><span class="p">,</span> <span class="n">data</span><span class="o">.</span><span class="n">unit</span><span class="p">)</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.algorithms.project</span><span class="w"> </span><span class="kn">import</span> <span class="n">_distinct_point_means</span>
+
+    <span class="n">positions</span> <span class="o">=</span> <span class="n">materialize</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">values</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">group</span> <span class="ow">in</span> <span class="n">data</span><span class="o">.</span><span class="n">launch_groups</span><span class="p">(</span><span class="s2">&quot;cells&quot;</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">group</span><span class="o">.</span><span class="n">count</span><span class="p">:</span>
+            <span class="n">view</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">domain_view</span><span class="p">(</span><span class="s2">&quot;cells&quot;</span><span class="p">,</span> <span class="n">group</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">group</span><span class="o">.</span><span class="n">shape</span><span class="o">.</span><span class="n">REFERENCE</span><span class="p">:</span>          <span class="c1"># a shape beside polyhedra</span>
+                <span class="n">_centers</span><span class="p">(</span><span class="n">view</span><span class="p">,</span> <span class="n">out</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">_distinct_point_means</span><span class="p">(</span><span class="n">view</span><span class="p">,</span> <span class="n">positions</span><span class="p">,</span> <span class="n">out</span><span class="p">,</span> <span class="nb">float</span><span class="p">(</span><span class="s2">&quot;nan&quot;</span><span class="p">))</span>
     <span class="k">return</span> <span class="n">Field</span><span class="p">(</span><span class="n">Values</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="s2">&quot;cells&quot;</span><span class="p">),</span> <span class="n">out</span><span class="p">,</span> <span class="n">data</span><span class="o">.</span><span class="n">unit</span><span class="p">)</span>
 </code></pre></div></td></tr></table></div>
             </details>
@@ -12984,36 +13046,7 @@ around each point.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/algorithms/gradients.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">382</span>
-<span class="normal">383</span>
-<span class="normal">384</span>
-<span class="normal">385</span>
-<span class="normal">386</span>
-<span class="normal">387</span>
-<span class="normal">388</span>
-<span class="normal">389</span>
-<span class="normal">390</span>
-<span class="normal">391</span>
-<span class="normal">392</span>
-<span class="normal">393</span>
-<span class="normal">394</span>
-<span class="normal">395</span>
-<span class="normal">396</span>
-<span class="normal">397</span>
-<span class="normal">398</span>
-<span class="normal">399</span>
-<span class="normal">400</span>
-<span class="normal">401</span>
-<span class="normal">402</span>
-<span class="normal">403</span>
-<span class="normal">404</span>
-<span class="normal">405</span>
-<span class="normal">406</span>
-<span class="normal">407</span>
-<span class="normal">408</span>
-<span class="normal">409</span>
-<span class="normal">410</span>
-<span class="normal">411</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">411</span>
 <span class="normal">412</span>
 <span class="normal">413</span>
 <span class="normal">414</span>
@@ -13060,7 +13093,36 @@ around each point.</p>
 <span class="normal">455</span>
 <span class="normal">456</span>
 <span class="normal">457</span>
-<span class="normal">458</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">458</span>
+<span class="normal">459</span>
+<span class="normal">460</span>
+<span class="normal">461</span>
+<span class="normal">462</span>
+<span class="normal">463</span>
+<span class="normal">464</span>
+<span class="normal">465</span>
+<span class="normal">466</span>
+<span class="normal">467</span>
+<span class="normal">468</span>
+<span class="normal">469</span>
+<span class="normal">470</span>
+<span class="normal">471</span>
+<span class="normal">472</span>
+<span class="normal">473</span>
+<span class="normal">474</span>
+<span class="normal">475</span>
+<span class="normal">476</span>
+<span class="normal">477</span>
+<span class="normal">478</span>
+<span class="normal">479</span>
+<span class="normal">480</span>
+<span class="normal">481</span>
+<span class="normal">482</span>
+<span class="normal">483</span>
+<span class="normal">484</span>
+<span class="normal">485</span>
+<span class="normal">486</span>
+<span class="normal">487</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">gradients</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">,</span> <span class="n">at</span><span class="o">=</span><span class="s2">&quot;cells&quot;</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;The gradient of ``field`` -- ``H1``, ``L2`` or ``Constant``, scalar or vector --</span>
 <span class="sd">    at each cell&#39;s parametric center (``at=&quot;cells&quot;``) or at the points</span>
@@ -13299,26 +13361,7 @@ order-1 <code>H1</code> into order-1 <code>L2</code>, which copies them and take
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/algorithms/project.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">332</span>
-<span class="normal">333</span>
-<span class="normal">334</span>
-<span class="normal">335</span>
-<span class="normal">336</span>
-<span class="normal">337</span>
-<span class="normal">338</span>
-<span class="normal">339</span>
-<span class="normal">340</span>
-<span class="normal">341</span>
-<span class="normal">342</span>
-<span class="normal">343</span>
-<span class="normal">344</span>
-<span class="normal">345</span>
-<span class="normal">346</span>
-<span class="normal">347</span>
-<span class="normal">348</span>
-<span class="normal">349</span>
-<span class="normal">350</span>
-<span class="normal">351</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">351</span>
 <span class="normal">352</span>
 <span class="normal">353</span>
 <span class="normal">354</span>
@@ -13405,7 +13448,26 @@ order-1 <code>H1</code> into order-1 <code>L2</code>, which copies them and take
 <span class="normal">435</span>
 <span class="normal">436</span>
 <span class="normal">437</span>
-<span class="normal">438</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">438</span>
+<span class="normal">439</span>
+<span class="normal">440</span>
+<span class="normal">441</span>
+<span class="normal">442</span>
+<span class="normal">443</span>
+<span class="normal">444</span>
+<span class="normal">445</span>
+<span class="normal">446</span>
+<span class="normal">447</span>
+<span class="normal">448</span>
+<span class="normal">449</span>
+<span class="normal">450</span>
+<span class="normal">451</span>
+<span class="normal">452</span>
+<span class="normal">453</span>
+<span class="normal">454</span>
+<span class="normal">455</span>
+<span class="normal">456</span>
+<span class="normal">457</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">project</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">,</span> <span class="n">space</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">average</span><span class="o">=</span><span class="s2">&quot;integral&quot;</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;``field`` (a ``Field`` or a name) in ``space``, a space of the same topology:</span>
 <span class="sd">    a new field. Values on points or cells count as order-1 ``H1`` and</span>
@@ -13565,7 +13627,18 @@ point. Cell data (<code>Constant</code>) is its own value.</p>
 <span class="normal">44</span>
 <span class="normal">45</span>
 <span class="normal">46</span>
-<span class="normal">47</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">47</span>
+<span class="normal">48</span>
+<span class="normal">49</span>
+<span class="normal">50</span>
+<span class="normal">51</span>
+<span class="normal">52</span>
+<span class="normal">53</span>
+<span class="normal">54</span>
+<span class="normal">55</span>
+<span class="normal">56</span>
+<span class="normal">57</span>
+<span class="normal">58</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">values_at_centers</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;``field`` evaluated at each cell&#39;s parametric center, through its basis.</span>
 
@@ -13578,17 +13651,28 @@ point. Cell data (<code>Constant</code>) is its own value.</p>
     <span class="n">out</span> <span class="o">=</span> <span class="n">_like</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">values</span><span class="p">,</span> <span class="n">data</span><span class="o">.</span><span class="n">num_cells</span><span class="p">)</span>
     <span class="k">if</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">topology</span><span class="p">,</span> <span class="s2">&quot;reference_cells&quot;</span><span class="p">,</span> <span class="kc">True</span><span class="p">):</span>
         <span class="n">for_each</span><span class="p">(</span><span class="n">_at_centers</span><span class="p">,</span> <span class="n">data</span><span class="p">,</span> <span class="s2">&quot;cells&quot;</span><span class="p">,</span> <span class="n">field</span><span class="p">,</span> <span class="n">out</span><span class="p">)</span>
-    <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">space</span><span class="p">,</span> <span class="n">H1</span><span class="p">)</span> <span class="ow">and</span> <span class="n">field</span><span class="o">.</span><span class="n">space</span><span class="o">.</span><span class="n">order</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
-        <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.algorithms.project</span><span class="w"> </span><span class="kn">import</span> <span class="n">_distinct_point_means</span>
-
-        <span class="n">for_each</span><span class="p">(</span><span class="n">_distinct_point_means</span><span class="p">,</span> <span class="n">data</span><span class="p">,</span> <span class="s2">&quot;cells&quot;</span><span class="p">,</span> <span class="n">materialize</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">values</span><span class="p">),</span> <span class="n">out</span><span class="p">,</span>
-                 <span class="nb">float</span><span class="p">(</span><span class="s2">&quot;nan&quot;</span><span class="p">))</span>
-    <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">space</span><span class="p">,</span> <span class="n">Constant</span><span class="p">):</span>
-        <span class="n">tack</span><span class="o">.</span><span class="n">copyto</span><span class="p">(</span><span class="n">out</span><span class="p">,</span> <span class="n">materialize</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">values</span><span class="p">))</span>
-    <span class="k">else</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">Field</span><span class="p">(</span><span class="n">Values</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="s2">&quot;cells&quot;</span><span class="p">),</span> <span class="n">out</span><span class="p">,</span> <span class="n">field</span><span class="o">.</span><span class="n">unit</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="p">((</span><span class="nb">isinstance</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">space</span><span class="p">,</span> <span class="n">H1</span><span class="p">)</span> <span class="ow">and</span> <span class="n">field</span><span class="o">.</span><span class="n">space</span><span class="o">.</span><span class="n">order</span> <span class="o">==</span> <span class="mi">1</span><span class="p">)</span>
+            <span class="ow">or</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">space</span><span class="p">,</span> <span class="n">Constant</span><span class="p">)):</span>
         <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;values_at_centers of </span><span class="si">{</span><span class="n">field</span><span class="o">.</span><span class="n">space</span><span class="si">!r}</span><span class="s2"> on polyhedra, &quot;</span>
                                   <span class="s2">&quot;polygons or polylines: only point data (H1, order 1) and &quot;</span>
                                   <span class="s2">&quot;cell data (Constant) have values there&quot;</span><span class="p">)</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.algorithms.project</span><span class="w"> </span><span class="kn">import</span> <span class="n">_distinct_point_means</span>
+
+    <span class="n">values</span> <span class="o">=</span> <span class="n">materialize</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">values</span><span class="p">)</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">space</span><span class="p">,</span> <span class="n">Constant</span><span class="p">)</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">data</span><span class="o">.</span><span class="n">topology</span><span class="o">.</span><span class="n">mixed</span><span class="p">:</span>
+        <span class="n">tack</span><span class="o">.</span><span class="n">copyto</span><span class="p">(</span><span class="n">out</span><span class="p">,</span> <span class="n">values</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">group</span> <span class="ow">in</span> <span class="n">data</span><span class="o">.</span><span class="n">launch_groups</span><span class="p">(</span><span class="s2">&quot;cells&quot;</span><span class="p">,</span> <span class="p">[</span><span class="n">field</span><span class="p">]):</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">group</span><span class="o">.</span><span class="n">count</span><span class="p">:</span>
+            <span class="k">continue</span>
+        <span class="n">view</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">domain_view</span><span class="p">(</span><span class="s2">&quot;cells&quot;</span><span class="p">,</span> <span class="n">group</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">group</span><span class="o">.</span><span class="n">shape</span><span class="o">.</span><span class="n">REFERENCE</span><span class="p">:</span>
+            <span class="c1"># Polyhedra beside the shapes: each shape group through its basis.</span>
+            <span class="n">_at_centers</span><span class="p">(</span><span class="n">view</span><span class="p">,</span> <span class="n">field</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">group</span><span class="p">),</span> <span class="n">out</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">space</span><span class="p">,</span> <span class="n">H1</span><span class="p">):</span>
+            <span class="n">_distinct_point_means</span><span class="p">(</span><span class="n">view</span><span class="p">,</span> <span class="n">values</span><span class="p">,</span> <span class="n">out</span><span class="p">,</span> <span class="nb">float</span><span class="p">(</span><span class="s2">&quot;nan&quot;</span><span class="p">))</span>
+        <span class="k">elif</span> <span class="n">data</span><span class="o">.</span><span class="n">topology</span><span class="o">.</span><span class="n">mixed</span><span class="p">:</span>
+            <span class="n">_own_values</span><span class="p">(</span><span class="n">view</span><span class="p">,</span> <span class="n">values</span><span class="p">,</span> <span class="n">out</span><span class="p">)</span>
     <span class="k">return</span> <span class="n">Field</span><span class="p">(</span><span class="n">Values</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="s2">&quot;cells&quot;</span><span class="p">),</span> <span class="n">out</span><span class="p">,</span> <span class="n">field</span><span class="o">.</span><span class="n">unit</span><span class="p">)</span>
 </code></pre></div></td></tr></table></div>
             </details>
@@ -14322,7 +14406,12 @@ included.</p>
 <span class="normal">88</span>
 <span class="normal">89</span>
 <span class="normal">90</span>
-<span class="normal">91</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">91</span>
+<span class="normal">92</span>
+<span class="normal">93</span>
+<span class="normal">94</span>
+<span class="normal">95</span>
+<span class="normal">96</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">jump</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;A field&#39;s difference across each face at the face&#39;s center, side 1 minus side</span>
 <span class="sd">    0 (zero on the boundary): a field on faces. Each side is the field as its own</span>
@@ -14339,6 +14428,11 @@ included.</p>
     <span class="n">out</span> <span class="o">=</span> <span class="n">_like</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">values</span><span class="p">,</span> <span class="n">faces</span><span class="o">.</span><span class="n">num_faces</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">_on_cells</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">):</span>
         <span class="n">for_each</span><span class="p">(</span><span class="n">_cell_jump</span><span class="p">,</span> <span class="n">data</span><span class="p">,</span> <span class="s2">&quot;faces&quot;</span><span class="p">,</span> <span class="n">materialize</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">values</span><span class="p">),</span> <span class="n">out</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">data</span><span class="o">.</span><span class="n">topology</span><span class="o">.</span><span class="n">mixed</span><span class="p">:</span>
+        <span class="c1"># Point data beside polyhedra is order-1 H1, continuous: both sides of</span>
+        <span class="c1"># every face, polygons of five or more points too, agree.</span>
+        <span class="k">if</span> <span class="n">faces</span><span class="o">.</span><span class="n">num_faces</span><span class="p">:</span>
+            <span class="n">out</span><span class="o">.</span><span class="n">fill</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
     <span class="k">elif</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">space</span><span class="p">,</span> <span class="s2">&quot;order&quot;</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span> <span class="o">&lt;=</span> <span class="mi">1</span> <span class="ow">or</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">space</span><span class="p">,</span> <span class="s2">&quot;varies&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">):</span>
         <span class="c1"># Up to order 1 a side is linear over the face, so its corner values</span>
         <span class="c1"># (traces) give the center exactly -- on a pyramid&#39;s triangles too, whose</span>
@@ -14383,18 +14477,7 @@ the result is each cell's net outflow.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/algorithms/upwind_flux.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">44</span>
-<span class="normal">45</span>
-<span class="normal">46</span>
-<span class="normal">47</span>
-<span class="normal">48</span>
-<span class="normal">49</span>
-<span class="normal">50</span>
-<span class="normal">51</span>
-<span class="normal">52</span>
-<span class="normal">53</span>
-<span class="normal">54</span>
-<span class="normal">55</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">55</span>
 <span class="normal">56</span>
 <span class="normal">57</span>
 <span class="normal">58</span>
@@ -14404,7 +14487,24 @@ the result is each cell's net outflow.</p>
 <span class="normal">62</span>
 <span class="normal">63</span>
 <span class="normal">64</span>
-<span class="normal">65</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">65</span>
+<span class="normal">66</span>
+<span class="normal">67</span>
+<span class="normal">68</span>
+<span class="normal">69</span>
+<span class="normal">70</span>
+<span class="normal">71</span>
+<span class="normal">72</span>
+<span class="normal">73</span>
+<span class="normal">74</span>
+<span class="normal">75</span>
+<span class="normal">76</span>
+<span class="normal">77</span>
+<span class="normal">78</span>
+<span class="normal">79</span>
+<span class="normal">80</span>
+<span class="normal">81</span>
+<span class="normal">82</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">upwind_flux</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">,</span> <span class="n">velocity</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;The flux of ``field`` carried by a constant ``velocity`` through each face, out</span>
 <span class="sd">    of side 0: ``(v . n) * area * u``, ``u`` taken from the upwind side at the face&#39;s</span>
@@ -14418,6 +14518,12 @@ the result is each cell's net outflow.</p>
     <span class="n">vx</span><span class="p">,</span> <span class="n">vy</span><span class="p">,</span> <span class="n">vz</span> <span class="o">=</span> <span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">v</span><span class="p">)</span> <span class="k">for</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">velocity</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">_on_cells</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">):</span>
         <span class="n">for_each</span><span class="p">(</span><span class="n">_cell_upwind</span><span class="p">,</span> <span class="n">data</span><span class="p">,</span> <span class="s2">&quot;faces&quot;</span><span class="p">,</span> <span class="n">materialize</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">values</span><span class="p">),</span> <span class="n">normals</span><span class="o">.</span><span class="n">values</span><span class="p">,</span>
+                 <span class="n">areas</span><span class="o">.</span><span class="n">values</span><span class="p">,</span> <span class="n">vx</span><span class="p">,</span> <span class="n">vy</span><span class="p">,</span> <span class="n">vz</span><span class="p">,</span> <span class="n">out</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">data</span><span class="o">.</span><span class="n">topology</span><span class="o">.</span><span class="n">mixed</span><span class="p">:</span>
+        <span class="c1"># Point data beside polyhedra is order-1 H1, continuous: the upwind side&#39;s</span>
+        <span class="c1"># value at a face&#39;s center is either side&#39;s, the mean of the face&#39;s points</span>
+        <span class="c1"># (a polygon&#39;s fan meets there), so no traces, which hold no polygons.</span>
+        <span class="n">for_each</span><span class="p">(</span><span class="n">_mean_upwind</span><span class="p">,</span> <span class="n">data</span><span class="p">,</span> <span class="s2">&quot;faces&quot;</span><span class="p">,</span> <span class="n">materialize</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">values</span><span class="p">),</span> <span class="n">normals</span><span class="o">.</span><span class="n">values</span><span class="p">,</span>
                  <span class="n">areas</span><span class="o">.</span><span class="n">values</span><span class="p">,</span> <span class="n">vx</span><span class="p">,</span> <span class="n">vy</span><span class="p">,</span> <span class="n">vz</span><span class="p">,</span> <span class="n">out</span><span class="p">)</span>
     <span class="k">else</span><span class="p">:</span>
         <span class="n">for_each</span><span class="p">(</span><span class="n">_upwind</span><span class="p">,</span> <span class="n">data</span><span class="p">,</span> <span class="s2">&quot;faces&quot;</span><span class="p">,</span> <span class="n">traces</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">),</span> <span class="n">normals</span><span class="o">.</span><span class="n">values</span><span class="p">,</span> <span class="n">areas</span><span class="o">.</span><span class="n">values</span><span class="p">,</span>
@@ -14897,51 +15003,7 @@ the pieces' order.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/algorithms/integrate.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">364</span>
-<span class="normal">365</span>
-<span class="normal">366</span>
-<span class="normal">367</span>
-<span class="normal">368</span>
-<span class="normal">369</span>
-<span class="normal">370</span>
-<span class="normal">371</span>
-<span class="normal">372</span>
-<span class="normal">373</span>
-<span class="normal">374</span>
-<span class="normal">375</span>
-<span class="normal">376</span>
-<span class="normal">377</span>
-<span class="normal">378</span>
-<span class="normal">379</span>
-<span class="normal">380</span>
-<span class="normal">381</span>
-<span class="normal">382</span>
-<span class="normal">383</span>
-<span class="normal">384</span>
-<span class="normal">385</span>
-<span class="normal">386</span>
-<span class="normal">387</span>
-<span class="normal">388</span>
-<span class="normal">389</span>
-<span class="normal">390</span>
-<span class="normal">391</span>
-<span class="normal">392</span>
-<span class="normal">393</span>
-<span class="normal">394</span>
-<span class="normal">395</span>
-<span class="normal">396</span>
-<span class="normal">397</span>
-<span class="normal">398</span>
-<span class="normal">399</span>
-<span class="normal">400</span>
-<span class="normal">401</span>
-<span class="normal">402</span>
-<span class="normal">403</span>
-<span class="normal">404</span>
-<span class="normal">405</span>
-<span class="normal">406</span>
-<span class="normal">407</span>
-<span class="normal">408</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">408</span>
 <span class="normal">409</span>
 <span class="normal">410</span>
 <span class="normal">411</span>
@@ -14971,7 +15033,51 @@ the pieces' order.</p>
 <span class="normal">435</span>
 <span class="normal">436</span>
 <span class="normal">437</span>
-<span class="normal">438</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">438</span>
+<span class="normal">439</span>
+<span class="normal">440</span>
+<span class="normal">441</span>
+<span class="normal">442</span>
+<span class="normal">443</span>
+<span class="normal">444</span>
+<span class="normal">445</span>
+<span class="normal">446</span>
+<span class="normal">447</span>
+<span class="normal">448</span>
+<span class="normal">449</span>
+<span class="normal">450</span>
+<span class="normal">451</span>
+<span class="normal">452</span>
+<span class="normal">453</span>
+<span class="normal">454</span>
+<span class="normal">455</span>
+<span class="normal">456</span>
+<span class="normal">457</span>
+<span class="normal">458</span>
+<span class="normal">459</span>
+<span class="normal">460</span>
+<span class="normal">461</span>
+<span class="normal">462</span>
+<span class="normal">463</span>
+<span class="normal">464</span>
+<span class="normal">465</span>
+<span class="normal">466</span>
+<span class="normal">467</span>
+<span class="normal">468</span>
+<span class="normal">469</span>
+<span class="normal">470</span>
+<span class="normal">471</span>
+<span class="normal">472</span>
+<span class="normal">473</span>
+<span class="normal">474</span>
+<span class="normal">475</span>
+<span class="normal">476</span>
+<span class="normal">477</span>
+<span class="normal">478</span>
+<span class="normal">479</span>
+<span class="normal">480</span>
+<span class="normal">481</span>
+<span class="normal">482</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">integrate</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;The measure of ``data`` -- its cells&#39; total volume, area or length -- and the</span>
 <span class="sd">    integral over it of each of ``fields`` (names; a mapping of names to field</span>
@@ -15598,7 +15704,8 @@ origin in double precision before they are located (the pieces of a
 <span class="normal">234</span>
 <span class="normal">235</span>
 <span class="normal">236</span>
-<span class="normal">237</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">237</span>
+<span class="normal">238</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">probe</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">where</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">locator</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;``data``&#39;s fields at the points of ``where`` -- a dataset, or an ``(n, 3)``</span>
 <span class="sd">    array of points, which becomes vertex cells -- as Viskores&#39; Probe and VTK&#39;s</span>
@@ -15721,12 +15828,13 @@ origin in double precision before they are located (the pieces of a
             <span class="n">values</span><span class="o">.</span><span class="n">fill</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
             <span class="n">order</span><span class="p">,</span> <span class="n">links</span> <span class="o">=</span> <span class="n">by_cell</span><span class="p">()</span>
             <span class="k">for</span> <span class="n">group</span> <span class="ow">in</span> <span class="n">data</span><span class="o">.</span><span class="n">launch_groups</span><span class="p">(</span><span class="s2">&quot;cells&quot;</span><span class="p">,</span> <span class="p">[</span><span class="n">f</span><span class="p">]):</span>
-                <span class="k">if</span> <span class="p">(</span><span class="n">group</span><span class="o">.</span><span class="n">count</span> <span class="ow">and</span> <span class="n">locator</span><span class="o">.</span><span class="n">moved_cell_points</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+                <span class="n">fanned</span> <span class="o">=</span> <span class="ow">not</span> <span class="n">group</span><span class="o">.</span><span class="n">shape</span><span class="o">.</span><span class="n">REFERENCE</span>      <span class="c1"># beside shapes, in a mixed mesh</span>
+                <span class="k">if</span> <span class="p">(</span><span class="n">group</span><span class="o">.</span><span class="n">count</span> <span class="ow">and</span> <span class="n">fanned</span> <span class="ow">and</span> <span class="n">locator</span><span class="o">.</span><span class="n">moved_cell_points</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
                         <span class="ow">and</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">space</span><span class="p">,</span> <span class="n">H1</span><span class="p">)):</span>
                     <span class="n">_evaluate_in_moved_tets</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">domain_view</span><span class="p">(</span><span class="s2">&quot;cells&quot;</span><span class="p">,</span> <span class="n">group</span><span class="p">),</span> <span class="n">f</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">group</span><span class="p">),</span>
                                             <span class="o">*</span><span class="n">locator</span><span class="o">.</span><span class="n">moved_cell_points</span><span class="p">,</span> <span class="n">links</span><span class="p">,</span> <span class="n">order</span><span class="p">,</span> <span class="n">tets</span><span class="p">,</span>
                                             <span class="n">pcs</span><span class="p">,</span> <span class="n">values</span><span class="p">)</span>
-                <span class="k">elif</span> <span class="n">group</span><span class="o">.</span><span class="n">count</span> <span class="ow">and</span> <span class="n">locator</span><span class="o">.</span><span class="n">polyhedral</span><span class="p">:</span>
+                <span class="k">elif</span> <span class="n">group</span><span class="o">.</span><span class="n">count</span> <span class="ow">and</span> <span class="n">fanned</span><span class="p">:</span>
                     <span class="n">_evaluate_in_tets</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">domain_view</span><span class="p">(</span><span class="s2">&quot;cells&quot;</span><span class="p">,</span> <span class="n">group</span><span class="p">),</span> <span class="n">f</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">group</span><span class="p">),</span> <span class="n">links</span><span class="p">,</span>
                                       <span class="n">order</span><span class="p">,</span> <span class="n">tets</span><span class="p">,</span> <span class="n">pcs</span><span class="p">,</span> <span class="n">values</span><span class="p">)</span>
                 <span class="k">elif</span> <span class="n">group</span><span class="o">.</span><span class="n">count</span><span class="p">:</span>
@@ -18263,12 +18371,13 @@ application.</p>
         <p><code>data</code>'s pieces, each with a layer of its neighbours' cells added as ghosts:
 a new <code>PartitionedDataSet</code>, as VTK's <code>vtkGhostCellsGenerator</code> makes.</p>
 <p><code>data</code> holds this rank's pieces, all unstructured
-(<code>UnstructuredTopology</code>), all polyhedral (<code>PolyhedralTopology</code>: each
-ghost sent with its faces, wound out of it, and the piece's faces matched
-again, so a face a ghost shares with the piece's own cell is one face) or
-all structured (below), without ghost cells, on any devices. Pieces of two
-kinds -- the split reading's shapes and polyhedra -- are refused:
-<code>as_polyhedra</code> makes the shaped ones polyhedral. <code>world</code> is the
+(<code>UnstructuredTopology</code>, polyhedra or polygons beside shapes too), all
+polyhedral (<code>PolyhedralTopology</code>) or all structured (below), without
+ghost cells, on any devices. A polyhedron is sent with its faces, wound out
+of it, and the piece's faces are matched again, so a face a ghost shares
+with the piece's own cell is one face. Pieces of two kinds -- the split
+reading's shapes and polyhedra -- are refused: <code>as_polyhedra</code> makes the
+shaped ones polyhedral. <code>world</code> is the
 <code>tack.communication.World</code> they live in (<code>data.world</code>, this process
 alone, by default). Pieces neighbour where they share points at exactly
 the same position, or with <code>tolerance</code> at most that far apart (in the
@@ -18442,17 +18551,29 @@ refreshes them, <code>average_down</code> puts fine data into coarse cells.</p>
 <span class="normal">192</span>
 <span class="normal">193</span>
 <span class="normal">194</span>
-<span class="normal">195</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">ghost_cells</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">layers</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">world</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">tolerance</span><span class="o">=</span><span class="mf">0.0</span><span class="p">):</span>
+<span class="normal">195</span>
+<span class="normal">196</span>
+<span class="normal">197</span>
+<span class="normal">198</span>
+<span class="normal">199</span>
+<span class="normal">200</span>
+<span class="normal">201</span>
+<span class="normal">202</span>
+<span class="normal">203</span>
+<span class="normal">204</span>
+<span class="normal">205</span>
+<span class="normal">206</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">ghost_cells</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">layers</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">world</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">tolerance</span><span class="o">=</span><span class="mf">0.0</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;``data``&#39;s pieces, each with a layer of its neighbours&#39; cells added as ghosts:</span>
 <span class="sd">    a new ``PartitionedDataSet``, as VTK&#39;s ``vtkGhostCellsGenerator`` makes.</span>
 
 <span class="sd">    ``data`` holds this rank&#39;s pieces, all unstructured</span>
-<span class="sd">    (``UnstructuredTopology``), all polyhedral (``PolyhedralTopology``: each</span>
-<span class="sd">    ghost sent with its faces, wound out of it, and the piece&#39;s faces matched</span>
-<span class="sd">    again, so a face a ghost shares with the piece&#39;s own cell is one face) or</span>
-<span class="sd">    all structured (below), without ghost cells, on any devices. Pieces of two</span>
-<span class="sd">    kinds -- the split reading&#39;s shapes and polyhedra -- are refused:</span>
-<span class="sd">    ``as_polyhedra`` makes the shaped ones polyhedral. ``world`` is the</span>
+<span class="sd">    (``UnstructuredTopology``, polyhedra or polygons beside shapes too), all</span>
+<span class="sd">    polyhedral (``PolyhedralTopology``) or all structured (below), without</span>
+<span class="sd">    ghost cells, on any devices. A polyhedron is sent with its faces, wound out</span>
+<span class="sd">    of it, and the piece&#39;s faces are matched again, so a face a ghost shares</span>
+<span class="sd">    with the piece&#39;s own cell is one face. Pieces of two kinds -- the split</span>
+<span class="sd">    reading&#39;s shapes and polyhedra -- are refused: ``as_polyhedra`` makes the</span>
+<span class="sd">    shaped ones polyhedral. ``world`` is the</span>
 <span class="sd">    ``tack.communication.World`` they live in (``data.world``, this process</span>
 <span class="sd">    alone, by default). Pieces neighbour where they share points at exactly</span>
 <span class="sd">    the same position, or with ``tolerance`` at most that far apart (in the</span>
@@ -18520,21 +18641,31 @@ refreshes them, <code>average_down</code> puts fine data into coarse cells.</p>
     <span class="n">blocks</span> <span class="o">=</span> <span class="n">tc</span><span class="o">.</span><span class="n">Blocks</span><span class="p">([</span><span class="n">piece</span><span class="o">.</span><span class="n">device</span> <span class="k">for</span> <span class="n">piece</span> <span class="ow">in</span> <span class="n">pieces</span><span class="p">],</span> <span class="n">world</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">blocks</span><span class="o">.</span><span class="n">count</span> <span class="o">&gt;</span> <span class="mi">1</span> <span class="o">&lt;&lt;</span> <span class="p">(</span><span class="mi">63</span> <span class="o">-</span> <span class="n">INDEX_BITS</span><span class="p">):</span>
         <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;ghost_cells handles up to </span><span class="si">{</span><span class="mi">1</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="p">(</span><span class="mi">63</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">INDEX_BITS</span><span class="p">)</span><span class="si">}</span><span class="s2"> pieces&quot;</span><span class="p">)</span>
-    <span class="c1"># 0 unstructured, 1 structured, 2 polyhedral: every rank&#39;s.</span>
+    <span class="c1"># 0 unstructured, 1 structured, 2 polyhedral, 3 unstructured with polyhedra</span>
+    <span class="c1"># beside shapes: every rank&#39;s.</span>
     <span class="n">kinds</span> <span class="o">=</span> <span class="p">{</span><span class="n">g</span><span class="p">:</span> <span class="mi">1</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">topology</span><span class="p">,</span> <span class="n">StructuredTopology</span><span class="p">)</span> <span class="k">else</span>
-             <span class="p">(</span><span class="mi">2</span> <span class="k">if</span> <span class="n">_polyhedral</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">topology</span><span class="p">)</span> <span class="k">else</span> <span class="mi">0</span><span class="p">)</span> <span class="k">for</span> <span class="n">g</span><span class="p">,</span> <span class="n">p</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">blocks</span><span class="o">.</span><span class="n">local</span><span class="p">,</span> <span class="n">pieces</span><span class="p">)}</span>
+             <span class="p">(</span><span class="mi">2</span> <span class="k">if</span> <span class="n">_polyhedral</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">topology</span><span class="p">)</span> <span class="k">else</span>
+              <span class="p">(</span><span class="mi">3</span> <span class="k">if</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">topology</span><span class="p">,</span> <span class="s2">&quot;has_polyhedra&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">)</span> <span class="k">else</span> <span class="mi">0</span><span class="p">))</span>
+             <span class="k">for</span> <span class="n">g</span><span class="p">,</span> <span class="n">p</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">blocks</span><span class="o">.</span><span class="n">local</span><span class="p">,</span> <span class="n">pieces</span><span class="p">)}</span>
     <span class="n">every</span> <span class="o">=</span> <span class="n">blocks</span><span class="o">.</span><span class="n">all_gather</span><span class="p">(</span><span class="n">kinds</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">blocks</span><span class="o">.</span><span class="n">count</span> <span class="ow">and</span> <span class="nb">all</span><span class="p">(</span><span class="n">k</span> <span class="o">==</span> <span class="mi">1</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">every</span><span class="p">):</span>
         <span class="n">out</span><span class="p">,</span> <span class="n">plans</span> <span class="o">=</span> <span class="n">structured_ghost_cells</span><span class="p">(</span><span class="n">blocks</span><span class="p">,</span> <span class="n">pieces</span><span class="p">,</span> <span class="nb">int</span><span class="p">(</span><span class="n">layers</span><span class="p">),</span> <span class="n">names</span><span class="p">,</span> <span class="n">_kind</span><span class="p">)</span>
         <span class="n">result</span> <span class="o">=</span> <span class="n">PartitionedDataSet</span><span class="p">(</span><span class="n">out</span><span class="p">,</span> <span class="n">world</span><span class="o">=</span><span class="n">world</span><span class="p">)</span>
         <span class="n">result</span><span class="o">.</span><span class="n">_ghost_plans</span> <span class="o">=</span> <span class="n">plans</span>
         <span class="k">return</span> <span class="n">result</span>
-    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="nb">set</span><span class="p">(</span><span class="n">every</span><span class="p">))</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+    <span class="k">if</span> <span class="mi">3</span> <span class="ow">in</span> <span class="n">every</span> <span class="ow">and</span> <span class="mi">2</span> <span class="ow">in</span> <span class="n">every</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="s2">&quot;ghost_cells takes pieces read alike, not some with polyhedra beside &quot;</span>
+                        <span class="s2">&quot;shaped cells (vtk_to_dataset&#39;s default reading) and some all &quot;</span>
+                        <span class="s1">&#39;polyhedra (polyhedral=&quot;all&quot;): read every piece the same way&#39;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="nb">set</span><span class="p">(</span><span class="n">every</span><span class="p">)</span> <span class="o">-</span> <span class="p">{</span><span class="mi">3</span><span class="p">})</span> <span class="o">&gt;</span> <span class="mi">1</span> <span class="ow">or</span> <span class="p">(</span><span class="mi">3</span> <span class="ow">in</span> <span class="n">every</span> <span class="ow">and</span> <span class="nb">set</span><span class="p">(</span><span class="n">every</span><span class="p">)</span> <span class="o">-</span> <span class="p">{</span><span class="mi">0</span><span class="p">,</span> <span class="mi">3</span><span class="p">}):</span>
         <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="s2">&quot;ghost_cells takes pieces all structured, all unstructured or all &quot;</span>
                         <span class="s2">&quot;polyhedral, not a mix (as_polyhedra makes an unstructured piece &quot;</span>
                         <span class="s2">&quot;polyhedral)&quot;</span><span class="p">)</span>
 
-    <span class="n">hosts</span> <span class="o">=</span> <span class="p">{</span><span class="n">g</span><span class="p">:</span> <span class="n">_host</span><span class="p">(</span><span class="n">piece</span><span class="p">)</span> <span class="k">for</span> <span class="n">g</span><span class="p">,</span> <span class="n">piece</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">blocks</span><span class="o">.</span><span class="n">local</span><span class="p">,</span> <span class="n">pieces</span><span class="p">)}</span>
+    <span class="c1"># Polyhedra beside shapes anywhere: every unstructured piece sends its cells&#39;</span>
+    <span class="c1"># faces (none for a shape) and joins what it receives by them.</span>
+    <span class="n">rings</span> <span class="o">=</span> <span class="mi">3</span> <span class="ow">in</span> <span class="n">every</span>
+    <span class="n">hosts</span> <span class="o">=</span> <span class="p">{</span><span class="n">g</span><span class="p">:</span> <span class="n">_host</span><span class="p">(</span><span class="n">piece</span><span class="p">,</span> <span class="n">rings</span><span class="p">)</span> <span class="k">for</span> <span class="n">g</span><span class="p">,</span> <span class="n">piece</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">blocks</span><span class="o">.</span><span class="n">local</span><span class="p">,</span> <span class="n">pieces</span><span class="p">)}</span>
     <span class="c1"># Global ids come along where every piece has them, and points are matched</span>
     <span class="c1"># by them then, by position otherwise.</span>
     <span class="n">numbered</span> <span class="o">=</span> <span class="p">{</span><span class="n">kind</span><span class="p">:</span> <span class="nb">bool</span><span class="p">(</span><span class="n">blocks</span><span class="o">.</span><span class="n">all_reduce</span><span class="p">({</span>
@@ -18728,18 +18859,7 @@ exchange moves all the point fields, one all the cell fields.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/algorithms/ghost_cells.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">198</span>
-<span class="normal">199</span>
-<span class="normal">200</span>
-<span class="normal">201</span>
-<span class="normal">202</span>
-<span class="normal">203</span>
-<span class="normal">204</span>
-<span class="normal">205</span>
-<span class="normal">206</span>
-<span class="normal">207</span>
-<span class="normal">208</span>
-<span class="normal">209</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">209</span>
 <span class="normal">210</span>
 <span class="normal">211</span>
 <span class="normal">212</span>
@@ -18759,7 +18879,18 @@ exchange moves all the point fields, one all the cell fields.</p>
 <span class="normal">226</span>
 <span class="normal">227</span>
 <span class="normal">228</span>
-<span class="normal">229</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">update_ghosts</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="o">*</span><span class="n">fields</span><span class="p">):</span>
+<span class="normal">229</span>
+<span class="normal">230</span>
+<span class="normal">231</span>
+<span class="normal">232</span>
+<span class="normal">233</span>
+<span class="normal">234</span>
+<span class="normal">235</span>
+<span class="normal">236</span>
+<span class="normal">237</span>
+<span class="normal">238</span>
+<span class="normal">239</span>
+<span class="normal">240</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">update_ghosts</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="o">*</span><span class="n">fields</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Copy the named fields&#39; values on ghost points and cells from the pieces that</span>
 <span class="sd">    own them, in place, for a ``PartitionedDataSet`` that ``ghost_cells`` or</span>
 <span class="sd">    ``ghost_points`` made.</span>
@@ -19172,7 +19303,9 @@ ids, if they have them, come along as the result's.</p>
 <p>Structured pieces that tile a box of cells (each placed by its
 <code>topology.offset</code>) give one structured grid of the box -- <code>split</code>'s
 input back -- with its offset and its coordinates (uniform, rectilinear
-or explicit); other pieces give an unstructured dataset.</p>
+or explicit); other pieces give an unstructured dataset. Polyhedra beside
+shapes come along with their faces, matched again by their points, so a
+face two pieces' polyhedra share is one face.</p>
 <p>Across MPI ranks every rank passes its pieces and the result is on the
 <code>root</code> rank (<code>None</code> elsewhere), on <code>device</code> (by default the device
 of the root rank's first piece). A root with no pieces gets the merge made
@@ -19244,7 +19377,9 @@ on the first rank that has some, moved to it (on its default device).</p>
 <span class="normal">83</span>
 <span class="normal">84</span>
 <span class="normal">85</span>
-<span class="normal">86</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">merge_pieces</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">root</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">tolerance</span><span class="o">=</span><span class="mf">0.0</span><span class="p">):</span>
+<span class="normal">86</span>
+<span class="normal">87</span>
+<span class="normal">88</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">merge_pieces</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">root</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">tolerance</span><span class="o">=</span><span class="mf">0.0</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;``data``&#39;s pieces as one dataset: every cell a piece owns, once, and every point</span>
 <span class="sd">    once, with the point and cell fields (``fields`` choosing them as filters</span>
 <span class="sd">    do), as VTK&#39;s vtkMergeBlocks after vtkRemoveGhosts.</span>
@@ -19259,7 +19394,9 @@ on the first rank that has some, moved to it (on its default device).</p>
 <span class="sd">    Structured pieces that tile a box of cells (each placed by its</span>
 <span class="sd">    ``topology.offset``) give one structured grid of the box -- ``split``&#39;s</span>
 <span class="sd">    input back -- with its offset and its coordinates (uniform, rectilinear</span>
-<span class="sd">    or explicit); other pieces give an unstructured dataset.</span>
+<span class="sd">    or explicit); other pieces give an unstructured dataset. Polyhedra beside</span>
+<span class="sd">    shapes come along with their faces, matched again by their points, so a</span>
+<span class="sd">    face two pieces&#39; polyhedra share is one face.</span>
 
 <span class="sd">    Across MPI ranks every rank passes its pieces and the result is on the</span>
 <span class="sd">    ``root`` rank (``None`` elsewhere), on ``device`` (by default the device</span>

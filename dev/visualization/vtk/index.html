@@ -3548,6 +3548,8 @@
       
         
       
+        
+      
     
     
     
@@ -4154,6 +4156,34 @@
     
   
     Glossary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/deprecations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deprecations
   
 
     
@@ -5429,11 +5459,15 @@ an image: its positions are computed from its origin and spacing, never stored.<
 </tr>
 <tr>
 <td><code>vtkUnstructuredGrid</code> with polyhedra</td>
-<td><code>PolyhedralTopology</code>, every cell a polyhedron of its faces</td>
+<td><code>UnstructuredTopology</code>, the polyhedra beside the shaped cells (<code>polyhedral="all"</code>: a <code>PolyhedralTopology</code>, every cell a polyhedron of its faces)</td>
 </tr>
 <tr>
-<td>polygons, polylines</td>
-<td><code>PolygonalTopology</code>, <code>PolylineTopology</code></td>
+<td>polygons</td>
+<td><code>UnstructuredTopology</code>, the polygons beside the triangles and quads (<code>polyhedral="all"</code>: a <code>PolygonalTopology</code>, every cell a polygon)</td>
+</tr>
+<tr>
+<td>polylines</td>
+<td><code>PolylineTopology</code></td>
 </tr>
 <tr>
 <td><code>vtkPolyData</code></td>
@@ -6342,14 +6376,14 @@ so.</p>
 </thead>
 <tbody>
 <tr>
-<td><code>polyhedral=True</code></td>
+<td><code>polyhedral="all"</code></td>
 <td>reads every cell as a polyhedron of its faces</td>
-<td>a mesh to treat as polyhedra throughout</td>
+<td>a mesh to treat as polyhedra throughout, or an algorithm that does not take polyhedra beside shaped cells yet</td>
 </tr>
 <tr>
 <td><code>polyhedral="split"</code></td>
 <td>gives a <code>PartitionedDataSet</code> of two pieces over the same points: the shaped cells, and the polyhedra</td>
-<td>a large mesh with a few polyhedra, so the shaped cells stay shaped</td>
+<td>nothing new: <a href="../../reference/deprecations/">deprecated</a> since 0.8 and removed in 0.9, now that the default reading keeps the shaped cells shaped in one topology</td>
 </tr>
 <tr>
 <td><code>merge_points=True</code> (or a tolerance)</td>
@@ -6368,10 +6402,13 @@ so.</p>
 </tr>
 </tbody>
 </table>
-<p>A topology holds either shaped cells or polyhedra for now, which is why a grid
-that has any polyhedra reads as polyhedra. With <code>polyhedral="split"</code>, each
-point is owned by one of the two pieces, so reductions count it once; see
-<a href="../../data/pieces/">Pieces</a>.</p>
+<p>By default a grid's polyhedra stand beside its shaped cells in one
+<code>UnstructuredTopology</code>, as VTK holds them: one point and one cell numbering,
+and a face a hexahedron and a polyhedron share is one face with both as its
+sides. Every algorithm takes such meshes but <code>shrink</code> and <code>subdivide</code>, which
+say so by name (as do spaces that need a reference element in every cell,
+<code>H1</code> above order 1 and <code>L2</code>); <code>polyhedral="all"</code> reads the mesh the way they
+take it.</p>
 <p>Inside-out cells are found on every read and named in a warning. Wedges are
 the usual case: VTK's documentation long described the wedge's corner order
 the reverse of how its code uses it, and writers that followed the

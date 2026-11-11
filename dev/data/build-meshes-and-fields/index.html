@@ -3549,6 +3549,8 @@
       
         
       
+        
+      
     
     
     
@@ -4155,6 +4157,34 @@
     
   
     Glossary
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/deprecations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deprecations
   
 
     
@@ -5440,8 +5470,13 @@ names the VTK class you may already use.</p>
 <td>a position per point</td>
 </tr>
 <tr>
-<td><code>vtkPolyData</code> of polygons or lines</td>
-<td><code>td.PolygonalTopology</code>, <code>td.PolylineTopology</code></td>
+<td><code>vtkPolyData</code> of polygons</td>
+<td><code>td.UnstructuredTopology(types, offsets, loops)</code>, type 7 a polygon beside triangles (5) and quads (9); or <code>td.PolygonalTopology</code>, every cell a polygon</td>
+<td>a position per point</td>
+</tr>
+<tr>
+<td><code>vtkPolyData</code> of lines</td>
+<td><code>td.PolylineTopology</code></td>
 <td>a position per point</td>
 </tr>
 <tr>

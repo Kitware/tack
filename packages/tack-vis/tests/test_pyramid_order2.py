@@ -82,7 +82,7 @@ def _mesh(kind, n=3):
 
 
 @pytest.mark.parametrize("kind", ["pyramids", "mixed"])
-def test_l2_of_order_2_holds_every_quadratic(backend, kind):
+def test_l2_of_order_2_holds_every_quadratic(kind):
     """VTK's order-2 pyramid holds every quadratic of the world on straight pyramids:
     one interpolated into L2 of order 2 is itself everywhere -- probed, integrated,
     and its gradient at every node, the apex's (extrapolated along the axis, where
@@ -104,7 +104,7 @@ def test_l2_of_order_2_holds_every_quadratic(backend, kind):
                                rtol=0, atol=1e-10)
 
 
-def test_bounds_hold_the_field(backend):
+def test_bounds_hold_the_field():
     """value_range bounds the field over each pyramid (from its Bernstein
     coefficients), and flatness is zero for a field the corners interpolate."""
     data = _mesh("pyramids", 2)
@@ -143,7 +143,7 @@ def _samples(cells, u, pcs, out):
             out[cells.entity_id(c) * pcs.shape[0] + k] = u.value(c, pcs[k])
 
 
-def test_whole_cells_keep_their_values(backend):
+def test_whole_cells_keep_their_values():
     """A filter keeping whole cells keeps an order-2 pyramid field as it is."""
     data = _mesh("mixed")
     data.fields["u"] = td.interpolate(data, _quadratic, td.L2(data, order=2), dtype=tack.f64)
@@ -160,7 +160,7 @@ def _bend(x):
 
 
 @pytest.mark.parametrize("kind", ["pyramids", "mixed"])
-def test_h1_of_order_2_holds_every_quadratic(backend, kind):
+def test_h1_of_order_2_holds_every_quadratic(kind):
     """H1 of order 2 on pyramids, its values shared by entity (a value at each triangle
     face's centre where a pyramid has the face): a quadratic is itself everywhere."""
     data = _mesh(kind)
@@ -178,7 +178,7 @@ def test_h1_of_order_2_holds_every_quadratic(backend, kind):
 
 
 @pytest.mark.parametrize("kind", ["pyramids", "mixed"])
-def test_a_curved_geometry_of_order_2(backend, kind):
+def test_a_curved_geometry_of_order_2(kind):
     """A quadratic map of the cube held exactly by an order-2 geometry: the cells'
     volumes sum to its volume, and points are located in curved pyramids -- a field
     equal to the geometry probes back the points asked for."""
@@ -204,7 +204,7 @@ def _ball(x):
 
 @pytest.mark.parametrize("kind", ["pyramids", "conforming"])
 @pytest.mark.parametrize("space", ["H1", "L2"])
-def test_cuts_of_order_2_pyramids(backend, kind, space):
+def test_cuts_of_order_2_pyramids(kind, space):
     """Cuts subdivide pyramids at level 2 into 6 pyramids and 4 tetrahedra on their
     order-2 nodes: a closed level set's contour is watertight where pyramids meet
     pyramids and hexahedra, and near the level; a clip's two sides fill the cube;
@@ -231,7 +231,7 @@ def test_cuts_of_order_2_pyramids(backend, kind, space):
 
 
 @pytest.mark.parametrize("curved", [False, True])
-def test_the_surface_of_order_2_pyramids(backend, curved):
+def test_the_surface_of_order_2_pyramids(curved):
     """Every other pyramid of the cube, so that triangle faces are on the surface: an
     order-2 field on the surface is the solid's trace there, H1 (its edges' and the
     base's centre gathered) and L2 (each face's nodes taken into its cell's collapsed
@@ -254,7 +254,7 @@ def test_the_surface_of_order_2_pyramids(backend, curved):
             rtol=0, atol=1e-12)
 
 
-def test_what_pyramids_refuse(backend):
+def test_what_pyramids_refuse():
     data = _mesh("pyramids", 1)
     # Order 3 and up is the pyramid's own space (test_pyramid_high_order).
     with pytest.raises(NotImplementedError, match="on pyramids at order 2"):

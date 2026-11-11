@@ -18,15 +18,16 @@ from tack import communication as tc
 
 def main():
     comm = MPI.COMM_WORLD
-    for structured in (True, False):
-        mine = case.merged_across(tc.World(comm), structured)
+    for structured, high_order in ((True, False), (False, False), (True, True)):
+        mine = case.merged_across(tc.World(comm), structured, high_order)
         results = comm.gather(mine, root=0)
         if comm.rank == 0:
             assert results[0] is not None and all(r is None for r in results[1:])
-            alone = case.merged_across(tc.World(), structured)
-            assert results[0] == alone, f"structured={structured} differs"
+            alone = case.merged_across(tc.World(), structured, high_order)
+            assert results[0] == alone, (structured, high_order)
     if comm.rank == 0:
-        print(f"ok: merged on rank 0 of {comm.size}, structured and not", flush=True)
+        print(f"ok: merged on rank 0 of {comm.size}, structured and not, and of high "
+              "order", flush=True)
 
 
 if __name__ == "__main__":

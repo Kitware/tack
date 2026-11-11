@@ -197,6 +197,116 @@ def test_pieces_on_two_devices_and_the_result_device():
     _is_whole(merged.to_device("cpu"), whole)
 
 
+@tack.func
+def _cubic(x):
+    return x[0] * x[0] * x[1] + 0.5 * x[2] * x[2] * x[2] - x[0] * x[1] * x[2] + 1.0
+
+
+@tack.func
+def _bend(x):
+    return [x[0] + 0.1 * x[1] * x[1], x[1] + 0.12 * x[0] * x[0], x[2] + 0.05 * x[0] * x[1]]
+
+
+def _high_order(data, layout="blocks"):
+    """``data`` bent at order 2, with a cubic in H1 of order 3 (Gauss-Lobatto) and in
+    L2 of order 3 (equispaced, in ``layout``), and an L2 field of an order per cell."""
+    data.geometry = td.interpolate(data, _bend, td.H1(data, order=2),
+                                   dtype=tack.vec3(tack.f64))
+    data.fields["u"] = td.interpolate(data, _cubic, td.H1(data, order=3), dtype=tack.f64)
+    data.fields["w"] = td.interpolate(
+        data, _cubic, td.L2(data, order=3, basis="equispaced", layout=layout), dtype=tack.f64)
+    orders = np.arange(data.num_cells) % 2
+    data.fields["p"] = td.interpolate(data, _cubic, td.L2(data, order=orders), dtype=tack.f64)
+    return data
+
+
+def test_structured_pieces_of_high_order_merge_into_the_whole_grid(f64_backend):
+    """split's pieces of a curved grid with fields of higher order, ghosts or not:
+    the whole again, every value bit for bit."""
+    whole = _high_order(td.uniform_grid((7, 6, 5), spacing=(0.2, 0.2, 0.25), dtype=tack.f64))
+    for layers in (0, 1):
+        merged = td.merge_pieces(td.split(whole, 4, ghost_layers=layers))
+        assert isinstance(merged.topology, td.StructuredTopology)
+        assert repr(merged.geometry.space) == repr(whole.geometry.space)
+        np.testing.assert_array_equal(merged.geometry.values.numpy(),
+                                      whole.geometry.values.numpy())
+        for name in whole.fields:
+            assert repr(merged.fields[name].space) == repr(whole.fields[name].space), name
+            np.testing.assert_array_equal(merged.fields[name].values.numpy(),
+                                          whole.fields[name].values.numpy(), err_msg=name)
+
+
+@pytest.mark.parametrize("cells", ["hexahedra", "tetrahedra", "mixed"])
+@pytest.mark.parametrize("layout", ["blocks", "cells"])
+def test_unstructured_pieces_of_high_order_merge_at_their_order(f64_backend, cells, layout):
+    """Pieces of curved cells (hexahedra, tetrahedra, or hexahedra beside wedges)
+    with fields of higher order merge at their orders: each value is the field's at
+    the merged mesh's own nodes, and the whole's volume is kept. A field in another
+    space on one piece is refused."""
+    grid = td.uniform_grid((5, 5, 5), spacing=(0.25, 0.25, 0.25), dtype=tack.f64)
+    hexes = td.extract_cells(grid, np.arange(grid.num_cells))
+    if cells == "tetrahedra":
+        data = td.tetrahedralize(hexes)
+    elif cells == "mixed":
+        conn = hexes.topology.connectivity.numpy().reshape(-1, 8)
+        rows, types = [], []
+        for k, h in enumerate(conn):
+            if k % 2:
+                rows += [h[[0, 1, 3, 4, 5, 7]], h[[1, 2, 3, 5, 6, 7]]]
+                types += [td.shapes.WEDGE] * 2
+            else:
+                rows.append(h)
+                types.append(td.shapes.HEXAHEDRON)
+        sizes = [len(r) for r in rows]
+        topology = td.UnstructuredTopology(
+            tack.array(np.array(types, np.uint8)),
+            tack.array(np.concatenate(([0], np.cumsum(sizes))).astype(np.int32)),
+            tack.array(np.concatenate(rows).astype(np.int32)), num_points=hexes.num_points)
+        data = td.DataSet(topology, hexes.positions())
+    else:
+        data = hexes
+    if cells != "hexahedra" and layout == "cells":
+        pytest.skip("the cell-fastest layout is for tensor bases")
+    whole = _high_order(td.DataSet(data.topology, data.geometry), layout)
+    n = whole.num_cells
+    parts = [td.extract_cells(whole, np.arange(0, n // 3)),
+             td.extract_cells(whole, np.arange(n // 3, n))]
+    merged = td.merge_pieces(td.PartitionedDataSet(parts))
+    assert (merged.num_cells, merged.num_points) == (whole.num_cells, whole.num_points)
+    assert merged.geometry.space.order == 2
+    for name in whole.fields:
+        field = merged.fields[name]
+        assert type(field.space) is type(whole.fields[name].space)
+        expected = td.interpolate(merged, _cubic, field.space, dtype=tack.f64)
+        np.testing.assert_allclose(field.values.numpy(), expected.values.numpy(), rtol=0,
+                                   atol=1e-12, err_msg=name)
+    np.testing.assert_allclose(td.integrate(merged, fields=["u"]).measure,
+                               td.integrate(whole, fields=["u"]).measure, rtol=1e-13)
+    other = td.extract_cells(whole, np.arange(n // 3, n))
+    other.fields["u"] = td.interpolate(other, _cubic, td.H1(other, order=2), dtype=tack.f64)
+    with pytest.raises(ValueError, match="one space"):
+        td.merge_pieces(td.PartitionedDataSet([parts[0], other]))
+
+
+def test_a_merged_dataset_of_high_order_travels_to_the_root(f64_backend):
+    """What moves a merged dataset to the root rank (_described, _rebuilt) keeps a
+    curved geometry and fields of higher order, an order per cell too."""
+    import importlib
+
+    module = importlib.import_module("tack.dataset.algorithms.merge_pieces")
+
+    whole = _high_order(td.extract_cells(td.uniform_grid((4, 4, 4), dtype=tack.f64),
+                                         np.arange(27)))
+    description, payload = module._described(whole)
+    again = module._rebuilt(description, payload)
+    assert repr(again.geometry.space) == repr(whole.geometry.space)
+    np.testing.assert_array_equal(again.geometry.values.numpy(), whole.geometry.values.numpy())
+    for name in whole.fields:
+        assert repr(again.fields[name].space) == repr(whole.fields[name].space), name
+        np.testing.assert_array_equal(again.fields[name].values.numpy(),
+                                      whole.fields[name].values.numpy(), err_msg=name)
+
+
 def test_merge_pieces_across_mpi_ranks(mpiexec):
     script = os.path.join(os.path.dirname(__file__), "_merge_pieces_mpi.py")
     for ranks in (2, 3):
@@ -204,10 +314,15 @@ def test_merge_pieces_across_mpi_ranks(mpiexec):
         assert run.returncode == 0 and "ok" in run.stdout, run.stdout + run.stderr
 
 
-def merged_across(world, structured):
+def merged_across(world, structured, high_order=False):
     """This rank's share of six pieces merged onto rank 0: the dataset described,
-    or ``None`` on the other ranks."""
-    whole = _with_fields(td.wavelet(4))
+    or ``None`` on the other ranks. ``high_order``: of a curved grid with fields of
+    higher order, its geometry's and fields' values."""
+    if high_order:
+        whole = _high_order(td.uniform_grid((7, 6, 5), spacing=(0.2, 0.2, 0.25),
+                                            dtype=tack.f64))
+    else:
+        whole = _with_fields(td.wavelet(4))
     every = list(td.split(whole, 6, ghost_layers=1))
     if not structured:
         every = list(_unstructured(every))
@@ -215,4 +330,7 @@ def merged_across(world, structured):
     merged = td.merge_pieces(td.PartitionedDataSet([every[i] for i in mine], world))
     if merged is None:
         return None
+    if high_order:
+        return (type(merged.topology).__name__, merged.geometry.values.numpy().tolist(),
+                {n: merged.fields[n].values.numpy().tolist() for n in sorted(merged.fields)})
     return (type(merged.topology).__name__, described(_marked(merged)))

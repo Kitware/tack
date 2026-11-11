@@ -190,9 +190,15 @@ def _quadratic_layout(cells, u, indices, nodes, width):
 def _quadratic_values(data, mesh, gf):
     """``gf`` at every value of ``data``'s H1 order-2 space: each element evaluates it
     at its quadratic nodes, whose parametric coordinates are MFEM's reference
-    coordinates too (the corners agree, and so the references)."""
+    coordinates too (the corners agree, and so the references). Pyramids are refused:
+    Tack's order 2 there is VTK's 18-node pyramid, and MFEM's order-2 pyramid space is
+    another, so its values at those nodes would not give its function."""
     from tack.arrays import ConstantArray
-    from tack.dataset import H1, Field, for_each
+    from tack.dataset import H1, Field, for_each, shapes
+
+    if any(g.count and g.shape is shapes.Pyramid for g in data.topology.groups()):
+        raise NotImplementedError("MFEM's order-2 space on Pyramid cells is not Tack's "
+                                  "(VTK's 18-node pyramid): not mapped yet")
 
     m = _mfem()
     space = H1(data, order=2)

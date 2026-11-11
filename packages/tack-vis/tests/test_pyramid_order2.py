@@ -68,7 +68,9 @@ def _mesh(kind, n=3):
                               (shapes.WEDGE, [h8[a] for a in (1, 2, 3, 5, 6, 7)])]
                 else:
                     points.append(list(np.mean([points[p] for p in h8], axis=0)))
-                    cells += [(shapes.PYRAMID, [h8[f] for f in face] + [len(points) - 1])
+                    # Each face of the hexahedron, wound outward, is a base wound
+                    # away from the centre: reversed, it goes round toward the apex.
+                    cells += [(shapes.PYRAMID, [h8[f] for f in face[::-1]] + [len(points) - 1])
                               for face in faces]
     types = np.array([int(t) for t, _ in cells], np.uint8)
     offsets = np.concatenate([[0], np.cumsum([len(c) for _, c in cells])])
@@ -150,6 +152,48 @@ def test_whole_cells_keep_their_values(backend):
                                _quadratic_at(points), rtol=0, atol=1e-12)
 
 
+@tack.func
+def _bend(x):
+    return [x[0] + 0.05 * x[1] * x[1], x[1] + 0.04 * x[0] * x[2], x[2] + 0.03 * x[0] * x[0]]
+
+
+@pytest.mark.parametrize("kind", ["pyramids", "mixed"])
+def test_h1_of_order_2_holds_every_quadratic(backend, kind):
+    """H1 of order 2 on pyramids, its values shared by entity (a value at each triangle
+    face's centre where a pyramid has the face): a quadratic is itself everywhere."""
+    data = _mesh(kind)
+    space = td.H1(data, order=2)
+    data.fields["u"] = td.interpolate(data, _quadratic, space, dtype=tack.f64)
+    points = np.random.default_rng(4).uniform(0.02, 0.98, (200, 3))
+    np.testing.assert_allclose(td.probe(data, points).fields["u"].values.numpy(),
+                               _quadratic_at(points), rtol=0, atol=1e-12)
+    np.testing.assert_allclose(td.integrate(data, "u").values["u"],
+                               1 + 1 / 3 + 2 / 4 + 0.25 - 0.7 / 4, rtol=0, atol=1e-12)
+    centers = td.cell_centers(data).values.numpy()
+    np.testing.assert_allclose(td.gradients(data, "u", at="cells").values.numpy().reshape(-1, 3),
+                               _gradient_at(centers), rtol=0, atol=1e-10)
+    assert (td.cell_geometry(data).measure.values.numpy() > 0).all()
+
+
+@pytest.mark.parametrize("kind", ["pyramids", "mixed"])
+def test_a_curved_geometry_of_order_2(backend, kind):
+    """A quadratic map of the cube held exactly by an order-2 geometry: the cells'
+    volumes sum to its volume, and points are located in curved pyramids -- a field
+    equal to the geometry probes back the points asked for."""
+    data = _mesh(kind)
+    data.geometry = td.interpolate(data, _bend, td.H1(data, order=2), dtype=tack.vec3(tack.f64))
+    volume = td.cell_geometry(data).measure.values.numpy()
+    assert (volume > 0).all()
+    # det of the bend's Jacobian is 1 - 0.004 y z + 0.00024 x^2 y.
+    np.testing.assert_allclose(volume.sum(), 1 - 0.004 / 4 + 0.00024 / 6, rtol=0, atol=1e-12)
+    data.fields["x"] = td.interpolate(data, _where, td.H1(data, order=2), dtype=tack.vec3(tack.f64))
+    reference = np.random.default_rng(8).uniform(0.05, 0.95, (300, 3))
+    x, y, z = reference.T
+    points = np.stack([x + 0.05 * y * y, y + 0.04 * x * z, z + 0.03 * x * x], axis=1)
+    probed = td.probe(data, points).fields["x"].values.numpy()
+    np.testing.assert_allclose(probed, points, rtol=0, atol=1e-9)
+
+
 def test_what_pyramids_refuse(backend):
     data = _mesh("pyramids", 1)
     with pytest.raises(NotImplementedError, match="order 2 on pyramids"):
@@ -158,5 +202,5 @@ def test_what_pyramids_refuse(backend):
         _ = td.L2(data, order=2, basis="gauss_legendre").size
     with pytest.raises(ValueError, match="stored in blocks"):
         _ = td.L2(data, order=3, layout="cells").layout
-    with pytest.raises(NotImplementedError, match="H1 order 2 on Pyramid"):
-        _ = td.H1(data, order=2).size
+    with pytest.raises(NotImplementedError, match="H1 order 3 on Pyramid"):
+        _ = td.H1(data, order=3).size

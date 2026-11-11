@@ -1151,6 +1151,28 @@ class _H1Order2Geometry(_QuadraticDofs, _Geometry):
         return m
 
 
+
+class _H1PyramidGeometry(_H1Order2Geometry):
+    """A curved pyramid of order 2 (VTK's 18 nodes): its box from the Bernstein
+    coefficients of its positions (``Pyramid.quadratic_coefficient``), which hold
+    it, where the order-2 formulas are for quad faces."""
+
+    @tack.func
+    def control_box(self, c):
+        a = self.corner_position(c, 0)
+        b = a
+        for m in range(36):
+            p = a - a
+            for k in range(18):
+                w = self.quadratic_coefficient(k, m)
+                if w != 0:
+                    p += w * self.get(self.dof_index(c, k))
+            p = p / 12.0
+            a = min(a, p)
+            b = max(b, p)
+        return a, b
+
+
 class _SideZeroGeometry(_Geometry):
     """A face's positions from its side 0's cell: the face as that cell sees it.
     For an L2 geometry, whose cells have their own corners, a face has no
@@ -1627,6 +1649,15 @@ class _PyramidRange:
                     d = self._bernstein_coefficient(c, i + 3 * j + 9 * l) - linear
                     worst = max(worst, abs(d))
         return worst
+
+
+class _H1PyramidField(_QuadraticDofs, _PyramidRange, _QuadraticValues, _Interpolated):
+    """H1 of order 2 on pyramids: VTK's 18-node pyramid, its values shared by entity
+    (points, edges, the base's centre on its quad face, a centre on each triangle
+    face) as ``_H1Order2Field``'s, its bounds from its Bernstein coefficients."""
+
+    ORDER = 2
+    NODES = 18
 
 
 class _L2PyramidField(_PyramidRange, _QuadraticValues, _Interpolated):
@@ -3537,11 +3568,12 @@ class _EdgeDof:
 
 
 class _FaceDof:
-    """H1 order 2's node at a quad face's center."""
+    """H1 order 2's node at a face's center: a quad's, or a pyramid's triangle's (none
+    where the face holds no value, ``node_face_dofs`` -1: a triangle no pyramid has)."""
 
     @tack.func
     def node_count(self, i):
-        return 1
+        return 1 if self.node_face_dofs[self.entity_id(i)] >= 0 else 0
 
     @tack.func
     def node_dof(self, i, j):

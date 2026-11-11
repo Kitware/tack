@@ -276,6 +276,15 @@ def _face_counts(kinds, per_quad, per_triangle, counts):
 
 
 @tack.kernel
+def _mark_pyramid_faces(cells, side_face, start, counts):
+    # One value at each of a pyramid's triangle faces (local faces 1 to 4); a face
+    # two pyramids share is marked twice, alike.
+    for c in cells:
+        for f in range(1, 5):
+            counts[side_face[start + cells.index(c) * 5 + f]] = 1
+
+
+@tack.kernel
 def _place(counts, slots, base, out):
     for i in range(counts.shape[0]):
         out[i] = base + slots[i] if counts[i] > 0 else -1
@@ -551,14 +560,11 @@ class H1(Space):
                 if not group.count:
                     continue
                 _refuse_bernstein(self, group.shape)
-                # The pyramid has its 18 functions (shapes.Pyramid), but no layout yet:
-                # its triangle faces' centres need values the other shapes' do not.
-                if p == 2 and not self._any_order(group.shape) and (
-                        not group.shape.NUM_QUADRATIC or group.shape is shapes.Pyramid):
+                if p == 2 and not self._any_order(group.shape) and not group.shape.NUM_QUADRATIC:
                     raise NotImplementedError(
                         f"H1 order 2 on {group.shape.__name__} cells is not supported yet; "
-                        "it is on tetrahedra, hexahedra, voxels, wedges, triangles, quads "
-                        "and pixels")
+                        "it is on tetrahedra, hexahedra, voxels, wedges, pyramids, triangles, "
+                        "quads and pixels")
                 if p > 2 and not bases.has_bases(group.shape):
                     raise NotImplementedError(
                         f"H1 order {p} on {group.shape.__name__} cells is not supported "
@@ -585,6 +591,14 @@ class H1(Space):
             if nf:
                 _face_counts(faces.kinds, 0 if serendipity else (p - 1) ** 2,
                              (p - 1) * (p - 2) // 2 if p > 2 else 0, counts)
+                if p == 2 and not serendipity:
+                    # VTK's order-2 pyramid has a node at each triangle face's
+                    # centre, which no other shape's order 2 has: a value on the
+                    # triangle faces pyramids have, and on those alone.
+                    for group in topology.groups():
+                        if group.count and group.shape is shapes.Pyramid:
+                            _mark_pyramid_faces(group.view(), faces.side_face,
+                                                faces.group_starts[group.root], counts)
                 on_faces = exclusive_scan(counts, slots, nf)
                 _place(counts, slots, base, face_dofs)
             counts = tack.zeros((n,), tack.i32)
@@ -710,6 +724,8 @@ class H1(Space):
                                                      bernstein))
         if self.order == 2 and shape is not None and self._any_order(shape):
             return self._tabled(views.of_order(views._H1TensorField, 2, bernstein))
+        if self.order == 2 and shape is shapes.Pyramid:
+            return views._H1PyramidField
         return self.mixin
 
     def extra_mixins(self, group):

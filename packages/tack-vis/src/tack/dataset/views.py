@@ -1677,6 +1677,223 @@ class _L2PyramidField(_PyramidRange, _QuadraticValues, _Interpolated):
         return self.get(self.dof_index(c, n))
 
 
+@tack.func
+def _bernstein_rows(p, x, buf, at):
+    # buf[at:at + 3q] (q = p + 1): the Bernstein polynomials of degree p - 2, p - 1 and
+    # p at x, a row each (entries past a row's degree zero), by de Casteljau's
+    # recurrence on the last row, the lower degrees copied as it passes them.
+    q = p + 1
+    zero = x - x
+    for i in range(3 * q):
+        buf[at + i] = zero
+    row = at + 2 * q
+    buf[row] = zero + 1.0
+    for r in range(1, p + 1):
+        for back in range(r + 1):
+            i = r - back                  # from the top down, in place
+            left = zero
+            if i > 0:
+                left = buf[row + i - 1]
+            buf[row + i] = (1.0 - x) * buf[row + i] + x * left
+        if r == p - 2:
+            for i in range(q):
+                buf[at + i] = buf[row + i]
+        if r == p - 1:
+            for i in range(q):
+                buf[at + q + i] = buf[row + i]
+    if p == 1:
+        buf[at + q] = zero + 1.0          # degree 0
+    if p == 2:
+        buf[at] = zero + 1.0
+
+
+@tack.func
+def _bernstein_entry(buf, at, i, n):
+    # Row entry i of a row holding degree n (0 outside 0..n).
+    v = buf[at] - buf[at]
+    if i >= 0 and i <= n:
+        v = buf[at + i]
+    return v
+
+
+@tack.func
+def _bernstein_terms(p, buf, at, i):
+    # B_i^p, its first and second derivatives, from _bernstein_rows' rows at ``at``.
+    q = p + 1
+    b = buf[at + 2 * q + i]
+    d = p * (_bernstein_entry(buf, at + q, i - 1, p - 1) - _bernstein_entry(buf, at + q, i, p - 1))
+    dd = p * (p - 1) * (_bernstein_entry(buf, at, i - 2, p - 2)
+                        - 2.0 * _bernstein_entry(buf, at, i - 1, p - 2)
+                        + _bernstein_entry(buf, at, i, p - 2))
+    return b, d, dd
+
+
+class _L2PyramidOrderField(_Interpolated):
+    """L2 of order 3 and up on pyramids (Bergot, Cohen and Duruflé's space, VTK's ``G``
+    pyramid's): each cell's ``NODES`` values from ``offsets[cell]`` at the pyramid's
+    lattice (``bases.pyramid_nodes``, in ``pyramid_points``), each node's function a
+    sum of tensor Bernstein polynomials of degree ``ORDER`` in the collapsed
+    coordinates (``pyramid_coefficients``, ``bases.pyramid_bernstein``): values and
+    derivatives from the axes' Bernstein polynomials, bounds from the cell's
+    coefficients."""
+
+    @tack.func
+    def dof_index(self, c, n):
+        return self.offsets[self.entity_id(c)] + n
+
+    @tack.func
+    def dof(self, c, n):
+        return self.get(self.dof_index(c, n))
+
+    @tack.func
+    def node_parametric(self, k):
+        return tack.vec3(self.pyramid_points[3 * k], self.pyramid_points[3 * k + 1],
+                         self.pyramid_points[3 * k + 2])
+
+    @tack.func
+    def parametric_jet(self, c, pc):
+        """The value, parametric gradient and Hessian at ``pc``, each node's function
+        built from the axes' Bernstein polynomials, relative to the first value."""
+        q = self.ORDER + 1
+        m = q * q * q
+        buf = tack.local_array_like(self.pyramid_coefficients, 9 * (self.ORDER + 1))
+        _bernstein_rows(self.ORDER, pc[0], buf, 0)
+        _bernstein_rows(self.ORDER, pc[1], buf, 3 * q)
+        _bernstein_rows(self.ORDER, pc[2], buf, 6 * q)
+        first = self.dof(c, 0)
+        value = first - first
+        grad = tack.vec3(value, value, value)
+        hess = tack.mat3([value, value, value], [value, value, value], [value, value, value])
+        for k in range(self.NODES):
+            d = self.dof(c, k) - first
+            for l in range(q):
+                bt, dt, ddt = _bernstein_terms(self.ORDER, buf, 6 * q, l)
+                for j in range(q):
+                    bs, ds, dds = _bernstein_terms(self.ORDER, buf, 3 * q, j)
+                    for i in range(q):
+                        w = self.pyramid_coefficients[k * m + i + q * j + q * q * l]
+                        if w != 0.0:
+                            br, dr, ddr = _bernstein_terms(self.ORDER, buf, 0, i)
+                            dw = d * w
+                            value += dw * (br * bs * bt)
+                            grad += dw * tack.vec3(dr * bs * bt, br * ds * bt, br * bs * dt)
+                            hess += dw * tack.mat3(
+                                [ddr * bs * bt, dr * ds * bt, dr * bs * dt],
+                                [dr * ds * bt, br * dds * bt, br * ds * dt],
+                                [dr * bs * dt, br * ds * dt, br * bs * ddt])
+        return first + value, grad, hess
+
+    @tack.func
+    def value(self, c, pc):
+        q = self.ORDER + 1
+        m = q * q * q
+        buf = tack.local_array_like(self.pyramid_coefficients, 9 * (self.ORDER + 1))
+        _bernstein_rows(self.ORDER, pc[0], buf, 0)
+        _bernstein_rows(self.ORDER, pc[1], buf, 3 * q)
+        _bernstein_rows(self.ORDER, pc[2], buf, 6 * q)
+        first = self.dof(c, 0)
+        total = first - first
+        for k in range(self.NODES):
+            d = self.dof(c, k) - first
+            for l in range(q):
+                bt = buf[6 * q + 2 * q + l]
+                for j in range(q):
+                    bst = buf[3 * q + 2 * q + j] * bt
+                    for i in range(q):
+                        w = self.pyramid_coefficients[k * m + i + q * j + q * q * l]
+                        if w != 0.0:
+                            total += d * w * (buf[2 * q + i] * bst)
+        return first + total
+
+    @tack.func
+    def parametric_gradient(self, c, pc):
+        _, g, _ = self.parametric_jet(c, pc)
+        return g
+
+    @tack.func
+    def parametric_hessian(self, c, pc):
+        _, _, h = self.parametric_jet(c, pc)
+        return h
+
+    @tack.func
+    def _bernstein_coefficient(self, c, m):
+        q = self.ORDER + 1
+        total = self.dof(c, 0) - self.dof(c, 0)
+        for k in range(self.NODES):
+            w = self.pyramid_coefficients[k * q * q * q + m]
+            if w != 0.0:
+                total += w * self.dof(c, k)
+        return total
+
+    @tack.func
+    def value_range(self, c):
+        lo = self._bernstein_coefficient(c, 0)
+        hi = lo
+        q = self.ORDER + 1
+        for m in range(1, q * q * q):
+            v = self._bernstein_coefficient(c, m)
+            lo = min(lo, v)
+            hi = max(hi, v)
+        return lo, hi
+
+    @tack.func
+    def flatness(self, c):
+        # Each coefficient's distance from the order-1 pyramid of the corners at its
+        # Greville point (i/p, j/p, l/p), as _PyramidRange's.
+        p = self.ORDER
+        q = p + 1
+        c0 = self.dof(c, 0)
+        c1 = self.dof(c, p)
+        c2 = self.dof(c, q * q - 1)
+        c3 = self.dof(c, p * q)
+        apex = self.dof(c, self.NODES - 1)
+        zero = c0 - c0
+        worst = abs(zero)
+        for l in range(q):
+            z = (zero + l) / p
+            for j in range(q):
+                y = (zero + j) / p
+                for i in range(q):
+                    x = (zero + i) / p
+                    linear = ((1.0 - z) * ((1.0 - x) * (1.0 - y) * c0 + x * (1.0 - y) * c1
+                                           + x * y * c2 + (1.0 - x) * y * c3) + z * apex)
+                    worst = max(worst, abs(self._bernstein_coefficient(c, i + q * j + q * q * l)
+                                           - linear))
+        return worst
+
+
+def of_pyramid_order(order):
+    """``_L2PyramidOrderField`` of ``order`` (3 and up): ``ORDER`` and ``NODES`` set."""
+    key = (_L2PyramidOrderField, int(order), "pyramid")
+    if key not in _by_order:
+        p = int(order)
+        _by_order[key] = type(f"_L2PyramidOrderField{p}", (_L2PyramidOrderField,),
+                              {"ORDER": p, "NODES": (p + 1) * (p + 2) * (2 * p + 3) // 6})
+    return _by_order[key]
+
+
+class _PyramidOrderCellNodes:
+    """``L2`` of order 3 and up on a pyramid: a cell's ``NODE_COUNT`` nodes (``node_points``,
+    ``bases.pyramid_nodes``' collapsed coordinates), where its geometry maps them."""
+
+    @tack.func
+    def node_count(self, i):
+        return self.NODE_COUNT
+
+    @tack.func
+    def node_dof(self, i, j):
+        return self.node_offsets[self.entity_id(i)] + j
+
+    @tack.func
+    def node_parametric_point(self, i, j):
+        return tack.vec3(self.node_points[3 * j], self.node_points[3 * j + 1],
+                         self.node_points[3 * j + 2])
+
+    @tack.func
+    def node_position(self, i, j):
+        return self.position(i, self.node_parametric_point(i, j))
+
+
 class _SerendipityField(_H1Order2Field):
     """H1, order 2, serendipity: read as the order-2 field whose face and interior
     nodes the views compute (``_serendipity.full_values``), but its ``NODES`` are

@@ -516,7 +516,8 @@ triangle faces' centroids and it becomes 6 pyramids and 4 tetrahedra. A
 `subdivision` or `tolerance` asking for more is refused on a mesh with
 pyramids. Crossings on pyramids are placed as with `exact=False`, on the
 straight line between the sub-cells' values, and so are those of any mesh
-that mixes pyramids, wedges, simplices and hexahedra.
+that mixes pyramids, wedges, simplices and hexahedra. A pyramid field above
+order 2 is cut with `subdivision=2` until pyramids are cut finer.
 
 ## Where to go next
 

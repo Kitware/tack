@@ -313,6 +313,10 @@ def test_transforms_are_vtks(name):
 
 # ── Writing ─────────────────────────────────────────────────────────
 
+#: Fields read but not written back: pyramids above order 2 (VTK's modal G).
+_NOT_WRITTEN = {"dgPyramids-GBasis.dg": {"G3", "G4", "G5"}}
+
+
 @pytest.mark.parametrize("name", [n for n in _NAMES if n not in _REFUSED])
 def test_cell_grids_round_trip(name):
     """Read, written back (``dataset_to_vtk(..., cell_grid=True)``) and read again,
@@ -323,8 +327,9 @@ def test_cell_grids_round_trip(name):
         again = vtk_to_dataset(interop.dataset_to_vtk(data, cell_grid=True), dtype=tack.f64)
     assert again.num_cells == data.num_cells
     np.testing.assert_allclose(again.world_positions(), data.world_positions(), atol=1e-13)
-    assert set(again.fields) == set(data.fields)
-    for field_name, field in data.fields.items():
+    assert set(again.fields) == set(data.fields) - _NOT_WRITTEN.get(name, set())
+    for field_name, field in again.fields.items():
+        field = data.fields[field_name]
         assert again.fields[field_name].space == type(field.space)(again, **field.space.params)
         np.testing.assert_allclose(again.fields[field_name].values.numpy(),
                                    field.values.numpy(), atol=1e-12, err_msg=field_name)

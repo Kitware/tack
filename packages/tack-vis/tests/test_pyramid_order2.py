@@ -256,9 +256,8 @@ def test_the_surface_of_order_2_pyramids(backend, curved):
 
 def test_what_pyramids_refuse(backend):
     data = _mesh("pyramids", 1)
-    with pytest.raises(NotImplementedError, match="order 2 on pyramids"):
-        _ = td.L2(data, order=3).size
-    with pytest.raises(NotImplementedError, match="order 2 on pyramids"):
+    # Order 3 and up is the pyramid's own space (test_pyramid_high_order).
+    with pytest.raises(NotImplementedError, match="on pyramids at order 2"):
         _ = td.L2(data, order=2, basis="gauss_legendre").size
     with pytest.raises(ValueError, match="stored in blocks"):
         _ = td.L2(data, order=3, layout="cells").layout

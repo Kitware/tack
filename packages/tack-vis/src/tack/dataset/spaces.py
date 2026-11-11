@@ -322,7 +322,8 @@ def _default_basis(cls, topology, args, kwargs):
     order = args[0] if args else kwargs.get("order", 1)
     if _is_array(order):
         return kwargs
-    simplicial = any(g.count and (bases.simplex_shape(g.shape) or bases.wedge_shape(g.shape))
+    simplicial = any(g.count and (bases.simplex_shape(g.shape) or bases.wedge_shape(g.shape)
+                                  or g.shape is shapes.Pyramid)
                      for g in topology.groups()) if int(order) > 2 else False
     return {**kwargs, "basis": "equispaced" if simplicial else "gauss_lobatto"}
 
@@ -426,6 +427,10 @@ def _refuse_simplex_nodes(space, shape):
             f"{type(space).__name__} of order {space.order} on {shape.__name__} cells has "
             f"the equispaced basis only (VTK's and gmsh's), not {space.basis!r}: pass "
             "basis=\"equispaced\"")
+    if shape is shapes.Pyramid and space.order > 2 and space.basis != "equispaced":
+        raise NotImplementedError(
+            f"{type(space).__name__} of order {space.order} on Pyramid cells has the "
+            f"equispaced basis only, not {space.basis!r}: pass basis=\"equispaced\"")
 
 
 def _refuse_bernstein(space, shape):
@@ -757,6 +762,31 @@ def _blocks_only(shape):
     return bases.simplex_shape(shape) or bases.wedge_shape(shape) or shape is shapes.Pyramid
 
 
+def _pyramid_high(space, shape):
+    """Whether ``space`` (an L2 of a basis) is the pyramid space of order 3 and up on
+    ``shape`` (``views._L2PyramidOrderField``); its nodes are equispaced only, which
+    ``_refuse_simplex_nodes`` says with the remedy."""
+    return shape is shapes.Pyramid and space.order >= 3
+
+
+def _pyramid_tables(space, dtype):
+    """The order-3-and-up pyramid's nodes and its functions' Bernstein coefficients
+    (``bases.pyramid_nodes``, ``pyramid_bernstein``) as device arrays in ``dtype``."""
+    key = ("pyramid", space.order, dtype)
+    cache = space.__dict__.setdefault("_tables", {})
+    if key not in cache:
+        def device(values):
+            values = np.ascontiguousarray(values).reshape(-1)
+            out = tack.empty((len(values),), dtype)
+            tack.copyto(out, values.astype(dtype.numpy_dtype))
+            return out
+
+        _, points = bases.pyramid_nodes(space.order)
+        cache[key] = {"pyramid_points": device(points),
+                      "pyramid_coefficients": device(bases.pyramid_bernstein(space.order))}
+    return cache[key]
+
+
 def _pyramid_order2(space, shape):
     """Whether ``space`` (an L2 of a basis) is VTK's order-2 pyramid on ``shape``: order 2
     in a Lagrange basis whose nodes there are the corners and middles (Gauss-Lobatto's
@@ -772,8 +802,10 @@ def _tensor_counts(cells, order, counts):
         n = 1
         if cells.NUM_POINTS == 6:
             n = (order + 1) * (order + 2) // 2 * (order + 1)       # a wedge
-        elif cells.NUM_POINTS == 5:
+        elif cells.NUM_POINTS == 5 and order == 2:
             n = 18                                                 # a pyramid, order 2
+        elif cells.NUM_POINTS == 5:
+            n = (order + 1) * (order + 2) * (2 * order + 3) // 6     # a pyramid, Bergot's
         elif cells.NUM_POINTS == cells.DIMENSION + 1 and cells.DIMENSION >= 2:
             for k in range(cells.DIMENSION):
                 n = n * (order + 1 + k) // (k + 1)
@@ -943,6 +975,8 @@ class L2(Space):
                                           bernstein)
         if self.tensor and bases.wedge_shape(shape):
             return views.of_wedge_order(views._L2WedgeField, self.order, bernstein)
+        if self.tensor and shape is shapes.Pyramid and self.order >= 3:
+            return views.of_pyramid_order(self.order)
         if self.tensor and shape is shapes.Pyramid:
             return views._L2PyramidField
         if self.tensor:
@@ -992,12 +1026,13 @@ class L2(Space):
                 for group in topology.groups():
                     if group.count and not (bases.tensor_shape(group.shape) or (
                             (bases.simplex_shape(group.shape) or bases.wedge_shape(group.shape))
-                            and self.order >= 2) or _pyramid_order2(self, group.shape)):
+                            and self.order >= 2) or _pyramid_order2(self, group.shape)
+                            or _pyramid_high(self, group.shape)):
                         raise NotImplementedError(
                             f"{self!r} on {group.shape.__name__} cells is not supported "
                             "yet; it is on segments, quads, pixels, hexahedra and voxels, "
-                            "from order 2 on triangles, tetrahedra and wedges, and at "
-                            "order 2 on pyramids")
+                            "from order 2 on triangles, tetrahedra and wedges, and on "
+                            "pyramids at order 2 and, equispaced, from order 3")
                     if group.count:
                         _refuse_simplex_nodes(self, group.shape)
                 counts = tack.empty((n,), tack.i32)
@@ -1039,6 +1074,9 @@ class L2(Space):
             attributes.update(_simplex_tables(self, group, dtype or tack.f32))
         elif self.tensor and group is not None and bases.wedge_shape(group.shape):
             attributes.update(_wedge_tables(self, group, dtype or tack.f32))
+        elif (self.tensor and group is not None and group.shape is shapes.Pyramid
+              and self.order >= 3):
+            attributes.update(_pyramid_tables(self, dtype or tack.f32))
         elif self.tensor and group is not None and group.shape is shapes.Pyramid:
             pass                       # its functions are the shape's: no tables
         elif self.tensor and group is not None:

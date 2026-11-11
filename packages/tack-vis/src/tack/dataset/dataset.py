@@ -1301,7 +1301,16 @@ class DataSet:
         for group in groups:
             if not group.count:
                 continue
-            if isinstance(space, L2) and space.tensor and group.shape is shapes.Pyramid:
+            if (isinstance(space, L2) and space.tensor and group.shape is shapes.Pyramid
+                    and space.order >= 3):
+                _, points = bases.pyramid_nodes(space.order)
+                where = tack.empty((points.size,), _basis_type(self.geometry))
+                tack.copyto(where, points.reshape(-1).astype(where.dtype.numpy_dtype))
+                nodes_of = views.of_node_order(views._PyramidOrderCellNodes, space.order,
+                                               len(points))
+                view = self.domain_view("cells", group, (nodes_of,),
+                                        node_offsets=space.offsets, node_points=where)
+            elif isinstance(space, L2) and space.tensor and group.shape is shapes.Pyramid:
                 view = self.domain_view("cells", group, (views._PyramidCellNodes,),
                                         node_offsets=space.offsets)
             elif isinstance(space, L2) and space.tensor and (bases.simplex_shape(group.shape)

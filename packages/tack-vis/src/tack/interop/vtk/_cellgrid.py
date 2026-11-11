@@ -114,6 +114,12 @@ def _lattice(shape, order):
     order-1 field's values)."""
     from tack.dataset import bases
 
+    if shape is shapes.Pyramid and order >= 2:
+        # Order 2 is VTK's 18-node pyramid, from 3 the pyramid's lattice, in collapsed
+        # coordinates (shapes.Pyramid.quadratic_node, bases.pyramid_nodes).
+        if order == 2:
+            return _pyramid_order2_nodes()
+        return np.asarray(bases.pyramid_nodes(order)[1])
     lattice = np.asarray(bases.lattice_ijk(shape, order), np.float64) / order
     if order == 1:
         kind, entity, _, _, _ = bases.dof_tables(shape, 1)
@@ -121,6 +127,20 @@ def _lattice(shape, order):
         corner_node[entity[kind == bases.CORNER]] = np.flatnonzero(kind == bases.CORNER)
         return lattice[corner_node]
     return lattice
+
+
+def _pyramid_order2_nodes():
+    """Tack's order-2 pyramid nodes in collapsed coordinates (``Pyramid.quadratic_node``):
+    each the mean of the corners ``_TACK_PYRAMID`` names, the apex at ``(0, 0, 1)``, an
+    apex edge's middle at its base corner's ``(r, s)``."""
+    corners = np.array([(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)], np.float64)
+    out = []
+    for by in _TACK_PYRAMID:
+        base = [corners[j] for j in by if j < 4]
+        height = sum(1 for j in by if j == 4) / len(by)
+        r, s = (np.mean(base, axis=0)[:2] if base else (0.0, 0.0))
+        out.append((r, s, height))
+    return np.array(out, np.float64)
 
 
 def evaluate(grid, attribute, cell_type, cells, parameters):
@@ -399,11 +419,13 @@ def to_dataset(grid, dtype=tack.f32, id_dtype=None, shift=(0.0, 0.0, 0.0)):
                 data.fields[name] = Field(L2(data), _array(values, element, dtype))
         elif space_name in ("HGRAD", "Bezier") and basis != "F" and (
                 shapes.Pyramid not in [SHAPES[t] for t in cell_types]
-                or (space_name, basis, field_order) == ("HGRAD", "C", 2)):
-            # Pyramids' C2 is copied (Tack's order 2 there); their other bases are
+                or (space_name, basis, field_order) == ("HGRAD", "C", 2)
+                or (space_name == "HGRAD" and basis == "G" and not shared)):
+            # Pyramids' C2 is copied (Tack's order 2 there); their G (Bergot's space,
+            # inside Tack's at each order) resampled per cell; their other bases are
             # rational, or not Tack's: left out.
             target = max(field_order, 1)
-            if shapes.Pyramid in [SHAPES[t] for t in cell_types]:
+            if shapes.Pyramid in [SHAPES[t] for t in cell_types] and basis != "G":
                 nodes, per_cell = _copied_pyramids(grid, attribute, info, cell_types, counts,
                                                    corners, shape_infos=infos)
             else:
@@ -661,7 +683,9 @@ def to_cell_grid(data):
                 None, "equispaced", "gauss_lobatto") and (space.order == 1 or len(present) == 1):
             shared(attribute(name, width), field, "point-data", width)
         elif isinstance(space, L2) and not space.varies and space.basis in (
-                None, "equispaced", "gauss_lobatto"):
+                None, "equispaced", "gauss_lobatto") and not (
+                    space.order >= 3 and shapes.Pyramid in present):
+            # Pyramids above order 2 would be VTK's modal G: not written yet.
             per_cell(attribute(name, width), field, width)
         else:
             left_out.append(f"{name} ({space!r})")

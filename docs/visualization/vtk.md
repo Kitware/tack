@@ -635,11 +635,13 @@ by `vtkCellGridReader`. `vtk_to_dataset` takes one, and
 | `constant` | `Constant` |
 | `HGRAD C2`, `I2`, `A` (any order), `G`, Bezier | resampled by VTK onto Tack's equispaced space of that order, exactly: `H1` if shared, `L2` per cell |
 | `HGRAD C2` on pyramids, the shape's or a field's | Tack's order 2 there (VTK's 18-node pyramid), copied node by node: `H1` if shared, `L2` per cell |
-| `HCURL`, `HDIV`, and pyramids' bases other than `C1` and `C2` | left out, with a warning |
+| `HGRAD G` on pyramids, per cell, any order | resampled by VTK onto Tack's pyramid of that order (the same space, inside the 18-node one at order 2), exactly: `L2` |
+| `HCURL`, `HDIV`, and pyramids' bases other than `C1`, `C2` and per-cell `G` | left out, with a warning |
 
 Writing uses `C1` at order 1, `C2` on pyramids at order 2, and VTK's
 arbitrary-order `A` basis above it elsewhere, whose nodes are Tack's
-equispaced nodes in Tack's order. VTK's own `C2` pyramid basis is 8/9 at its
+equispaced nodes in Tack's order. A field above order 2 on pyramids, which
+would be VTK's modal `G`, is left out with a warning. VTK's own `C2` pyramid basis is 8/9 at its
 triangle faces' nodes rather than 1 (a VTK bug), so VTK draws a pyramid's
 order-2 field a little differently inside the cell than Tack evaluates it.
 

@@ -346,3 +346,20 @@ def test_point_and_cell_data_integrate_as_the_cells_quadratures_sum(mixed):
             expected = np.asarray(per_cell.numpy(), np.float64)[owned].sum(axis=0)
         np.testing.assert_allclose(got.values[name], expected, rtol=1e-12)
     assert got.measure == pytest.approx(measures.numpy()[owned].sum(), rel=1e-12)
+
+
+def test_values_left_out_add_nothing_even_when_not_finite():
+    """A hidden cell's value, or a point's that only hidden cells use, weighs 0, and a
+    NaN or an infinity there must not turn the sum NaN (value times 0 is NaN; Berk's
+    review of #439). Two unit hexahedra, the second hidden."""
+    data = td.uniform_grid((3, 2, 2))
+    marks = np.array([0, td.Ghosts.HIDDENCELL], np.uint8)
+    data.ghosts = td.Ghosts(cells=tack.array(marks, tack.u8))
+    data.fields["c"] = td.Field(td.Constant(data), tack.array(np.array([1.0, np.nan])))
+    x = data.positions()
+    u = np.where(x[:, 0] > 1.5, np.inf, 2.0)       # the far points are the hidden cell's
+    data.fields["u"] = td.Field(td.H1(data), tack.array(u))
+    out = td.integrate(data)
+    assert out.measure == pytest.approx(1.0)
+    assert out.values["c"] == pytest.approx(1.0)
+    assert out.values["u"] == pytest.approx(2.0)

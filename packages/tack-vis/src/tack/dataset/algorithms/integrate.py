@@ -299,18 +299,23 @@ def _owned_cells(marks, skipped, mask):
 
 @tack.kernel
 def _masked(values, mask, out):
+    # A literal zero where a cell is left out: its value times 0 is NaN where the
+    # value is NaN or infinite.
     for c in range(out.shape[0]):
-        out[c] = values[c] if mask[c] != 0 else values[c] * 0.0
+        out[c] = values[c] if mask[c] != 0 else 0.0
 
 
 @tack.kernel
 def _weighted_chunks(values, weights, chunk, n, out):
     # Each chunk of ``chunk`` entries' sum of value times weight, accumulated in
-    # ``out``'s type (f64 where the device has it).
+    # ``out``'s type (f64 where the device has it). An entry of weight 0 adds
+    # nothing: a cell left out, or a point only such cells use, may hold NaN or an
+    # infinity, which times 0 is NaN.
     for k in range(out.shape[0]):
         total = out[k] * 0.0
         for i in range(k * chunk, min((k + 1) * chunk, n)):
-            total += values[i] * weights[i]
+            if weights[i] != 0:
+                total += values[i] * weights[i]
         out[k] = total
 
 

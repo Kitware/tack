@@ -43,7 +43,7 @@ from tack.dataset.carry import _take
 from tack.dataset.dataset import DataSet, Field, field_label, is_field_key
 from tack.dataset.ghosts import Ghosts
 from tack.dataset.global_ids import GlobalIds
-from tack.dataset.partitioned import PartitionedDataSet, common_origin
+from tack.dataset.partitioned import PartitionedDataSet, agree, common_origin, field_units
 from tack.dataset.sets import Set
 from tack.dataset.spaces import H1, Constant, Values
 from tack.dataset.topology import StructuredTopology, UnstructuredTopology
@@ -123,12 +123,18 @@ def ghost_cells(data, layers=1, world=None, fields=None, tolerance=0.0):
     if not isinstance(data, PartitionedDataSet):
         raise TypeError(f"ghost_cells takes a PartitionedDataSet, not {type(data).__name__}")
     world = data.world if world is None else world
-    common_origin(data, "ghost_cells", world)       # positions are matched as they are
-    tolerance = _tolerance(data, tolerance, "ghost_cells")
     pieces = list(data)
-    names = _carried(pieces, fields)
-    for i, piece in enumerate(pieces):
-        _check_piece(i, piece)
+    names = []
+
+    def check():                             # on every rank, in the origin's gather
+        names.extend(_carried(pieces, fields))
+        for i, piece in enumerate(pieces):
+            _check_piece(i, piece)
+
+    # Positions are matched as they are; the fields' units agreed in the same gather.
+    common_origin(data, "ghost_cells", world, check,
+                  units_of=lambda: field_units("ghost_cells", pieces, names))
+    tolerance = _tolerance(data, tolerance, "ghost_cells")
     blocks = tc.Blocks([piece.device for piece in pieces], world)
     if blocks.count > 1 << (63 - INDEX_BITS):
         raise ValueError(f"ghost_cells handles up to {1 << (63 - INDEX_BITS)} pieces")
@@ -226,6 +232,17 @@ def update_ghosts(data, *fields):
     if not blocks.count:
         return                              # no pieces anywhere: nothing to refresh
     by_kind = {"points": {g: {} for g in blocks.local}, "cells": {g: {} for g in blocks.local}}
+    agree(blocks.world, _gather_updated, fields, blocks, pieces, by_kind)
+    for kind, values in by_kind.items():
+        # Every rank's pieces' say, a rank without pieces too: it takes part in the
+        # exchange the others run.
+        if blocks.all_reduce({g: int(bool(values[g])) for g in blocks.local}, "max"):
+            plans[kind].run(values)
+
+
+def _gather_updated(fields, blocks, pieces, by_kind):
+    """Each piece's arrays of ``fields`` into ``by_kind``, by the kind of field,
+    refusing a piece without one, or one ``update_ghosts`` cannot refresh."""
     for name in fields:
         for g, piece in zip(blocks.local, pieces):
             if name not in piece.fields:
@@ -239,11 +256,6 @@ def update_ghosts(data, *fields):
                 raise TypeError(f"update_ghosts writes the values in place; {name!r} holds "
                                 f"a {type(field.values).__name__}, not a Tack array")
             by_kind[kind][g][field_label(name)] = field.values
-    for kind, values in by_kind.items():
-        # Every rank's pieces' say, a rank without pieces too: it takes part in the
-        # exchange the others run.
-        if blocks.all_reduce({g: int(bool(values[g])) for g in blocks.local}, "max"):
-            plans[kind].run(values)
 
 
 # -- the pieces ------------------------------------------------------------
@@ -286,6 +298,10 @@ def _check_piece(i, piece):
             or _polyhedral(piece.topology)):
         raise TypeError(f"ghost_cells takes unstructured, polyhedral or structured pieces; "
                         f"partition {i} is {type(piece.topology).__name__}")
+    if piece.topology.dimension == 1:
+        raise NotImplementedError(f"ghost_cells matches pieces' cells by their faces; "
+                                  f"partition {i} is a mesh of lines, whose faces would "
+                                  "be points")
     marks = piece.ghosts
     if marks is not None and marks.cells is not None and \
             (marks.cells.numpy() & Ghosts.DUPLICATECELL).any():

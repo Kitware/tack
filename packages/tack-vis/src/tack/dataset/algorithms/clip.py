@@ -21,6 +21,7 @@ from tack.dataset.algorithms._common import (
     _in_unit_of,
     _table,
 )
+from tack.dataset.algorithms._refine import _left_out, _masks
 from tack.dataset.algorithms.implicit_values import implicit_values
 from tack.dataset.buckets import key_order, run_offsets
 from tack.dataset.carry import Interpolate, Pieces, _point_values, carry
@@ -81,7 +82,7 @@ def _shape_tables(shape_id, invert):
 
 
 @tack.kernel
-def _clip_counts(cells, values, value, invert, data, cases, remap, counts):
+def _clip_counts(cells, values, value, invert, data, cases, remap, counts, marks, hidden):
     for c in cells:
         e = cells.entity_id(c)
         full = (1 << cells.NUM_POINTS) - 1
@@ -89,6 +90,8 @@ def _clip_counts(cells, values, value, invert, data, cases, remap, counts):
         for k in range(cells.NUM_POINTS):
             if values[cells.point_id(c, remap[k])] >= value:
                 case = case | (1 << k)
+        if _left_out(marks, hidden, e):
+            case = 0 if invert == 0 else full          # hidden or refined: dropped
         n_cells = 0
         n_conn = 0
         n_records = 0
@@ -125,7 +128,7 @@ def _clip_counts(cells, values, value, invert, data, cases, remap, counts):
 @tack.kernel
 def _clip_emit(cells, values, value, invert, data, cases, edges, remap, whole_type,
                whole_order, starts, types, offsets, connectivity, sources, keys, slots,
-               centroid_offsets, centroid_cells):
+               centroid_offsets, centroid_cells, marks, hidden):
     for c in cells:
         e = cells.entity_id(c)
         full = (1 << cells.NUM_POINTS) - 1
@@ -133,6 +136,8 @@ def _clip_emit(cells, values, value, invert, data, cases, edges, remap, whole_ty
         for k in range(cells.NUM_POINTS):
             if values[cells.point_id(c, remap[k])] >= value:
                 case = case | (1 << k)
+        if _left_out(marks, hidden, e):
+            case = 0 if invert == 0 else full
         first = starts[e]
         cell = first[0]
         conn = first[1]
@@ -299,8 +304,6 @@ def clip(data, by, value=0.0, inside=False, fields=None, subdivision=None, toler
     (``exact``, as ``contour``'s), or with ``exact=False`` where the line
     between the lattice values does."""
     from tack.dataset.ghosts import visible
-
-    data, by = visible(data, by)
     from tack.dataset.polyhedra import PolygonalTopology, PolyhedralTopology
 
     mixed = data.topology.has_polyhedra
@@ -311,6 +314,14 @@ def clip(data, by, value=0.0, inside=False, fields=None, subdivision=None, toler
                                   "polygons or polylines")
     implicit = hasattr(by, "value") and not isinstance(by, (str, Field))
     field = implicit_values(data, by) if implicit else _field(data, by)
+    from tack.dataset.algorithms.subdivide import subdivides
+
+    if _masks(data)[1] and (polyhedral or subdivides(data, field) or tolerance is not None
+                            or (subdivision is not None and subdivision > 1)):
+        # These paths take the visible cells; the table clip leaves hidden and
+        # refined cells out in place (_masks).
+        data, by = visible(data, by)
+        field = implicit_values(data, by) if implicit else _field(data, by)
     # In the field's unit; an implicit function's values have none.
     value = _in_unit_of(field, value, "clip's value")
     if arrays.width_of(field.values):
@@ -358,8 +369,10 @@ def clip(data, by, value=0.0, inside=False, fields=None, subdivision=None, toler
     counts = tack.empty((n,), tack.vec(_KINDS, tack.i32))
     if n:
         counts.fill(0)
+    marks, hidden = _masks(data)
     for group, (table, cases, _, remap, _, _) in groups:
-        _clip_counts(group.view(), values, float(value), invert, table, cases, remap, counts)
+        _clip_counts(group.view(), values, float(value), invert, table, cases, remap, counts,
+                     marks, hidden)
     idt = data.id_dtype
     odt = ids.for_output(data, _MOST * n)
     starts = tack.empty((n,), tack.vec(_KINDS, odt))
@@ -394,7 +407,7 @@ def clip(data, by, value=0.0, inside=False, fields=None, subdivision=None, toler
     for group, (table, cases, edges, remap, whole_type, whole_order) in groups:
         _clip_emit(group.view(), values, float(value), invert, table, cases, edges, remap,
                    whole_type, whole_order, starts, types, offsets, connectivity, sources,
-                   keys, slots, centroid_offsets, centroid_cells)
+                   keys, slots, centroid_offsets, centroid_cells, marks, hidden)
     del starts                            # before the merge, the clip's peak
     _close(offsets, n_cells, n_conn)
     _close(centroid_offsets, n_centroids, n_members)

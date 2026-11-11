@@ -1655,3 +1655,24 @@ def test_faces_named_by_their_cells_sides_are_the_shaped_meshs():
     assert named(mixed) == named(shaped)
     with pytest.raises(ValueError, match="1 cells are given a local face"):
         td.Set.from_sides(mixed, [chosen[0], 1], [6, 2])
+
+
+def _hidden(data, cells):
+    marks = np.zeros(data.num_cells, np.uint8)
+    marks[list(cells)] = td.Ghosts.HIDDENCELL
+    data.ghosts = td.Ghosts(cells=tack.array(marks, tack.u8))
+    return data
+
+
+@pytest.mark.parametrize("hidden", [[0, 5], [1, 2, 9], [3]],
+                         ids=["polyhedron-and-hexahedron", "both", "polyhedron"])
+def test_hidden_polyhedra_make_no_tetrahedra_left_out_in_place(hidden):
+    """As main's masked filters leave hidden shapes out (#410): the tetrahedra are
+    the visible cells', the polyhedra's among them."""
+    from tack.dataset.ghosts import visible
+
+    data = _hidden(_as_mixed(_hexes(), [0, 1, 2, 3, 8]), hidden)
+    tets, ref = td.tetrahedralize(data), td.tetrahedralize(visible(data))
+    assert tets.num_cells == ref.num_cells
+    measure = lambda d: float(td.cell_geometry(d).measure.values.numpy().sum())
+    assert measure(tets) == pytest.approx(measure(ref), rel=1e-12)

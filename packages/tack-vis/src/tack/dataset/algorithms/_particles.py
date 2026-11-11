@@ -40,6 +40,8 @@ from tack.dataset.algorithms._advection import (
     TERMINATE,
     ZERO_VELOCITY,
     _run,
+    check_arguments,
+    check_piece,
 )
 from tack.dataset.algorithms._common import _stand_in, _time_unit
 from tack.dataset.algorithms._extract import _vertices
@@ -217,16 +219,21 @@ def _rounds(data, field, seeds, step_size, steps, integrator, record, unit="time
     ``(seed, segment, positions, times)``, the piece of nothing standing in for a
     rank without pieces (``_stand_in``, else ``None``) and the particles' unit of
     time."""
-    if int(steps) < 1:
-        raise ValueError(f"steps must be at least 1, not {steps!r}")
+    check_arguments(steps, integrator, step_size, unit=unit, **(adaptive or {}))
     if not is_field_key(field):
         raise TypeError("advection of a PartitionedDataSet takes a field's name")
-    fields_of(data, field, "advection")
+
+    def check():                             # what only a rank with pieces can see
+        fields_of(data, field, "advection")
+        for piece in data:
+            with piece.device:
+                check_piece(piece, field)
+
+    origin = common_origin(data, "advection over pieces", check=check)
     pieces = []
     for piece in data:                       # each piece's work on its own device
         with piece.device:
             pieces.append(visible(piece, field)[0])
-    origin = common_origin(data, "advection over pieces")
     # A rank with no pieces takes part through a piece of nothing: its block holds
     # no point, and sends its seeds to the pieces that do.
     nothing = _stand_in(data, origin)

@@ -114,14 +114,16 @@ def _busy(out, iters, count):
             backend.async_marker()
 
 
-def _long_enough(run, count, attempts=4):
+def _long_enough(run, count, attempts=6):
     """``run(count)``, which returns a result and the waits it measured,
     with the launches doubled until every wait lasts `_MIN_WAIT` (each launch
     stays as long as calibrated). Other processes
     on the device (pytest-xdist workers) can slow the calibration far more
     than the run: on Level Zero with four workers a launch calibrated at
     300 ms later ran in 44. They only ever lengthen a wait, so a retry
-    settles it."""
+    settles it. Four attempts (eight times the launches) were not enough on
+    CI's hosted Mac, whose wait still came out at 62 ms (2026-11-09); six
+    allow 32 times, a few seconds at most."""
     for _ in range(attempts):
         result, waits = run(count)
         if min(waits) >= _MIN_WAIT:
@@ -247,7 +249,7 @@ def test_sync_async_does_not_wait_for_later_launches(backend):
         pytest.skip("no launch long enough to measure here")
     iters, count = found
 
-    async def main():
+    async def main(count):
         _ramp(short, 1.0)
         waiter = asyncio.create_task(tack.sync_async())
         await asyncio.sleep(0)               # the waiter runs up to its await: marked
@@ -258,7 +260,14 @@ def test_sync_async_does_not_wait_for_later_launches(backend):
         await tack.sync_async()
         return early, time.perf_counter() - t0
 
-    early, whole = asyncio.run(main())
+    def once(count):
+        early, whole = asyncio.run(main(count))
+        return (early, whole), (whole,)
+
+    # The later launches lasted 62 ms in all on CI's hosted Mac, against the
+    # 150 ms calibrated, and the early wait's 38 ms of overhead was then over
+    # half of them (2026-11-09): they are made to last `_MIN_WAIT` first.
+    early, whole = _long_enough(once, count)
     assert early < 0.5 * whole, (early, whole)
 
 

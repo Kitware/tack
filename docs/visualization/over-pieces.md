@@ -372,6 +372,20 @@ device arrays without staging them through the host. Make the rank's device
 algorithm here is written on the [communication layer](../communication/index.md),
 so one of your own can be too.
 
+A rank may hold no pieces, and it takes part all the same. An algorithm
+checks its arguments against the pieces before it first communicates: a field
+every piece must have, its kind and width, the kinds of cells, and, where it
+combines the pieces' values, that they agree on the fields and their units. Every rank
+learns the outcome, so a refusal raises the same error on every rank,
+including those that hold no pieces, instead of leaving them waiting for the
+rank that raised. The rank that found the error raises its own; the others
+raise one of the same kind and message, with a note naming that rank. An
+error a rank meets later, in the middle of the work (a device running out of
+memory, say), still ends that rank alone while the others wait for it. Run MPI
+jobs with a time limit, or abort the job when a rank raises: set
+`sys.excepthook` to a function that prints the error and calls
+`MPI.COMM_WORLD.Abort(1)`.
+
 ## Details
 
 **Hidden cells.** Filters never process cells marked hidden, since their data

@@ -65,8 +65,14 @@ an element dtype override selects another element type at the same array shape.
 `astype` changes component precision while retaining element dimensions.
 An explicit element dtype must have the same component dimensions.
 `reshape` shares storage and changes the number of array dimensions while
-preserving the element type and count. A view preserves imported-storage
-lifetime and access restrictions.
+preserving the element type and count. `a[i:j]` shares the storage of rows
+`i` to `j` of the first dimension, contiguous and with no step; on every
+backend its buffer is the root's with the pointer shifted (Metal: an offset
+into the MTLBuffer), it keeps the root alive, frees nothing, and shares the
+root's write count, so a write through any view changes the revision of every
+view of that memory. An empty range gives a new empty array. A view preserves
+imported-storage lifetime and access restrictions; `export_memory` refuses
+one, which has no allocation of its own.
 
 `numpy()` and its async equivalent return a host snapshot with component
 axes appended to array shape: `(n, 3)` for vectors, `(n, 3, 3)` for matrices.

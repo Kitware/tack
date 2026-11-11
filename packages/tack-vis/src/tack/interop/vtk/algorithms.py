@@ -121,6 +121,7 @@ __all__ = [
     "ImplicitValues",
     "Integrate",
     "Interpolate",
+    "Isovolume",
     "Jump",
     "LogValues",
     "Magnitude",
@@ -1421,6 +1422,21 @@ class Clip(TackAlgorithm):
     by = Parameter(None, "a point field, or an implicit function (Tack's or VTK's)")
     value = Parameter(0.0, "the value the clip is at")
     inside = Parameter(False, "keep the part below the value instead")
+
+
+class Isovolume(TackAlgorithm):
+    """``td.isovolume``: the part of the cells where ``by`` (a point field, or an
+    implicit function: Tack's or VTK's) lies in ``[lower, upper]``, cut at both ends.
+    ParaView's Iso Volume."""
+
+    OUTPUT = "surfaces"
+    FUNCTION = "isovolume"
+    FIELDS = ("by",)
+    IMPLICIT = ("by",)
+
+    by = Parameter(None, "a point field, or an implicit function (Tack's or VTK's)")
+    lower = Parameter(0.0, "the lowest value kept")
+    upper = Parameter(1.0, "the highest value kept")
 
 
 class Threshold(_OfAComponent):

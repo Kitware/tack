@@ -81,7 +81,8 @@ def device_for(grid, options):
     if options["polyhedral"] is not None:
         return None
     merge = options["merge_points"]
-    if merge not in (None, False, True) and float(merge) != 0.0:
+    # True by identity: 1.0 == True, but the host reads 1.0 as a tolerance.
+    if not (merge is None or merge is False or merge is True) and float(merge) != 0.0:
         return None
     device = tack.get_default_device()
     return device if device.type in DEVICE_TYPES else None

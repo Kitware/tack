@@ -34,8 +34,14 @@ from tack.interop import vtk as interop
 from tack.interop.vtk import _cellgrid, vtk_to_dataset
 
 _NAMES = [os.path.basename(f) for f in _FILES]
+#: A VTK bug these tests found (the vault's VTK bugs note), expected to fail until fixed.
+_VTK_PYRAMID_C2 = pytest.mark.xfail(
+    strict=True, reason="VTK: its C2 pyramid basis (PyrC2Basis.h) scales the triangle faces' "
+    "functions by 27/9, not 27/8, so they are 8/9 at their nodes: Tack's nodal basis differs "
+    "inside a pyramid wherever a face's centre is not its quadratic's (VTK bugs note, 22)")
+
 #: What Tack refuses, and why.
-_REFUSED = {"dgPyramid19.dg": "curved pyramid"}
+_REFUSED = {}
 #: The attributes left out (no Tack space): H(curl), H(div), pyramids' rational bases.
 _LEFT_OUT = ("HCURL", "HDIV", "HGRAD G")
 
@@ -116,7 +122,8 @@ def _cells_by_type(grid):
     return out
 
 
-@pytest.mark.parametrize("name", [n for n in _NAMES if n not in _REFUSED])
+@pytest.mark.parametrize("name", [pytest.param(n, marks=_VTK_PYRAMID_C2) if n == "dgPyramid19.dg"
+                                  else n for n in _NAMES if n not in _REFUSED])
 def test_values_are_vtks_at_random_points(name):
     """The geometry and every field Tack read, at random points of every cell, are
     what VTK's evaluator gives there: copied attributes to the bit's neighbourhood,
@@ -385,3 +392,144 @@ def test_written_cell_grids_evaluate_as_tack(kind, order):
                                     _cellgrid._to_vtk_parameters(shape, pcs))
         np.testing.assert_allclose(theirs, ours.numpy().reshape(len(pcs), -1), atol=1e-12,
                                    err_msg=field_name)
+
+
+# ── Pyramids' C2 (VTK's 18-node pyramid), copied ───────────────────
+
+def _pyramid_c1(parameters, corners):
+    """vtkDGPyr's straight map: VTK reference points to the world, by its C1 basis."""
+    r, s, t = (parameters[:, k] for k in range(3))
+    w = np.where(np.abs(1 - t) < 1e-12, 0.0, 0.25 / np.where(np.abs(1 - t) < 1e-12, 1, 1 - t))
+    basis = np.stack([(1 - r - t) * (1 - s - t) * w, (1 + r - t) * (1 - s - t) * w,
+                      (1 + r - t) * (1 + s - t) * w, (1 - r - t) * (1 + s - t) * w, t], axis=1)
+    return basis @ corners
+
+
+def _bent_points(x):
+    return x + np.stack([0.05 * x[:, 1] ** 2, 0.04 * x[:, 0] * x[:, 2],
+                         0.03 * x[:, 0] ** 2], axis=1)
+
+
+def _quadratic_world(x):
+    return 1.0 + x[:, 0] ** 2 + 2.0 * x[:, 1] * x[:, 2] + 0.5 * x[:, 2] - 0.7 * x[:, 0] * x[:, 1]
+
+
+@tack.func
+def _quadratic_tack(x):
+    return 1.0 + x[0] * x[0] + 2.0 * x[1] * x[2] + 0.5 * x[2] - 0.7 * x[0] * x[1]
+
+
+@tack.func
+def _position(x):
+    return [x[0], x[1], x[2]]
+
+
+def _pyramid_c2_grid(path, convention, curved):
+    """Two pyramids (one a reflected copy), their shape VTK's C2 (corners first in its
+    basis' order, from (1, 1, 0)) and two C2 attributes of a quadratic: per cell and
+    shared on the shape's points. The cell spec is the C2 connectivity itself
+    ("basis", as catalyst-examples' CellGridMiniapp writes it) or the corners in
+    vtkDGPyr's order ("classic")."""
+    import json
+
+    from vtkmodules.vtkIOCellGrid import vtkCellGridReader
+
+    pyramids = [np.array([[0, 0, 0], [1.1, 0.1, 0], [1.2, 1.0, 0.1], [0.0, 0.9, 0.0],
+                          [0.5, 0.45, 0.9]]),
+                np.array([[0, 0, 0], [0.0, 0.9, 0.0], [1.2, 1.0, 0.1], [1.1, 0.1, 0],
+                          [0.6, 0.5, -0.8]])]
+    points, conn, spec = [], [], []
+    for corners in pyramids:
+        x = _pyramid_c1(_cellgrid._PYRAMID_C2, corners)
+        x = _bent_points(x) if curved else x
+        conn.append(len(points) + np.arange(18))
+        # vtkDGPyr's corners are C2's nodes 2, 3, 0, 1 and 4.
+        spec.append(len(points) + np.array([2, 3, 0, 1, 4]))
+        points.extend(x.tolist())
+    points = np.array(points)
+    conn = np.array(conn)
+    spec_rows = conn if convention == "basis" else np.array(spec)
+    arrays = {"coordinates": [{"name": "points", "tuples": len(points), "components": 3,
+                               "type": "double", "data": points.reshape(-1).tolist()}],
+              "point-data": [{"name": "shared", "tuples": len(points), "components": 1,
+                              "type": "double", "data": _quadratic_world(points).tolist()}],
+              "vtkDGPyr": [{"name": "conn", "tuples": 2, "components": 18,
+                            "type": "vtktypeint64", "data": conn.reshape(-1).tolist()},
+                           {"name": "spec", "tuples": 2, "components": spec_rows.shape[1],
+                            "type": "vtktypeint64", "data": spec_rows.reshape(-1).tolist()},
+                           {"name": "dg", "tuples": 2, "components": 18, "type": "double",
+                            "data": _quadratic_world(points[conn.reshape(-1)]).tolist()}]}
+
+    def attribute(name, values, sharing=None, shape=False):
+        info = {"function-space": "HGRAD", "basis": "C", "order": 2,
+                "arrays": {"values": values, "connectivity": ["vtkDGPyr", "conn"]}}
+        if sharing:
+            info["dof-sharing"] = sharing
+        return {"name": name, "space": "ℝ³" if shape else "ℝ¹",
+                "components": 3 if shape else 1, **({"shape": True} if shape else {}),
+                "cell-info": {"vtkDGPyr": info}}
+
+    grid = {"data-type": "cell-grid", "format-version": 1, "arrays": arrays,
+            "attributes": [attribute("shape", ["coordinates", "points"], "coordinates", True),
+                           attribute("dg", ["vtkDGPyr", "dg"]),
+                           attribute("shared", ["point-data", "shared"], "point-data")],
+            "cell-types": [{"type": "vtkDGPyr", "cell-spec": {
+                "connectivity": ["vtkDGPyr", "spec"], "shape": "pyramid"}}]}
+    with open(path, "w") as out:
+        json.dump(grid, out)
+    reader = vtkCellGridReader(file_name=str(path))
+    reader.Update()
+    return reader.GetOutput()
+
+
+@pytest.mark.parametrize("convention", ["basis", "classic"])
+@pytest.mark.parametrize("curved", [False, True])
+def test_pyramids_c2_is_copied_node_by_node(tmp_path, convention, curved):
+    """A pyramid's C2 shape and attributes become Tack's order-2 pyramid, each VTK node
+    matched to Tack's by its reference coordinates, whichever corners the cell spec
+    lists first: the geometry, and the fields per cell (L2) and shared (H1), at
+    Tack's nodes are what Tack computes there; on straight pyramids the field per
+    cell, a quadratic, is itself everywhere."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        data = vtk_to_dataset(_pyramid_c2_grid(tmp_path / "pyramids.dg", convention, curved),
+                              dtype=tack.f64)
+    assert data.geometry.space == td.H1(data, order=2)
+    assert isinstance(data.fields["dg"].space, td.L2) and data.fields["dg"].space.order == 2
+    assert data.fields["shared"].space == td.H1(data, order=2)
+    nodes = td.interpolate(data, _position, td.L2(data, order=2), dtype=tack.vec3(tack.f64))
+    expected_nodes = nodes.values.numpy()
+    # Tack's corners are vtkDGPyr's, in its order, whichever order the cell spec lists.
+    straight = [_tack_pyramid(np.array(_TACK_NODES), c) for c in _CORNERS_TACK_ORDER]
+    want = np.concatenate([_bent_points(x) if curved else x for x in straight])
+    np.testing.assert_allclose(expected_nodes, want, rtol=0, atol=1e-12)
+    np.testing.assert_allclose(data.fields["dg"].values.numpy(), _quadratic_world(want),
+                               rtol=0, atol=1e-12)
+    np.testing.assert_allclose(
+        data.fields["shared"].values.numpy(),
+        td.interpolate(data, _quadratic_tack, td.H1(data, order=2), dtype=tack.f64).values.numpy(),
+        rtol=0, atol=1e-12)
+    if not curved:
+        inside = np.array([[0.55, 0.5, 0.3], [0.4, 0.3, 0.1], [0.6, 0.6, -0.4]])
+        np.testing.assert_allclose(td.probe(data, inside).fields["dg"].values.numpy(),
+                                   _quadratic_world(inside), rtol=0, atol=1e-12)
+
+
+def _tack_pyramid(pc, corners):
+    """Tack's straight pyramid map: its base's bilinear patch times 1 - t, its apex
+    times t (its corners in its own order)."""
+    r, s, t = (pc[:, k:k + 1] for k in range(3))
+    base = ((1 - r) * (1 - s) * corners[0] + r * (1 - s) * corners[1] + r * s * corners[2]
+            + (1 - r) * s * corners[3])
+    return (1 - t) * base + t * corners[4]
+
+
+#: Tack's order-2 pyramid nodes (shapes.Pyramid.quadratic_node), its parametric points.
+_TACK_NODES = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (0, 0, 1),
+               (0.5, 0, 0), (1, 0.5, 0), (0.5, 1, 0), (0, 0.5, 0),
+               (0, 0, 0.5), (1, 0, 0.5), (1, 1, 0.5), (0, 1, 0.5), (0.5, 0.5, 0),
+               (0.5, 0, 1 / 3), (1, 0.5, 1 / 3), (0.5, 1, 1 / 3), (0, 0.5, 1 / 3)]
+#: The two pyramids' corners in vtkDGPyr's (and Tack's) corner order.
+_CORNERS_TACK_ORDER = [
+    np.array([[0, 0, 0], [1.1, 0.1, 0], [1.2, 1.0, 0.1], [0.0, 0.9, 0.0], [0.5, 0.45, 0.9]]),
+    np.array([[0, 0, 0], [0.0, 0.9, 0.0], [1.2, 1.0, 0.1], [1.1, 0.1, 0], [0.6, 0.5, -0.8]])]

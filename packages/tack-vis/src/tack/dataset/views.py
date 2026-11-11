@@ -1200,6 +1200,28 @@ class _H1Order2Geometry(_QuadraticDofs, _Geometry):
         return m
 
 
+
+class _H1PyramidGeometry(_H1Order2Geometry):
+    """A curved pyramid of order 2 (VTK's 18 nodes): its box from the Bernstein
+    coefficients of its positions (``Pyramid.quadratic_coefficient``), which hold
+    it, where the order-2 formulas are for quad faces."""
+
+    @tack.func
+    def control_box(self, c):
+        a = self.corner_position(c, 0)
+        b = a
+        for m in range(36):
+            p = a - a
+            for k in range(18):
+                w = self.quadratic_coefficient(k, m)
+                if w != 0:
+                    p += w * self.get(self.dof_index(c, k))
+            p = p / 12.0
+            a = min(a, p)
+            b = max(b, p)
+        return a, b
+
+
 class _SideZeroGeometry(_Geometry):
     """A face's positions from its side 0's cell: the face as that cell sees it.
     For an L2 geometry, whose cells have their own corners, a face has no
@@ -1546,12 +1568,12 @@ class _Order2Range:
         return worst
 
 
-class _H1Order2Field(_QuadraticDofs, _Order2Range, _Interpolated):
-    """H1, order 2, Shared: values at the corners, the middles of edges and quad
-    faces, and a hexahedron's center, interpolated by the shape's quadratic
-    Lagrange functions."""
-
-    ORDER = 2
+class _QuadraticValues:
+    """An order-2 field by its shape's quadratic functions (``quadratic_function``,
+    ``_gradient``, ``_hessian``, ``quadratic_node``), from ``dof(c, k)``: value
+    ``k`` of the cell's ``NUM_QUADRATIC``, wherever its space keeps it. Sums
+    start from a zero of the values' type: a literal zero vector is f32, and
+    rounded every f64 term added to it."""
 
     @tack.func
     def dof(self, c, k):
@@ -1570,16 +1592,18 @@ class _H1Order2Field(_QuadraticDofs, _Order2Range, _Interpolated):
 
     @tack.func
     def parametric_gradient(self, c, pc):
-        g = tack.vec3(0.0, 0.0, 0.0)
         u0 = self.dof(c, 0)
+        zero = u0 - u0
+        g = tack.vec3(zero, zero, zero)
         for k in range(1, self.NUM_QUADRATIC):
             g += (self.dof(c, k) - u0) * self.quadratic_gradient(k, pc)
         return g
 
     @tack.func
     def parametric_hessian(self, c, pc):
-        h = tack.mat3([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0])
         u0 = self.dof(c, 0)
+        zero = u0 - u0
+        h = tack.mat3([zero, zero, zero], [zero, zero, zero], [zero, zero, zero])
         for k in range(1, self.NUM_QUADRATIC):
             h += (self.dof(c, k) - u0) * self.quadratic_hessian(k, pc)
         return h
@@ -1588,10 +1612,10 @@ class _H1Order2Field(_QuadraticDofs, _Order2Range, _Interpolated):
     def parametric_jet(self, c, pc):
         """The value, parametric gradient and parametric Hessian at ``pc``, from one pass over
         the cell's values (each read once), relative to the first as the gradient's."""
-        value = pc[0] - pc[0]
-        grad = tack.vec3(0.0, 0.0, 0.0)
-        hess = tack.mat3([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0])
-        first = value
+        first = self.dof(c, 0)
+        value = first - first
+        grad = tack.vec3(value, value, value)
+        hess = tack.mat3([value, value, value], [value, value, value], [value, value, value])
         for k in range(self.NUM_QUADRATIC):
             v = self.dof(c, k)
             if k == 0:
@@ -1601,6 +1625,105 @@ class _H1Order2Field(_QuadraticDofs, _Order2Range, _Interpolated):
             grad += d * self.quadratic_gradient(k, pc)
             hess += d * self.quadratic_hessian(k, pc)
         return first + value, grad, hess
+
+
+class _H1Order2Field(_QuadraticDofs, _Order2Range, _QuadraticValues, _Interpolated):
+    """H1, order 2, Shared: values at the corners, the middles of edges and quad
+    faces, and a hexahedron's center, interpolated by the shape's quadratic
+    Lagrange functions."""
+
+    ORDER = 2
+
+
+class _PyramidRange:
+    """An order-2 pyramid field's bounds from its Bernstein coefficients. Its 18
+    functions are polynomials in the collapsed coordinates, each a sum of the
+    tensor Bernstein polynomials ``B2_i(r) B2_j(s) B3_l(t)`` (``Pyramid.
+    quadratic_coefficient``), which cover the pyramid as the cube they collapse:
+    the field lies between its least and its greatest coefficient
+    (``value_range``), and each coefficient's distance from the order-1
+    pyramid's at its place (the corners' bilinear blend at ``(i/2, j/2)`` times
+    ``1 - l/3``, the apex times ``l/3``) bounds what linearizing the cell at its
+    corners loses (``flatness``)."""
+
+    @tack.func
+    def _bernstein_coefficient(self, c, m):
+        b = self.dof(c, 0) - self.dof(c, 0)
+        for k in range(18):
+            w = self.quadratic_coefficient(k, m)
+            if w != 0:
+                b += w * self.dof(c, k)
+        return b / 12.0
+
+    @tack.func
+    def value_range(self, c):
+        lo = self._bernstein_coefficient(c, 0)
+        hi = lo
+        for m in range(1, 36):
+            v = self._bernstein_coefficient(c, m)
+            lo = min(lo, v)
+            hi = max(hi, v)
+        return lo, hi
+
+    @tack.func
+    def flatness(self, c):
+        # Each coefficient's place as literals assigned in branches (an integer
+        # times a literal is f32, which an f64 field's coefficients would see).
+        worst = abs(self.dof(c, 0) - self.dof(c, 0))
+        for l in range(4):
+            z = 0.0
+            if l == 1:
+                z = 1.0 / 3.0
+            if l == 2:
+                z = 2.0 / 3.0
+            if l == 3:
+                z = 1.0
+            for j in range(3):
+                y = 0.0
+                if j == 1:
+                    y = 0.5
+                if j == 2:
+                    y = 1.0
+                for i in range(3):
+                    x = 0.0
+                    if i == 1:
+                        x = 0.5
+                    if i == 2:
+                        x = 1.0
+                    linear = ((1.0 - z) * ((1.0 - x) * (1.0 - y) * self.dof(c, 0)
+                                           + x * (1.0 - y) * self.dof(c, 1)
+                                           + x * y * self.dof(c, 2)
+                                           + (1.0 - x) * y * self.dof(c, 3))
+                              + z * self.dof(c, 4))
+                    d = self._bernstein_coefficient(c, i + 3 * j + 9 * l) - linear
+                    worst = max(worst, abs(d))
+        return worst
+
+
+class _H1PyramidField(_QuadraticDofs, _PyramidRange, _QuadraticValues, _Interpolated):
+    """H1 of order 2 on pyramids: VTK's 18-node pyramid, its values shared by entity
+    (points, edges, the base's centre on its quad face, a centre on each triangle
+    face) as ``_H1Order2Field``'s, its bounds from its Bernstein coefficients."""
+
+    ORDER = 2
+    NODES = 18
+
+
+class _L2PyramidField(_PyramidRange, _QuadraticValues, _Interpolated):
+    """L2 of order 2 on pyramids: each cell's 18 values from ``offsets[cell]``, at
+    the nodes of VTK's order-2 pyramid (``Pyramid.quadratic_node``), interpolated
+    by its functions."""
+
+    ORDER = 2
+    NODES = 18
+
+    @tack.func
+    def dof_index(self, c, n):
+        return self.offsets[self.entity_id(c)] + n
+
+    @tack.func
+    def dof(self, c, n):
+        return self.get(self.dof_index(c, n))
 
 
 class _SerendipityField(_H1Order2Field):
@@ -3494,11 +3617,12 @@ class _EdgeDof:
 
 
 class _FaceDof:
-    """H1 order 2's node at a quad face's center."""
+    """H1 order 2's node at a face's center: a quad's, or a pyramid's triangle's (none
+    where the face holds no value, ``node_face_dofs`` -1: a triangle no pyramid has)."""
 
     @tack.func
     def node_count(self, i):
-        return 1
+        return 1 if self.node_face_dofs[self.entity_id(i)] >= 0 else 0
 
     @tack.func
     def node_dof(self, i, j):
@@ -3729,6 +3853,30 @@ class _SimplexInteriorNodes:
                                        self.node_points[kk] if self.DIMENSION == 3 else 0.0)
                     found += 1
         return self.position(i, pc)
+
+
+class _PyramidCellNodes:
+    """``L2`` of order 2 on a pyramid: a cell's 18 nodes (``Pyramid.quadratic_node``), in
+    node order, where its geometry maps them."""
+
+    NODE_ORDER = 2
+    NODE_COUNT = 18
+
+    @tack.func
+    def node_count(self, i):
+        return 18
+
+    @tack.func
+    def node_dof(self, i, j):
+        return self.node_offsets[self.entity_id(i)] + j
+
+    @tack.func
+    def node_parametric_point(self, i, j):
+        return self.quadratic_node(j)
+
+    @tack.func
+    def node_position(self, i, j):
+        return self.position(i, self.node_parametric_point(i, j))
 
 
 class _SimplexCellNodes:

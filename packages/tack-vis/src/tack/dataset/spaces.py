@@ -276,6 +276,15 @@ def _face_counts(kinds, per_quad, per_triangle, counts):
 
 
 @tack.kernel
+def _mark_pyramid_faces(cells, side_face, start, counts):
+    # One value at each of a pyramid's triangle faces (local faces 1 to 4); a face
+    # two pyramids share is marked twice, alike.
+    for c in cells:
+        for f in range(1, 5):
+            counts[side_face[start + cells.index(c) * 5 + f]] = 1
+
+
+@tack.kernel
 def _place(counts, slots, base, out):
     for i in range(counts.shape[0]):
         out[i] = base + slots[i] if counts[i] > 0 else -1
@@ -554,8 +563,8 @@ class H1(Space):
                 if p == 2 and not self._any_order(group.shape) and not group.shape.NUM_QUADRATIC:
                     raise NotImplementedError(
                         f"H1 order 2 on {group.shape.__name__} cells is not supported yet; "
-                        "it is on tetrahedra, hexahedra, voxels, wedges, triangles, quads "
-                        "and pixels")
+                        "it is on tetrahedra, hexahedra, voxels, wedges, pyramids, triangles, "
+                        "quads and pixels")
                 if p > 2 and not bases.has_bases(group.shape):
                     raise NotImplementedError(
                         f"H1 order {p} on {group.shape.__name__} cells is not supported "
@@ -582,6 +591,14 @@ class H1(Space):
             if nf:
                 _face_counts(faces.kinds, 0 if serendipity else (p - 1) ** 2,
                              (p - 1) * (p - 2) // 2 if p > 2 else 0, counts)
+                if p == 2 and not serendipity:
+                    # VTK's order-2 pyramid has a node at each triangle face's
+                    # centre, which no other shape's order 2 has: a value on the
+                    # triangle faces pyramids have, and on those alone.
+                    for group in topology.groups():
+                        if group.count and group.shape is shapes.Pyramid:
+                            _mark_pyramid_faces(group.view(), faces.side_face,
+                                                faces.group_starts[group.root], counts)
                 on_faces = exclusive_scan(counts, slots, nf)
                 _place(counts, slots, base, face_dofs)
             counts = tack.zeros((n,), tack.i32)
@@ -707,6 +724,8 @@ class H1(Space):
                                                      bernstein))
         if self.order == 2 and shape is not None and self._any_order(shape):
             return self._tabled(views.of_order(views._H1TensorField, 2, bernstein))
+        if self.order == 2 and shape is shapes.Pyramid:
+            return views._H1PyramidField
         return self.mixin
 
     def extra_mixins(self, group):
@@ -732,6 +751,20 @@ def _l2_counts(cells, orders, counts):
         counts[e] = 1 if orders[e] == 0 else cells.NUM_POINTS
 
 
+def _blocks_only(shape):
+    """Whether L2 on ``shape`` is stored in blocks only: no tensor basis to lay out
+    cell-fastest (triangles, tetrahedra, wedges, pyramids)."""
+    return bases.simplex_shape(shape) or bases.wedge_shape(shape) or shape is shapes.Pyramid
+
+
+def _pyramid_order2(space, shape):
+    """Whether ``space`` (an L2 of a basis) is VTK's order-2 pyramid on ``shape``: order 2
+    in a Lagrange basis whose nodes there are the corners and middles (Gauss-Lobatto's
+    are at order 2; Gauss-Legendre's are not, and Bernstein is refused elsewhere)."""
+    return (shape is shapes.Pyramid and space.order == 2
+            and space.basis in (None, "gauss_lobatto", "equispaced"))
+
+
 @tack.kernel
 def _tensor_counts(cells, order, counts):
     # (p + 1)^d a tensor cell's nodes, C(p + d, d) a simplex's.
@@ -739,6 +772,8 @@ def _tensor_counts(cells, order, counts):
         n = 1
         if cells.NUM_POINTS == 6:
             n = (order + 1) * (order + 2) // 2 * (order + 1)       # a wedge
+        elif cells.NUM_POINTS == 5:
+            n = 18                                                 # a pyramid, order 2
         elif cells.NUM_POINTS == cells.DIMENSION + 1 and cells.DIMENSION >= 2:
             for k in range(cells.DIMENSION):
                 n = n * (order + 1 + k) // (k + 1)
@@ -825,11 +860,10 @@ class L2(Space):
         asked = self.params.get("layout", "auto")
         if not self.tensor:
             return "blocks"
-        if asked == "cells" and any(g.count and (bases.simplex_shape(g.shape)
-                                                 or bases.wedge_shape(g.shape))
+        if asked == "cells" and any(g.count and _blocks_only(g.shape)
                                     for g in self.topology.groups()):
             raise ValueError("a cell-fastest layout is for tensor bases; L2 on triangles, "
-                             "tetrahedra and wedges is stored in blocks")
+                             "tetrahedra, wedges and pyramids is stored in blocks")
         if asked != "auto":
             return asked
         forced = os.environ.get("TACK_L2_LAYOUT", "")
@@ -845,8 +879,7 @@ class L2(Space):
         dimension, none a simplex (cell-fastest is for tensor bases)."""
         groups = [g for g in self.topology.groups() if g.count]
         return (len({g.shape.DIMENSION for g in groups}) <= 1
-                and not any(bases.simplex_shape(g.shape) or bases.wedge_shape(g.shape)
-                            for g in groups))
+                and not any(_blocks_only(g.shape) for g in groups))
 
     def _per_cell(self, what):
         """The number of values every cell holds, for ``what`` (``indices``,
@@ -910,6 +943,8 @@ class L2(Space):
                                           bernstein)
         if self.tensor and bases.wedge_shape(shape):
             return views.of_wedge_order(views._L2WedgeField, self.order, bernstein)
+        if self.tensor and shape is shapes.Pyramid:
+            return views._L2PyramidField
         if self.tensor:
             return self.mixin
         order = key if self.varies else self.order
@@ -957,11 +992,12 @@ class L2(Space):
                 for group in topology.groups():
                     if group.count and not (bases.tensor_shape(group.shape) or (
                             (bases.simplex_shape(group.shape) or bases.wedge_shape(group.shape))
-                            and self.order >= 2)):
+                            and self.order >= 2) or _pyramid_order2(self, group.shape)):
                         raise NotImplementedError(
                             f"{self!r} on {group.shape.__name__} cells is not supported "
                             "yet; it is on segments, quads, pixels, hexahedra and voxels, "
-                            "and from order 2 on triangles, tetrahedra and wedges")
+                            "from order 2 on triangles, tetrahedra and wedges, and at "
+                            "order 2 on pyramids")
                     if group.count:
                         _refuse_simplex_nodes(self, group.shape)
                 counts = tack.empty((n,), tack.i32)
@@ -1003,6 +1039,8 @@ class L2(Space):
             attributes.update(_simplex_tables(self, group, dtype or tack.f32))
         elif self.tensor and group is not None and bases.wedge_shape(group.shape):
             attributes.update(_wedge_tables(self, group, dtype or tack.f32))
+        elif self.tensor and group is not None and group.shape is shapes.Pyramid:
+            pass                       # its functions are the shape's: no tables
         elif self.tensor and group is not None:
             attributes.update(_basis_tables(self, group, dtype or tack.f32))
         if self.layout == "cells":

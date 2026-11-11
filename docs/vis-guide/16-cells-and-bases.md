@@ -68,7 +68,7 @@ pieces ([Polyhedra and Polygons](../data/polyhedra.md)).
 | Tetra | yes | yes | yes | yes | yes | yes | yes |
 | Hexahedron, Voxel | yes | yes | yes | yes | yes | yes | yes |
 | Wedge | yes | yes | yes | yes | yes | yes | yes |
-| Pyramid | yes | — | — | yes | yes | — | — |
+| Pyramid | yes | yes | — | yes | yes | order 2 | order 2 |
 | PolyLine, Polygon, Polyhedron | yes (linear on pieces) | — | — | `Constant` | — | — | — |
 
 There is no fixed upper order (the tests go to order 6). An `L2` order may
@@ -133,8 +133,9 @@ For 0.8:
   finer faces that cover it, from MFEM's nonconforming mesh or an octree's
   leaves, so face-based algorithms see their two sides.
 
-- **Higher-order pyramids:** VTK's quadratic (13 nodes), triquadratic (19),
-  Lagrange and Bezier pyramids, and cell grids' `C2` and `pyramid19`. Their
+- **More higher-order pyramids:** order 2 is VTK's 18-node pyramid (cell
+  grids' `C2`). VTK's quadratic (13 nodes), triquadratic (19), Lagrange and
+  Bezier pyramids, cell grids' `pyramid19`, and orders above 2 remain. Their
   bases are rational, so they come with:
 - **Rational Bezier cells:** VTK's Bezier cells with weights other than 1.
 - **`H(curl)` and `H(div)`** at order 1, with Piola maps, on every shape but

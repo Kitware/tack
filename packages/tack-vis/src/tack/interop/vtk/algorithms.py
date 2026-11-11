@@ -1771,8 +1771,9 @@ class Tubes(TackAlgorithm):
 
 
 class Glyphs(TackAlgorithm):
-    """``td.glyphs``: an arrow at each point along the ``vectors`` field, scaled by
-    ``scale`` (and the ``scale_by`` field). VTK's ``vtkGlyph3D``."""
+    """``td.glyphs``: an arrow along the ``vectors`` field at each point, or with
+    ``at="cells"`` at each cell's centre (a DG field's default), scaled by ``scale``
+    (and the ``scale_by`` field). VTK's ``vtkGlyph3D``."""
 
     OUTPUT = "vtkPolyData"
     FUNCTION = "glyphs"

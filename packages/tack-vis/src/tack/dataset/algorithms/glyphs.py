@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) Kitware Inc.
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""``glyphs``: an arrow at each point along a vector field, VTK's vtkGlyph3D with its
-arrow source."""
+"""``glyphs``: an arrow along a vector field at each point, or at each cell's centre,
+VTK's vtkGlyph3D with its arrow source."""
 
 import math
 
@@ -11,10 +11,10 @@ from tack import arrays
 from tack.dataset import ids as id_types
 from tack.dataset import shapes
 from tack.dataset.algorithms._common import _field
-from tack.dataset.algorithms.tubes import _across, _on_points
+from tack.dataset.algorithms.tubes import _across
 from tack.dataset.carry import Take, carry
 from tack.dataset.dataset import Field
-from tack.dataset.spaces import H1
+from tack.dataset.spaces import H1, L2, Constant, Values
 from tack.dataset.topology import UnstructuredTopology, uniform_cells
 from tack.runtime.dispatch import on_inputs_device
 
@@ -97,40 +97,86 @@ def _from_kept(kept, source):
         source[i] = kept[source[i]]
 
 
+def _at_points(field):
+    """Whether ``field`` has one value at each point, its first values: ``H1`` of any
+    order numbered by entity, values on points."""
+    space = field.space
+    return (isinstance(space, H1) and space.dofs is None) or \
+        (isinstance(space, Values) and space.on == "points")
+
+
+def _cell_wise(field):
+    """Whether ``field`` has a value per cell, not per point: ``L2`` (a DG field, whose
+    cells sharing a point each have their own value there), ``Constant``, values on
+    cells."""
+    space = field.space
+    return isinstance(space, (L2, Constant)) or (isinstance(space, Values)
+                                                 and space.on == "cells")
+
+
 @on_inputs_device
-def glyphs(data, vectors, scale=1.0, scale_by=None, resolution=8, fields=None):
-    """An arrow at each of ``data``'s points along ``vectors`` (a 3-vector field on the
-    points, or its name), as VTK's ``vtkGlyph3D`` places its arrow source: from the
-    point toward the vector, ``scale`` times its length long, or ``scale`` times
-    ``scale_by`` (a scalar point field, or its name) where given. An arrow of
-    length 1 has a shaft 0.65 long and 0.03 in radius and a head 0.1 in radius,
-    ``resolution`` points round, as triangles wound outward. Its points carry
-    the point's fields; cell fields are left behind. A zero vector gives an
-    arrow of no size. Glyph a subset (``mask_points``) or a slice to see
-    anything in a dense field. Points only hidden or refined cells use have no
-    arrow."""
+def glyphs(data, vectors, scale=1.0, scale_by=None, resolution=8, fields=None, at=None):
+    """An arrow along ``vectors`` (a 3-vector field, or its name) at each of ``data``'s
+    points, or with ``at="cells"`` at each cell's centre, as VTK's ``vtkGlyph3D``
+    places its arrow source: from the place toward the vector, ``scale`` times its
+    length long, or ``scale`` times ``scale_by`` (a scalar field, or its name) where
+    given. An arrow of length 1 has a shaft 0.65 long and 0.03 in radius and a head
+    0.1 in radius, ``resolution`` points round, as triangles wound outward. A zero
+    vector gives an arrow of no size.
+
+    How many arrows there are follows the mesh, not the field's order. At the
+    points (the default for point fields), an ``H1`` field of any order and a
+    curved geometry give their values there, which are their stored corner
+    values, and the arrows' points carry the point fields; cell fields are left
+    behind. At the cells' centres -- where the geometry maps each cell's
+    parametric centre (``cell_centers``) -- every field is evaluated through its
+    basis (``values_at_centers``), and the arrows carry those values. A field
+    with a value per cell, ``L2`` (DG) above all, is glyphed there, the default
+    for it: a point several such cells share has a value in each, so ``at="points"``
+    refuses it (``project`` it into ``H1`` to average them).
+
+    Glyph a subset (``mask_points``) or a slice to see anything in a dense field,
+    and other places by probing first (``glyphs(probe(data, points), ...)``).
+    Points only hidden or refined cells use have no arrow, nor have those cells."""
     from tack.dataset.algorithms._refine import _masks
     from tack.dataset.ghosts import visible
 
+    field = _field(data, vectors)
+    sizes = None if scale_by is None else _field(data, scale_by)
+    if at is None:
+        at = "cells" if _cell_wise(field) or (sizes is not None and _cell_wise(sizes)) \
+            else "points"
+    if at == "cells":
+        return _at_cells(data, field, sizes, scale, resolution, fields)
+    if at != "points":
+        raise ValueError(f"glyphs are at the points or the cells, not {at!r}")
+    for name, f in (("vectors", field), ("scale_by", sizes)):
+        if f is not None and _cell_wise(f):
+            raise TypeError(f"glyphs at the points: {name} is in {f.space!r}, which has a "
+                            "value per cell, several where cells share a point; glyph it "
+                            "at=\"cells\", or project it into H1 to average them")
     marks, hidden = _masks(data)
     if hidden and not getattr(data.topology, "reference_cells", True):
         data = visible(data)                  # polyhedra and polygons: the cells left
         hidden = 0
-    if not isinstance(data.geometry.space, H1) or data.geometry.space.order != 1:
-        raise TypeError("glyphs places arrows at the points: an H1 order-1 geometry")
+    if not _at_points(data.geometry):
+        raise TypeError("glyphs at the points needs an H1 geometry, one position a point; "
+                        "glyph at=\"cells\"")
     res = int(resolution)
     if res < 3:
         raise ValueError(f"an arrow has a resolution of at least 3, not {res}")
-    field = _field(data, vectors)
-    if arrays.width_of(field.values) != 3 or not _on_points(field):
+    if arrays.width_of(field.values) != 3 or not _at_points(field):
         raise TypeError("glyphs takes a 3-vector field on the points")
-    sizes = None
-    if scale_by is not None:
-        sizes = _field(data, scale_by)
-        if arrays.width_of(sizes.values) or not _on_points(sizes):
-            raise TypeError("scale_by is a scalar field on the points")
-    positions, directions = data.geometry.values, field.values
-    by = sizes.values if sizes is not None else None
+    if sizes is not None and (arrays.width_of(sizes.values) or not _at_points(sizes)):
+        raise TypeError("scale_by is a scalar field on the points")
+    from tack.dataset.carry import _point_values
+
+    # Each point's position and value: an H1 field of any order (a curved geometry
+    # too) holds its points' first.
+    n = data.num_points
+    positions = _point_values(data.geometry.values, n)
+    directions = _point_values(field.values, n)
+    by = _point_values(sizes.values, n) if sizes is not None else None
     kept = None
     if hidden:
         # The points some cell that is not hidden or refined uses, in order -- the
@@ -143,10 +189,9 @@ def glyphs(data, vectors, scale=1.0, scale_by=None, resolution=8, fields=None):
             if group.count:
                 _used_points(data.domain_view("cells", group), marks, used)
         _, kept, _ = _compact(used, data.id_dtype)
-        n = data.num_points
-        positions = _take(arrays.materialize(_point_values(positions, n)), kept)
-        directions = _take(arrays.materialize(_point_values(directions, n)), kept)
-        by = _take(arrays.materialize(_point_values(by, n)), kept) if by is not None else None
+        positions = _take(arrays.materialize(positions), kept)
+        directions = _take(arrays.materialize(directions), kept)
+        by = _take(arrays.materialize(by), kept) if by is not None else None
     n = arrays.size_of(positions)
     total = n * (3 * res + 2)
     idt = id_types.at_least(data.id_dtype, total)
@@ -163,3 +208,59 @@ def glyphs(data, vectors, scale=1.0, scale_by=None, resolution=8, fields=None):
     topology = UnstructuredTopology(types, offsets, connectivity, num_points=total)
     return carry(data, topology, points=Take(source),
                  geometry=Field(H1(topology), out, data.geometry.unit), fields=fields)
+
+
+def _at_cells(data, field, sizes, scale, resolution, fields):
+    """``glyphs`` at each visible cell's centre: the centres as a point cloud carrying
+    every field evaluated there (``values_at_centers``; fields with no value at a
+    centre left out), each point marked as its cell, glyphed at its points."""
+    from tack.dataset.algorithms.cell_centers import cell_centers
+    from tack.dataset.algorithms.values_at_centers import values_at_centers
+    from tack.dataset.carry import selected
+    from tack.dataset.dataset import DataSet
+    from tack.dataset.ghosts import Ghosts, visible
+
+    data, field, *rest = visible(data, field, *([sizes] if sizes is not None else []))
+    sizes = rest[0] if rest else None
+    for name, f, width in (("vectors", field, 3), ("scale_by", sizes, 0)):
+        if f is not None and (arrays.width_of(f.values) or 0) != width:
+            raise TypeError(f"glyphs takes {'a 3-vector' if width else 'a scalar'} field as "
+                            f"{name}")
+    n = data.num_cells
+    cloud = DataSet(UnstructuredTopology(*_vertex_rows(n, data.id_dtype), num_points=n),
+                    cell_centers(data).values, dtype=data.dtype, **data._frame())
+    for name in selected(data, fields):
+        source = data.fields[name]
+        try:
+            values = values_at_centers(data, source).values
+        except (TypeError, NotImplementedError):
+            continue                       # no value at a cell's centre (values on faces)
+        cloud.fields[name] = Field(Values(cloud, "points"), values, source.unit)
+    cloud.fields["__tack_glyph__"] = Field(Values(cloud, "points"),
+                                           values_at_centers(data, field).values)
+    if sizes is not None:
+        cloud.fields["__tack_glyph_size__"] = Field(Values(cloud, "points"),
+                                                    values_at_centers(data, sizes).values)
+    ghosts = data.ghosts
+    if ghosts is not None and ghosts.cells is not None and n:
+        # A centre is its cell's: a ghost cell's centre a ghost point.
+        marks = tack.empty((n,), tack.u8)
+        _point_marks(ghosts.cells, marks)
+        cloud.ghosts = Ghosts(points=marks)
+    keep = [k for k in cloud.fields if not k.startswith("__tack_glyph")]
+    return glyphs(cloud, "__tack_glyph__", scale,
+                  "__tack_glyph_size__" if sizes is not None else None, resolution, keep,
+                  at="points")
+
+
+@tack.kernel
+def _point_marks(cells, out):
+    for i in range(cells.shape[0]):
+        out[i] = tack.u8(tack.i32(cells[i]) & 1)          # DUPLICATECELL to DUPLICATEPOINT
+
+
+def _vertex_rows(n, id_dtype):
+    """``(types, offsets, connectivity)`` of ``n`` vertex cells, cell ``i`` on point
+    ``i``."""
+    types, offsets = uniform_cells(int(shapes.VERTEX), n, id_dtype)
+    return types, offsets, tack.arange(n, dtype=id_dtype)

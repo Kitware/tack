@@ -209,14 +209,15 @@ def test_gradients_are_exact(f64_backend):
 
 
 def test_other_shapes_are_refused_above_order_2():
-    """Pyramids have no bases above order 2 yet; simplices and wedges have equispaced
-    ones (``test_simplex_order.py``), not Gauss-Legendre for L2."""
+    """Pyramids, simplices and wedges have equispaced bases above order 2
+    (``test_pyramid_high_order.py``, ``test_simplex_order.py``), not Gauss-Lobatto's,
+    nor Gauss-Legendre for L2."""
     types, offsets = uniform_cells(int(shapes.PYRAMID), 1, tack.i32)
     pyramid = td.DataSet(td.UnstructuredTopology(types, offsets, tack.array(
         np.arange(5, dtype=np.int32)), num_points=5), np.array(
         [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [0.5, 0.5, 1]], np.float32))
-    with pytest.raises(NotImplementedError, match="orders above 2 are on segments"):
-        _ = td.H1(pyramid, order=3).size
+    with pytest.raises(NotImplementedError, match="equispaced basis only"):
+        _ = td.H1(pyramid, order=3, basis="gauss_lobatto").size
     tets = td.tetrahedralize(_hexes())
     with pytest.raises(NotImplementedError, match="on segments, quads"):
         _ = td.L2(tets, order=1, basis="gauss_legendre").size

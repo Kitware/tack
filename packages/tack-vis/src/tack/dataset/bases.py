@@ -246,19 +246,22 @@ def wedge_bernstein(order):
 
 def _pyramid_level(level):
     level = int(level)
-    if level not in (1, 2):
-        raise NotImplementedError(f"a pyramid's lattice is of level 1 or 2 (its corners, "
-                                  f"or VTK's order-2 nodes), not {level}")
+    if level < 1:
+        raise ValueError(f"a pyramid's lattice is of level 1 and up, not {level}")
     return level
 
 
 def pyramid_lattice(level):
-    """A pyramid's lattice nodes as integer collapsed coordinates times ``level``: its
-    corners at level 1; at level 2 the first 14 of VTK's order-2 nodes
-    (``Pyramid.quadratic_node``: the corners, the edges' middles, the base's centre;
-    the triangle faces' centres are no lattice points). An apex edge's middle is at
-    its base corner's ``(r, s)``: the coordinates collapse toward the apex."""
+    """A pyramid's lattice nodes as integers: at level 1 and 2 its collapsed coordinates
+    times ``level``, its corners at level 1 and at level 2 the first 14 of VTK's
+    order-2 nodes (``Pyramid.quadratic_node``: the corners, the edges' middles, the
+    base's centre; the triangle faces' centres are no lattice points), an apex
+    edge's middle at its base corner's ``(r, s)``; from level 3 ``pyramid_nodes``'
+    ``(i, j, k)``, layer ``k`` an ``(level - k + 1)^2`` grid. ``pyramid_points`` gives
+    either as collapsed coordinates."""
     level = _pyramid_level(level)
+    if level >= 3:
+        return pyramid_nodes(level)[0]
     rows = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (0, 0, 1)]
     if level == 2:
         rows = [(2 * r, 2 * s, 2 * t) for r, s, t in rows] + [
@@ -270,10 +273,39 @@ def pyramid_lattice(level):
     return out
 
 
+def pyramid_points(level):
+    """A pyramid's lattice nodes of ``level`` (``pyramid_lattice``) as collapsed
+    coordinates, ``(n, 3)`` f64."""
+    level = _pyramid_level(level)
+    if level >= 3:
+        return pyramid_nodes(level)[1]
+    return np.asarray(pyramid_lattice(level), np.float64) / level
+
+
+def _pyramid_doubled(level):
+    """The lattice of ``level`` and the corners in doubled integer coordinates of the
+    straight pyramid (base ``[0, 2]^2``, apex ``(1, 1, 2)``) times ``level``: node
+    ``(i, j, k)`` at ``(2i + k, 2j + k, 2k)``, as ``_classify`` places nodes."""
+    ijk = np.asarray(pyramid_nodes(level)[0], np.int64)
+    lattice = np.stack([2 * ijk[:, 0] + ijk[:, 2], 2 * ijk[:, 1] + ijk[:, 2], 2 * ijk[:, 2]],
+                       axis=1)
+    corners = [(0, 0, 0), (2, 0, 0), (2, 2, 0), (0, 2, 0), (1, 1, 2)]
+    return lattice, corners
+
+
+#: The pyramid's faces as shapes.Pyramid numbers them: its base, then its triangles.
+_PYRAMID_FACE_ROWS = ((0, 3, 2, 1), (0, 1, 4), (1, 2, 4), (2, 3, 4), (3, 0, 4))
+
+
 def _pyramid_dof_tables(order):
-    """``dof_tables`` of a pyramid at level 1 or 2: its corners; then each edge's middle
-    (edge ``e``, place 1) and the base's centre (face 0, place (1, 1))."""
+    """``dof_tables`` of a pyramid: at level 1 or 2 its corners, then each edge's middle
+    (edge ``e``, place 1) and the base's centre (face 0, place (1, 1)); from order 3
+    its lattice's nodes by geometry (``_classify``), the base's from its corner 0
+    toward 1 and 3, a triangle's toward its corners 1 and 2."""
     level = _pyramid_level(order)
+    if level >= 3:
+        lattice, corners = _pyramid_doubled(level)
+        return _classify(corners, shapes._PYRAMID_EDGES, _PYRAMID_FACE_ROWS, lattice, level)
     n = len(pyramid_lattice(level))
     kind = np.full(n, CORNER, np.int32)
     entity = np.arange(n, dtype=np.int32)
@@ -381,6 +413,8 @@ def pyramid_subdivision(level):
     level = _pyramid_level(level)
     if level == 1:
         out = (np.array([int(shapes.PYRAMID)], np.int32), np.arange(5, dtype=np.int32))
+    elif level >= 3:
+        out = _pyramid_layers(level)
     else:
         pyramids = [[0, 5, 13, 8, 9], [5, 1, 6, 13, 10], [13, 6, 2, 7, 11], [8, 13, 7, 3, 12],
                     [9, 10, 11, 12, 4], [9, 12, 11, 10, 13]]
@@ -407,6 +441,61 @@ def pyramid_subdivision(level):
     for t in out:
         t.setflags(write=False)
     return out
+
+
+def _pyramid_layers(level):
+    """``pyramid_subdivision`` from level 3: layer by layer of the lattice
+    (``pyramid_nodes``), between layer ``k`` (an ``(m + 1)^2`` grid, ``m = level - k``)
+    and the one above: an upright pyramid on each of layer ``k``'s ``m^2`` squares, its
+    apex the node above the square's first corner; an upside-down one under each of
+    the layer above's ``(m - 1)^2`` squares, its apex the node below the square's
+    last corner; and a tetrahedron in each gap between two upright pyramids side by
+    side, ``2 m (m - 1)``. Each is oriented as VTK's cells are, by its volume."""
+    ijk = np.asarray(pyramid_nodes(level)[0])
+    index = {tuple(row): n for n, row in enumerate(ijk)}
+    x = np.stack([(2 * ijk[:, 0] + ijk[:, 2]) / 2, (2 * ijk[:, 1] + ijk[:, 2]) / 2,
+                  ijk[:, 2]], axis=1).astype(np.float64)
+
+    def node(i, j, k):
+        return index[(i, j, k)]
+
+    pyramids, tetrahedra = [], []
+    for k in range(level):
+        m = level - k
+        for j in range(m):
+            for i in range(m):
+                pyramids.append([node(i, j, k), node(i + 1, j, k), node(i + 1, j + 1, k),
+                                 node(i, j + 1, k), node(i, j, k + 1)])
+        for j in range(m - 1):
+            for i in range(m - 1):
+                pyramids.append([node(i, j, k + 1), node(i + 1, j, k + 1),
+                                 node(i + 1, j + 1, k + 1), node(i, j + 1, k + 1),
+                                 node(i + 1, j + 1, k)])
+        for j in range(m):
+            for i in range(m - 1):
+                # Between the squares (i, j) and (i + 1, j): their shared edge below,
+                # their apexes above.
+                tetrahedra.append([node(i + 1, j, k), node(i + 1, j + 1, k),
+                                   node(i, j, k + 1), node(i + 1, j, k + 1)])
+        for j in range(m - 1):
+            for i in range(m):
+                tetrahedra.append([node(i, j + 1, k), node(i + 1, j + 1, k),
+                                   node(i, j, k + 1), node(i, j + 1, k + 1)])
+    rows = []
+    for p in pyramids:
+        base = x[p[:4]]
+        normal = np.cross(base[1] - base[0], base[3] - base[0])
+        if np.dot(normal, x[p[4]] - base.mean(axis=0)) < 0:
+            p = [p[0], p[3], p[2], p[1], p[4]]
+        rows.append(p)
+    for t in tetrahedra:
+        a, b, c, d = x[t]
+        if np.dot(np.cross(b - a, c - a), d - a) < 0:
+            t = [t[0], t[2], t[1], t[3]]
+        rows.append(t)
+    return (np.array([int(shapes.PYRAMID)] * len(pyramids) + [int(shapes.TETRA)] * len(tetrahedra),
+                     np.int32),
+            np.array([n for r in rows for n in r], np.int32))
 
 
 def wedge_subdivision(level):

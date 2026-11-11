@@ -261,8 +261,4 @@ def test_what_pyramids_refuse(backend):
         _ = td.L2(data, order=2, basis="gauss_legendre").size
     with pytest.raises(ValueError, match="stored in blocks"):
         _ = td.L2(data, order=3, layout="cells").layout
-    with pytest.raises(NotImplementedError, match="H1 order 3 on Pyramid"):
-        _ = td.H1(data, order=3).size
-    data.fields["u"] = td.interpolate(data, _quadratic, td.L2(data, order=2), dtype=tack.f64)
-    with pytest.raises(NotImplementedError, match="level 1 or 2"):
-        td.subdivide(data, 3)
+    # H1 above order 2 and subdivision at any level: test_pyramid_high_order.

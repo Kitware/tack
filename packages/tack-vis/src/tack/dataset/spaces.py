@@ -304,6 +304,9 @@ def _interior_counts(cells, order, counts):
             if cells.NUM_POINTS == 6:
                 # A wedge: the triangle's interior times the segment's.
                 n = (order - 1) * (order - 1) * (order - 2) // 2
+            elif cells.NUM_POINTS == 5:
+                # A pyramid: its lattice of order - 3 (bases.pyramid_nodes).
+                n = (order - 1) * (order - 2) * (2 * order - 3) // 6
             elif cells.NUM_POINTS == cells.DIMENSION + 1 and cells.DIMENSION >= 2:
                 for k in range(cells.DIMENSION):
                     n = n * (order - 1 - k) // (k + 1)
@@ -570,11 +573,12 @@ class H1(Space):
                         f"H1 order 2 on {group.shape.__name__} cells is not supported yet; "
                         "it is on tetrahedra, hexahedra, voxels, wedges, pyramids, triangles, "
                         "quads and pixels")
-                if p > 2 and not bases.has_bases(group.shape):
+                if p > 2 and not (bases.has_bases(group.shape)
+                                  or group.shape is shapes.Pyramid):
                     raise NotImplementedError(
                         f"H1 order {p} on {group.shape.__name__} cells is not supported "
                         "yet; orders above 2 are on segments, quads, pixels, hexahedra, "
-                        "voxels, triangles, tetrahedra and wedges")
+                        "voxels, triangles, tetrahedra, wedges and pyramids")
                 _refuse_simplex_nodes(self, group.shape)
             dims = {g.shape.DIMENSION for g in topology.groups() if g.count}
             edges = topology.edges() if dims - {1} else None
@@ -664,7 +668,9 @@ class H1(Space):
                                   side_orientation=faces.side_orientation,
                                   face_start=faces.group_starts[root])
             high = self._any_order(group.shape)
-            if high and bases.simplex_shape(group.shape):
+            if high and group.shape is shapes.Pyramid:
+                attributes.update(_pyramid_h1_tables(self, dtype or tack.f32))
+            elif high and bases.simplex_shape(group.shape):
                 attributes.update(_simplex_tables(self, group, dtype or tack.f32))
             elif high and bases.wedge_shape(group.shape):
                 attributes.update(_wedge_tables(self, group, dtype or tack.f32))
@@ -727,6 +733,8 @@ class H1(Space):
         if high and bases.wedge_shape(shape):
             return self._tabled(views.of_wedge_order(views._H1WedgeField, self.order,
                                                      bernstein))
+        if high and shape is shapes.Pyramid:
+            return self._tabled(views.of_pyramid_order(self.order, h1=True))
         if self.order == 2 and shape is not None and self._any_order(shape):
             return self._tabled(views.of_order(views._H1TensorField, 2, bernstein))
         if self.order == 2 and shape is shapes.Pyramid:
@@ -744,8 +752,8 @@ class H1(Space):
             return (*incidence, views.quadratic_faces(shape))
         if bases.simplex_shape(shape):
             return (*incidence, *views.simplex_mixins(shape))
-        if bases.wedge_shape(shape):
-            return (*incidence, *views.wedge_mixins(shape))
+        if bases.wedge_shape(shape) or shape is shapes.Pyramid:
+            return (*incidence, *views.wedge_mixins(shape))      # quad and triangle faces
         return (*incidence, *views.tensor_mixins(shape))
 
 
@@ -784,6 +792,26 @@ def _pyramid_tables(space, dtype):
         _, points = bases.pyramid_nodes(space.order)
         cache[key] = {"pyramid_points": device(points),
                       "pyramid_coefficients": device(bases.pyramid_bernstein(space.order))}
+    return cache[key]
+
+
+def _pyramid_h1_tables(space, dtype):
+    """An ``H1`` pyramid of order 3 and up: ``_pyramid_tables`` and where each node's
+    value lives (``bases.dof_tables``)."""
+    key = ("pyramid h1", space.order, dtype)
+    cache = space.__dict__.setdefault("_tables", {})
+    if key not in cache:
+        def device(values, kind):
+            values = np.asarray(values).reshape(-1)
+            out = tack.empty((len(values),), kind)
+            tack.copyto(out, values.astype(kind.numpy_dtype))
+            return out
+
+        kind, entity, a, b, corner = bases.dof_tables(shapes.Pyramid, space.order)
+        cache[key] = {**_pyramid_tables(space, dtype),
+                      "node_kind": device(kind, tack.i32), "node_entity": device(entity, tack.i32),
+                      "node_a": device(a, tack.i32), "node_b": device(b, tack.i32),
+                      "corner_node": device(corner, tack.i32)}
     return cache[key]
 
 

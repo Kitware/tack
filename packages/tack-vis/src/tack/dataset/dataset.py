@@ -340,6 +340,9 @@ def _geometry_parts(data, group, kind):
                                           if group.shape is shapes.Pyramid
                                           else views._H1Order2Geometry)
         return [*mixins, views.quadratic_faces(group.shape), views._QuadraticNewton], attributes
+    if high and kind == "cells" and group.shape is shapes.Pyramid:
+        raise NotImplementedError(f"a curved pyramid of order {geometry.space.order}: "
+                                  "Tack's curved pyramids are of order 2")
     if high and kind == "cells" and bases.wedge_shape(group.shape):
         # Curved wedges of order 3 and up (2 too in a Bernstein basis).
         space = geometry.space
@@ -1203,6 +1206,23 @@ class DataSet:
                     "cells", group,
                     (views.of_node_order(views._TableInteriorNodes, space.order),),
                     node_cell_dofs=cell_dofs, node_points=points, node_interior=table))
+                continue
+            if group.shape is shapes.Pyramid:
+                # Its interior lattice nodes' collapsed coordinates, each an index into
+                # the values they take (bases.pyramid_nodes).
+                kind = bases.dof_tables(group.shape, space.order)[0]
+                inside = bases.pyramid_nodes(space.order)[1][kind == bases.INTERIOR]
+                values, at = np.unique(inside.reshape(-1), return_inverse=True)
+                table = tack.empty((max(at.size, 3),), tack.i32)
+                tack.copyto(table, np.r_[at.astype(np.int32),
+                                         np.zeros(max(0, 3 - at.size), np.int32)])
+                where = tack.empty((max(values.size, 1),), _basis_type(geometry))
+                tack.copyto(where, np.r_[values, np.zeros(max(0, 1 - values.size))]
+                            .astype(where.dtype.numpy_dtype))
+                out.append(self.domain_view(
+                    "cells", group,
+                    (views.of_node_order(views._TableInteriorNodes, space.order),),
+                    node_cell_dofs=cell_dofs, node_points=where, node_interior=table))
                 continue
             interior = (views._SimplexInteriorNodes if bases.simplex_shape(group.shape)
                         else views._TensorInteriorNodes)

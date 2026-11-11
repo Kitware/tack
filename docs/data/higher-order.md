@@ -423,7 +423,7 @@ layouts.
 | Line, triangle, quad, pixel | yes | yes | yes | yes | yes |
 | Tetrahedron, hexahedron, voxel, wedge | yes | yes | yes | yes | yes |
 | Vertex | yes | no | yes | no | no |
-| Pyramid | yes | order 2 | yes | any (equispaced from 3) | order 2 |
+| Pyramid | yes | any (equispaced from 3) | yes | any (equispaced from 3) | order 2 |
 | Polyline, polygon, polyhedron | yes, linear on pieces | no | `Constant` only | no | no |
 
 There is no fixed upper order; Tack's tests go to order 6, except on
@@ -435,7 +435,7 @@ a mesh with pyramids keeps a value at each triangle face a pyramid has, as the
 18-node pyramid needs; a triangle face no pyramid touches keeps none.
 `L2` of order 2 on pyramids is equispaced and stored in blocks.
 
-From order 3, `L2` on pyramids is Bergot, Cohen and Duruflé's space, the one
+From order 3, `H1` and `L2` on pyramids are Bergot, Cohen and Duruflé's space, the one
 VTK's modal `G` pyramid has, which holds every polynomial of degree p and
 contains the 18-node space. Its values are at the pyramid's lattice: layer
 `k` at height `k/p`, a grid of `(p - k + 1)^2` nodes, `(p + 1)(p + 2)(2p + 3)/6`
@@ -487,10 +487,8 @@ to do with fields.
 
 ### Limits
 
-Not supported today: `H1` on pyramids above order 2; cutting pyramids finer
-than `subdivision=2`, so a pyramid field above order 2 is cut with
-`subdivision=2`; pyramids of other bases (VTK's 13- and 19-node, Lagrange and
-Bézier pyramids, which are rational);
+Not supported today: curved pyramids above order 2; pyramids of other bases
+(VTK's 13- and 19-node, Lagrange and Bézier pyramids, which are rational);
 rational Bézier cells (VTK's Bézier cells with weights other than 1, which
 are refused when read);
 Gauss-point bases on triangles, tetrahedra and wedges, which are resampled

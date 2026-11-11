@@ -153,17 +153,104 @@ def test_project_and_whole_cells(backend):
                                _cubic_at(points), rtol=0, atol=1e-12)
 
 
+@tack.func
+def _wavy(x):
+    return tack.sin(3.0 * x[0]) * tack.cos(2.0 * x[1]) + x[2] * x[2] * x[2] * x[0]
+
+
+@tack.func
+def _ball(x):
+    return ((x[0] - 0.5) * (x[0] - 0.5) + (x[1] - 0.5) * (x[1] - 0.5)
+            + (x[2] - 0.5) * (x[2] - 0.5))
+
+
+@pytest.mark.parametrize("kind", ["pyramids", "conforming"])
+@pytest.mark.parametrize("order", [3, 4])
+def test_h1_holds_a_cubic_and_is_continuous(backend, kind, order):
+    """H1 of order 3 and up on pyramids, its values shared by entity as a wedge's
+    (beside hexahedra too): a cubic is itself, and a field that is no polynomial
+    is continuous across every face (``jump``, which takes a pyramid's triangle
+    face's centre in its collapsed coordinates)."""
+    data = _mesh(kind)
+    space = td.H1(data, order=order)
+    data.fields["u"] = td.interpolate(data, _cubic, space, dtype=tack.f64)
+    points = np.random.default_rng(3).random((300, 3)) * 0.98 + 0.01
+    np.testing.assert_allclose(td.probe(data, points).fields["u"].values.numpy(),
+                               _cubic_at(points), rtol=0, atol=1e-12)
+    data.fields["w"] = td.interpolate(data, _wavy, space, dtype=tack.f64)
+    np.testing.assert_allclose(td.jump(data, "w").values.numpy(), 0.0, rtol=0, atol=1e-12)
+
+
+def test_jump_of_a_pyramid_field_is_its_own(backend):
+    """Above order 1 each side is read at the face's centre, the same point from both
+    sides: an order-2 continuous field (#431's) has no jumps across a pyramid's
+    triangle faces either."""
+    data = _mesh("conforming")
+    data.fields["w"] = td.interpolate(data, _wavy, td.H1(data, order=2), dtype=tack.f64)
+    np.testing.assert_allclose(td.jump(data, "w").values.numpy(), 0.0, rtol=0, atol=1e-12)
+
+
+@pytest.mark.parametrize("level", [2, 3, 4, 5])
+def test_the_subdivision_fills_the_pyramid(level):
+    """Upright and upside-down pyramids and tetrahedra, layer by layer, each of
+    positive volume, their volumes the pyramid's."""
+    from tack.dataset import shapes
+
+    types, rows = bases.pyramid_subdivision(level)
+    pts = bases.pyramid_points(level)
+    x = np.stack([(1 - pts[:, 2]) * pts[:, 0] + pts[:, 2] / 2,
+                  (1 - pts[:, 2]) * pts[:, 1] + pts[:, 2] / 2, pts[:, 2]], axis=1)
+    total, at = 0.0, 0
+    for t in types:
+        k = 5 if t == int(shapes.PYRAMID) else 4
+        r = rows[at:at + k]
+        at += k
+        tets = [(r[0], r[1], r[2], r[4]), (r[0], r[2], r[3], r[4])] if k == 5 else [tuple(r)]
+        volume = sum(np.dot(np.cross(x[b] - x[a], x[c] - x[a]), x[d] - x[a]) / 6
+                     for a, b, c, d in tets)
+        assert volume > 0
+        total += volume
+    np.testing.assert_allclose(total, 1 / 3, rtol=1e-13)
+    assert at == len(rows)
+
+
+@pytest.mark.parametrize("kind", ["pyramids", "conforming"])
+@pytest.mark.parametrize("space", ["H1", "L2"])
+def test_cuts_at_the_fields_order(backend, kind, space):
+    """The cuts subdivide pyramids at the field's order (3 here): a closed level
+    set's contour is watertight where pyramids meet pyramids and hexahedra, its
+    points nearer the sphere than at level 2; clip's two sides fill the cube;
+    subdivision's points carry the field's values there."""
+    data = _mesh(kind)
+    data.fields["u"] = td.interpolate(data, _ball, getattr(td, space)(data, order=3),
+                                      dtype=tack.f64)
+    surface = td.contour(data, "u", [0.09])
+    open_edges = td.feature_edges(surface, boundary=True, feature=False, non_manifold=True,
+                                  manifold=False)
+    assert surface.num_cells > 100 and open_edges.num_cells == 0
+    radius = np.linalg.norm(surface.positions() - 0.5, axis=1)
+    coarse = np.linalg.norm(td.contour(data, "u", [0.09], subdivision=2).positions() - 0.5,
+                            axis=1)
+    assert np.abs(radius - 0.3).max() < np.abs(coarse - 0.3).max()
+    inside = sum(td.integrate(p).measure for p in td.clip(data, "u", 0.09, inside=True))
+    outside = sum(td.integrate(p).measure for p in td.clip(data, "u", 0.09))
+    np.testing.assert_allclose(inside + outside, 1.0, rtol=0, atol=1e-12)
+    refined = td.subdivide(data, 3)
+    x = refined.positions() - 0.5
+    np.testing.assert_allclose(refined.fields["u"].values.numpy(), (x * x).sum(axis=1),
+                               rtol=0, atol=1e-12)
+
+
 def test_what_pyramids_above_order_2_refuse(backend):
-    """Equispaced nodes only; H1 above order 2; the cuts above level 2 (until pyramid
-    subdivision takes them), which subdivision=2 runs."""
+    """Equispaced nodes only; a curved pyramid above order 2."""
     data = _mesh("pyramids", 1)
     with pytest.raises(NotImplementedError, match="equispaced basis only"):
         _ = td.L2(data, order=3, basis="gauss_lobatto").size
     with pytest.raises(NotImplementedError, match="equispaced basis only"):
         _ = td.L2(data, order=3, basis="gauss_legendre").size
-    with pytest.raises(NotImplementedError, match="H1 order 3 on Pyramid"):
-        _ = td.H1(data, order=3).size
-    data.fields["u"] = td.interpolate(data, _cubic, td.L2(data, order=3), dtype=tack.f64)
-    with pytest.raises(NotImplementedError, match="level 1 or 2"):
-        td.contour(data, "u", [1.2])
-    assert td.contour(data, "u", [1.2], subdivision=2).num_cells > 0
+    with pytest.raises(NotImplementedError, match="equispaced basis only"):
+        _ = td.H1(data, order=3, basis="gauss_lobatto").size
+    data.geometry = td.interpolate(data, _where, td.H1(data, order=3),
+                                   dtype=tack.vec3(tack.f64))
+    with pytest.raises(NotImplementedError, match="curved pyramids are of order 2"):
+        td.cell_geometry(data)

@@ -42,7 +42,7 @@ import numpy as np
 import tack
 from tack import arrays
 from tack.arrays import materialize, size_of, width_of
-from tack.dataset import bases, ids
+from tack.dataset import bases, ids, shapes
 from tack.dataset.buckets import bucket_order
 from tack.dataset.dataset import DataSet, Field
 from tack.dataset.spaces import H1, L2, Constant, Values
@@ -296,6 +296,9 @@ def _nodes_per_cell(space, shape):
         return comb(space.order + shape.DIMENSION, shape.DIMENSION)
     if bases.wedge_shape(shape):
         return comb(space.order + 2, 2) * (space.order + 1)
+    if shape is shapes.Pyramid:
+        p = space.order
+        return (p + 1) * (p + 2) * (2 * p + 3) // 6
     return (space.order + 1) ** shape.DIMENSION
 
 

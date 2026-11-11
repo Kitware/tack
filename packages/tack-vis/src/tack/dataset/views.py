@@ -1751,6 +1751,22 @@ class _L2PyramidOrderField(_Interpolated):
                          self.pyramid_points[3 * k + 2])
 
     @tack.func
+    def corner_value(self, c, j):
+        # Corner j's node: the base's corners at the ends of the first layer's rows,
+        # the apex last (bases.pyramid_nodes).
+        q = self.ORDER + 1
+        n = 0
+        if j == 1:
+            n = self.ORDER
+        if j == 2:
+            n = q * q - 1
+        if j == 3:
+            n = self.ORDER * q
+        if j == 4:
+            n = self.NODES - 1
+        return self.dof(c, n)
+
+    @tack.func
     def parametric_jet(self, c, pc):
         """The value, parametric gradient and Hessian at ``pc``, each node's function
         built from the axes' Bernstein polynomials, relative to the first value."""
@@ -1862,12 +1878,16 @@ class _L2PyramidOrderField(_Interpolated):
         return worst
 
 
-def of_pyramid_order(order):
-    """``_L2PyramidOrderField`` of ``order`` (3 and up): ``ORDER`` and ``NODES`` set."""
-    key = (_L2PyramidOrderField, int(order), "pyramid")
+def of_pyramid_order(order, h1=False):
+    """The pyramid's field view of ``order`` (3 and up), ``ORDER`` and ``NODES`` set:
+    ``L2``'s, or with ``h1`` ``H1``'s (its values shared by entity, placed as a wedge's
+    are: ``_WedgeDofs``, with the wedge's edge and face mixins)."""
+    key = (_L2PyramidOrderField, int(order), "pyramid", bool(h1))
     if key not in _by_order:
         p = int(order)
-        _by_order[key] = type(f"_L2PyramidOrderField{p}", (_L2PyramidOrderField,),
+        parents = (_WedgeDofs, _L2PyramidOrderField) if h1 else (_L2PyramidOrderField,)
+        name = f"_{'H1' if h1 else 'L2'}PyramidOrderField{p}"
+        _by_order[key] = type(name, parents,
                               {"ORDER": p, "NODES": (p + 1) * (p + 2) * (2 * p + 3) // 6})
     return _by_order[key]
 

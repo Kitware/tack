@@ -922,11 +922,6 @@ def _refined(data, flags, level, fields, elsewhere=None, cut=None):
 
     Returns ``(refined, parent)``, ``parent`` each sub-cell's cell."""
     dimension, families = _cell_families(data, "subdivision")
-    if "pyramid" in families and level not in (1, 2):
-        raise NotImplementedError(
-            f"pyramids are cut into level 1 or 2 (their corners, or VTK's order-2 nodes), "
-            f"not {level}: a subdivision or tolerance asking for more is not supported "
-            "on them yet")
     if len(families) == 1:
         refined, parent, _ = _refined_family(data, flags, level, fields, elsewhere,
                                              None if families[0] == "pyramid" else cut,
@@ -952,7 +947,7 @@ def _refined_family(data, flags, level, fields, elsewhere, cut, dimension, cell_
     point's lattice id (shared by every family holding it)."""
     from math import comb
 
-    pyramid = cell_family == "pyramid"      # pyramids and tetrahedra, at levels 1 and 2
+    pyramid = cell_family == "pyramid"      # cut into pyramids and tetrahedra
     simplex = cell_family in ("simplex", "wedge")   # table-driven sub-cells
     topology = data.topology
     n = data.num_cells
@@ -995,7 +990,8 @@ def _refined_family(data, flags, level, fields, elsewhere, cut, dimension, cell_
             lattice = Field(space, ConstantArray(0.0, space.size, dtype=data.dtype))
             for group in data.launch_groups("cells", [lattice]):
                 if group.count and _family(group.shape) == cell_family:
-                    # A pyramid's level-2 lattice is its first 14 order-2 nodes, in order.
+                    # A pyramid's lattice is its H1 nodes of that order, in order (at
+                    # level 2 the first 14 of the 18).
                     node_of = tack.array(np.arange(per_cell, dtype=np.int32) if pyramid
                                          else bases.view_order(group.shape, level))
                     _lattice_keys(data.domain_view("cells", group), lattice.view(group),
@@ -1021,13 +1017,21 @@ def _refined_family(data, flags, level, fields, elsewhere, cut, dimension, cell_
     steps = tack.empty((level + 1,), data.dtype)
     tack.copyto(steps, (np.arange(level + 1) / level).astype(data.dtype.numpy_dtype))
     corner_at, ijk = {}, {}
+    if pyramid:
+        # A pyramid's lattice points are not steps of 1/level in its collapsed
+        # coordinates (layer k's are steps of 1/(level - k)): each coordinate an
+        # index into the values they take, in place of the steps.
+        values, at = np.unique(bases.pyramid_points(level).reshape(-1), return_inverse=True)
+        steps = tack.empty((len(values),), data.dtype)
+        tack.copyto(steps, values.astype(data.dtype.numpy_dtype))
     for group in topology.groups():
         if group.count and _family(group.shape) == cell_family:
             kind, entity, _, _, _ = bases.dof_tables(group.shape, level)
             corner_at[group.root] = tack.array(np.where(kind == bases.CORNER, entity, -1)
                                                .astype(np.int32))
-            ijk[group.root] = tack.array(np.ascontiguousarray(
-                bases.lattice_ijk(group.shape, level)).reshape(-1))
+            ijk[group.root] = tack.array(
+                at.astype(np.int32) if pyramid else
+                np.ascontiguousarray(bases.lattice_ijk(group.shape, level)).reshape(-1))
     if count:
         for group in data.launch_groups("cells", []):
             if group.count and _family(group.shape) == cell_family:

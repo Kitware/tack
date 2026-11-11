@@ -11,6 +11,8 @@ from _expr_checks import assert_close, values, vector_array
 import tack
 import tack.dataset as td
 
+pytestmark = pytest.mark.quick
+
 
 def uniform(_):
     return td.uniform_grid((13, 9, 7), spacing=(0.1, 0.2, 0.3))
@@ -32,25 +34,20 @@ def _vtk_grid():
     pytest.importorskip("vtkmodules.vtkFiltersCore")
     from vtkmodules.vtkCommonDataModel import vtkImageData
 
-    img = vtkImageData()
-    img.SetDimensions(11, 8, 6)
-    img.SetSpacing(0.1, 0.1, 0.1)
-    return img
+    return vtkImageData(dimensions=(11, 8, 6), spacing=(0.1, 0.1, 0.1))
 
 
 def polyhedra(_):
-    from _expr_vtk import run_filter
     from vtkmodules.vtkFiltersCore import vtkAppendFilter
 
     from tack.interop.vtk import vtk_to_dataset
 
-    return vtk_to_dataset(run_filter(vtkAppendFilter, _vtk_grid()), polyhedral=True)
+    return vtk_to_dataset(vtkAppendFilter()(_vtk_grid()), polyhedral=True)
 
 
 def mixed_vtk():
     """Half the voxels of a grid, the other half cut into tetrahedra, sharing points."""
     img = _vtk_grid()
-    from _expr_vtk import run_filter
     from vtkmodules.vtkCommonCore import vtkIdList
     from vtkmodules.vtkFiltersCore import vtkAppendFilter
     from vtkmodules.vtkFiltersGeneral import vtkDataSetTriangleFilter
@@ -60,23 +57,20 @@ def mixed_vtk():
     except ImportError:
         from vtkmodules.vtkFiltersExtraction import vtkExtractCells
 
-    half = img.GetNumberOfCells() // 2
+    half = img.number_of_cells // 2
     parts = []
-    for lo, hi in ((0, half), (half, img.GetNumberOfCells())):
+    for lo, hi in ((0, half), (half, img.number_of_cells)):
         ids = vtkIdList()
         for i in range(lo, hi):
             ids.InsertNextId(i)
         extract = vtkExtractCells()
-        extract.SetInputData(img)
         extract.SetCellList(ids)
-        extract.Update()
-        parts.append(extract.GetOutput())
-    append = vtkAppendFilter()
-    append.MergePointsOn()
+        parts.append(extract(img))
+    append = vtkAppendFilter(merge_points=True)
     append.AddInputData(parts[0])
-    append.AddInputData(run_filter(vtkDataSetTriangleFilter, parts[1]))
+    append.AddInputData(vtkDataSetTriangleFilter()(parts[1]))
     append.Update()
-    return append.GetOutput()
+    return append.output
 
 
 def mixed(_):
@@ -106,15 +100,12 @@ def test_points_of_cell_data_match_td_project_without_calling_it(backend, monkey
 
 def test_mixed_mesh_matches_vtk_cell_data_to_point_data(backend):
     grid = mixed_vtk()
-    from _expr_vtk import array, run_filter
-    from vtkmodules.util.numpy_support import numpy_to_vtk
+    from _expr_vtk import array
     from vtkmodules.vtkFiltersCore import vtkCellDataToPointData
 
     from tack.interop.vtk import vtk_to_dataset
 
     rng = np.random.default_rng(6)
-    arr = numpy_to_vtk(rng.random(grid.GetNumberOfCells(), dtype=np.float32), deep=True)
-    arr.SetName("C")
-    grid.GetCellData().AddArray(arr)
-    ref = array(run_filter(vtkCellDataToPointData, grid), "C")
+    grid.cell_data["C"] = rng.random(grid.number_of_cells, dtype=np.float32)
+    ref = array(vtkCellDataToPointData()(grid), "C")
     assert_close(values("points(C)", vtk_to_dataset(grid), at="points"), ref, tol=1e-5)

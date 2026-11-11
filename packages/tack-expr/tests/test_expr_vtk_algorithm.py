@@ -16,11 +16,11 @@ from vtkmodules.vtkImagingCore import vtkRTAnalyticSource
 from tack.interop.vtk import algorithms as ta
 from tack.interop.vtk import vtk_to_dataset
 
+pytestmark = pytest.mark.quick
+
 
 def _wavelet():
-    source = vtkRTAnalyticSource(whole_extent=(-6, 6, -6, 6, -6, 6))
-    source.Update()
-    return source.GetOutput()
+    return vtkRTAnalyticSource(whole_extent=(-6, 6, -6, 6, -6, 6))()
 
 
 @pytest.mark.parametrize("at, where", [("points", "point_data"), ("cells", "cell_data")])

@@ -19,7 +19,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Visualization",
 ]
 dependencies = [
-    "tack-vis>=0.6.0",
+    "tack-vis>=0.8.0",
 ]
 
 [build-system]

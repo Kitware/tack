@@ -15,6 +15,8 @@ from _expr_checks import assert_close, values, vector_array, with_fields
 import tack
 import tack.dataset as td
 
+pytestmark = pytest.mark.quick
+
 
 @pytest.fixture
 def pointdata(backend):

@@ -10,6 +10,8 @@ from _expr_checks import assert_close, with_position_flux
 
 import tack.dataset as td
 
+pytestmark = pytest.mark.quick
+
 
 @pytest.mark.parametrize(("expr", "at"), [
     ("RTData * 2 + 1", "points"), ("cells(RTData)", "cells"), ("mag(grad(RTData))", "cells"),

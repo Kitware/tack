@@ -12,6 +12,8 @@ import tack_expr as fx
 import tack
 import tack.dataset as td
 
+pytestmark = pytest.mark.quick
+
 
 @tack.func
 def f_T(x):

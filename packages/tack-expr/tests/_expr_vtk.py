@@ -6,7 +6,6 @@
 import functools
 
 import numpy as np
-from vtkmodules.util.numpy_support import numpy_to_vtk, vtk_to_numpy
 from vtkmodules.vtkCommonCore import VTK_DOUBLE, vtkObject
 from vtkmodules.vtkCommonDataModel import vtkImageData
 from vtkmodules.vtkFiltersCore import vtkAppendFilter, vtkArrayCalculator
@@ -17,13 +16,6 @@ vtkObject.GlobalWarningDisplayOff()
 DIMS = (16, 12, 9)
 
 
-def run_filter(filter_class, data):
-    f = filter_class()
-    f.SetInputData(data)
-    f.Update()
-    return f.GetOutput()
-
-
 def _arrays(rng, n):
     return {"T": rng.random(n, dtype=np.float32), "P": rng.random(n, dtype=np.float32),
             "V": rng.random((n, 3), dtype=np.float32) * 2 - 1,
@@ -31,15 +23,10 @@ def _arrays(rng, n):
 
 
 def image(point=None, cell=None):
-    img = vtkImageData()
-    img.SetDimensions(DIMS)
-    img.SetOrigin(0.5, -1.0, 2.0)
-    img.SetSpacing(0.1, 0.2, 0.05)
-    for attrs, arrays in ((img.GetPointData(), point), (img.GetCellData(), cell)):
+    img = vtkImageData(dimensions=DIMS, origin=(0.5, -1.0, 2.0), spacing=(0.1, 0.2, 0.05))
+    for attrs, arrays in ((img.point_data, point), (img.cell_data, cell)):
         for name, a in (arrays or {}).items():
-            arr = numpy_to_vtk(a, deep=True)
-            arr.SetName(name)
-            attrs.AddArray(arr)
+            attrs[name] = a
     return img
 
 
@@ -48,23 +35,22 @@ def grids():
     """Unstructured grids of voxels, one with point arrays T, P, V, W and one with cell arrays."""
     rng = np.random.default_rng(1)
     img = image()
-    point = image(point=_arrays(rng, img.GetNumberOfPoints()))
-    cell = image(cell=_arrays(rng, img.GetNumberOfCells()))
-    return run_filter(vtkAppendFilter, point), run_filter(vtkAppendFilter, cell)
+    point = image(point=_arrays(rng, img.number_of_points))
+    cell = image(cell=_arrays(rng, img.number_of_cells))
+    return vtkAppendFilter()(point), vtkAppendFilter()(cell)
 
 
 @functools.cache
 def tetrahedra():
-    return run_filter(vtkDataSetTriangleFilter, grids()[0])
+    return vtkDataSetTriangleFilter()(grids()[0])
 
 
 def array(data, name, cells=False):
-    return vtk_to_numpy((data.GetCellData() if cells else data.GetPointData()).GetArray(name))
+    return np.asarray((data.cell_data if cells else data.point_data)[name])
 
 
 def calc(data, expr, cells=False, replace=None):
-    c = vtkArrayCalculator()
-    c.SetInputData(data)
+    c = vtkArrayCalculator(function=expr, result_array_name="result", result_array_type=VTK_DOUBLE)
     c.SetAttributeTypeToCellData() if cells else c.SetAttributeTypeToPointData()
     c.AddScalarArrayName("T")
     c.AddScalarArrayName("P")
@@ -77,11 +63,7 @@ def calc(data, expr, cells=False, replace=None):
             c.AddCoordinateScalarVariable(f"coords{comp}", k)
     if not cells:
         c.AddCoordinateVectorVariable("coords")
-    c.SetFunction(expr)
-    c.SetResultArrayName("result")
-    c.SetResultArrayType(VTK_DOUBLE)
     if replace is not None:
-        c.ReplaceInvalidValuesOn()
-        c.SetReplacementValue(replace)
-    c.Update()
-    return array(c.GetOutput(), "result", cells)
+        c.replace_invalid_values = True
+        c.replacement_value = replace
+    return array(c(data), "result", cells)

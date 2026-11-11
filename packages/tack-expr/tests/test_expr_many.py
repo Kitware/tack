@@ -11,6 +11,8 @@ from _expr_checks import vector_array
 import tack
 import tack.dataset as td
 
+pytestmark = pytest.mark.quick
+
 SETS = {
     "points": {"cp": "2 * pressure / 0.0064", "ke": "0.5 * mag2(velocity)", "u2": "velocity * pressure"},
     "cells": {"vorticity": "mag(curl(velocity))", "q": "qcrit(velocity)",

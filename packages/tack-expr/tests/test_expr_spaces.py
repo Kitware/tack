@@ -12,6 +12,8 @@ from _expr_checks import assert_close, values, with_position_flux
 import tack
 import tack.dataset as td
 
+pytestmark = pytest.mark.quick
+
 
 @tack.func
 def quadratic(x):

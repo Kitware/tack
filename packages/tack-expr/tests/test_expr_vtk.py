@@ -11,12 +11,14 @@ pytest.importorskip("vtkmodules.vtkFiltersCore")
 
 import tack_expr as fx
 from _expr_checks import assert_close, values, with_position_flux
-from _expr_vtk import array, calc, grids, run_filter, tetrahedra
+from _expr_vtk import array, calc, grids, tetrahedra
 from vtkmodules.vtkFiltersCore import vtkCellDataToPointData, vtkPointDataToCellData
 
 import tack
 import tack.dataset as td
 from tack.interop.vtk import vtk_to_dataset
+
+pytestmark = pytest.mark.quick
 
 SYNTAX = [
     "T + P", "T - 2*P", "T * P / (P + 1)", "T ^ 2", "2 ^ 3 ^ 2", "-T ^ 2", "T + P ^ 2",
@@ -47,7 +49,7 @@ def test_cell_data_matches_vtk_array_calculator(backend, expr):
 def test_point_data_at_cells_matches_vtk_point_data_to_cell_data(backend):
     points, _ = grids()
     data = vtk_to_dataset(points)
-    ref = array(run_filter(vtkPointDataToCellData, points), "T", cells=True)
+    ref = array(vtkPointDataToCellData()(points), "T", cells=True)
     assert_close(values("cells(T)", data), ref)
     assert_close(values("T", data), ref)
 
@@ -55,7 +57,7 @@ def test_point_data_at_cells_matches_vtk_point_data_to_cell_data(backend):
 def test_cell_data_at_points_matches_vtk_cell_data_to_point_data(backend):
     _, cells = grids()
     data = vtk_to_dataset(cells)
-    out = run_filter(vtkCellDataToPointData, cells)
+    out = vtkCellDataToPointData()(cells)
     assert_close(values("points(T)", data, at="points"), array(out, "T"))
     assert_close(values("points(V) * 2", data, at="points"), 2 * array(out, "V"))
     compiled = fx.compile_expression("points(T) * 2 + points(P)", data, at="points")
@@ -67,7 +69,7 @@ def test_tetrahedra(backend):
     tets_vtk = tetrahedra()
     tets = vtk_to_dataset(tets_vtk)
     assert_close(values("T * 2 + P", tets, at="points"), calc(tets_vtk, "T * 2 + P"))
-    assert_close(values("cells(T)", tets), array(run_filter(vtkPointDataToCellData, tets_vtk), "T", cells=True))
+    assert_close(values("cells(T)", tets), array(vtkPointDataToCellData()(tets_vtk), "T", cells=True))
     assert_close(values("grad(T)", tets), td.gradients(tets, "T", at="cells").values.numpy())
 
 
@@ -96,7 +98,7 @@ def test_polyhedra(backend):
     poly = vtk_to_dataset(points, polyhedral=True)
     cpoly = with_position_flux(vtk_to_dataset(cells, polyhedral=True))
     assert_close(values("T * 2 + P", poly, at="points"), calc(points, "T * 2 + P"))
-    assert_close(values("cells(T)", poly), array(run_filter(vtkPointDataToCellData, points), "T", cells=True))
+    assert_close(values("cells(T)", poly), array(vtkPointDataToCellData()(points), "T", cells=True))
     assert_close(values("T + P * 2", cpoly), calc(cells, "T + P * 2", cells=True))
     assert_close(values("fsum(flux)", cpoly), td.net_flux(cpoly, "flux").values.numpy())
 

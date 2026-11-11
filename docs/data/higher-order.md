@@ -423,10 +423,17 @@ layouts.
 | Line, triangle, quad, pixel | yes | yes | yes | yes | yes |
 | Tetrahedron, hexahedron, voxel, wedge | yes | yes | yes | yes | yes |
 | Vertex | yes | no | yes | no | no |
-| Pyramid | yes | no | yes | no | no |
+| Pyramid | yes | order 2 | yes | order 2 | order 2 |
 | Polyline, polygon, polyhedron | yes, linear on pieces | no | `Constant` only | no | no |
 
-There is no fixed upper order; Tack's tests go to order 6. An
+There is no fixed upper order; Tack's tests go to order 6, except on
+pyramids. A pyramid's order 2 is VTK's 18-node pyramid: its corners, the
+middles of its eight edges, the centre of its base and the centroids of its
+four triangle faces. Its functions are polynomials in the pyramid's collapsed
+coordinates, and the space holds every quadratic. An `H1` field of order 2 on
+a mesh with pyramids keeps a value at each triangle face a pyramid has, as the
+18-node pyramid needs; a triangle face no pyramid touches keeps none.
+`L2` of order 2 on pyramids is equispaced and stored in blocks. An
 `UnstructuredTopology` may mix shapes, and every space applies to the mix: a
 mesh of hexahedra and wedges holds one `H1` field of order 3. Polyhedra,
 polygons and polylines have no reference element and are explained on
@@ -471,8 +478,10 @@ to do with fields.
 
 ### Limits
 
-Not supported today: higher-order pyramids and rational Bézier cells (VTK's
-Bézier cells with weights other than 1, which are refused when read);
+Not supported today: pyramids above order 2, and pyramids of other bases
+(VTK's 13- and 19-node, Lagrange and Bézier pyramids, which are rational);
+rational Bézier cells (VTK's Bézier cells with weights other than 1, which
+are refused when read);
 Gauss-point bases on triangles, tetrahedra and wedges, which are resampled
 into equispaced ones when read; an order per axis, as VTK's
 quadratic-linear cells have, which are embedded in the full order; and

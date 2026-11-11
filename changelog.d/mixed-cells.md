@@ -12,7 +12,8 @@
   `dataset_to_vtk` writes them. Every algorithm that does not take them yet
   refuses them by name. AhmedML's 21.5M cells (20.9M hexahedra, 508K
   polyhedra) read in 10 s with `merge_points` and `orient`, against 40-54 s
-  as polyhedra.
+  as polyhedra (measured with the reading work that follows, the
+  `perf/vtk-reading` branch).
 - `Shape.REFERENCE`: whether a cell group has a reference element, so an
   algorithm can take the polyhedral path per group.
 - Per-cell work on polyhedra beside shaped cells (#307, phase 2): `gradients`
@@ -59,7 +60,9 @@
   of gradients, quality, integration, surface, slice, contour, clip, probe and
   streamlines takes 3.7 s warm on the mixed reading against 4.2 s as all
   polyhedra, after reading in 8.7 s against 32 s, at a peak of 25 GB against
-  33.
+  33 (measured with the reading and analysis work that follows, the
+  `perf/vtk-reading` and `perf/analysis` branches; without them both readings
+  are slower).
 - Deprecations (`tack._deprecation`): a deprecated feature warns with
   `tack.TackDeprecationWarning`, a `DeprecationWarning`, at the line that uses
   it; a test fails once a release reaches a deprecation's removal, and the

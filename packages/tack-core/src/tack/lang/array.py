@@ -256,12 +256,15 @@ def _host_copy(dst: np.ndarray, src: np.ndarray):
     while it copies). A new CPU buffer's pages are first touched here, so the
     copy also spreads their faults; the buffer's range already has its NUMA
     policy (`_interleave_range`), whichever thread touches it. On jura a 1 GB
-    copy into new pages took 0.31 s on one thread and 0.11-0.15 on 4-8."""
+    copy into new pages took 0.31 s on one thread and 0.11-0.15 on 4-8. Arrays whose
+    memory may overlap take one ``np.copyto``, which reads its source as it was:
+    split, a chunk could be written before another thread read it."""
     global _copy_pool
     nbytes = max(dst.nbytes, src.nbytes)
     threads = _copy_threads()
     if (nbytes < _PARALLEL_COPY_BYTES or threads < 2 or dst.shape != src.shape
-            or not (dst.flags.c_contiguous and src.flags.c_contiguous)):
+            or not (dst.flags.c_contiguous and src.flags.c_contiguous)
+            or np.may_share_memory(dst, src)):
         np.copyto(dst, src)
         return
     if not np.can_cast(src.dtype, dst.dtype, "same_kind"):

@@ -211,7 +211,8 @@ def _fresh_boundary(data, fields):
     orientations of every face) nobody asked for -- VTK's external faces
     hashes faces the same way. ``None`` where the full path is needed: faces
     derived already (then they are free), ghost marks (placed through the
-    faces), order-2 fields, or buckets too crowded to sort a thread each
+    faces), fields or a geometry above order 1 (whose surface nodes come
+    through the faces), or buckets too crowded to sort a thread each
     (``topology._face_buckets_affordable``). The topology keeps what it found
     (``_boundary``), so a repeated call costs only the carry, as it did when
     the first call derived the faces. The surface is on the points it uses
@@ -227,7 +228,7 @@ def _fresh_boundary(data, fields):
     if (not isinstance(topology, UnstructuredTopology) or topology._faces is not None
             or topology.dimension != 3 or data.ghosts is not None
             or any(isinstance(f.space, H1) and f.space.order != 1
-                   for f in data.fields.values())):
+                   for f in (data.geometry, *data.fields.values()))):
         return None
     if topology._boundary is not None:
         return _on_boundary(data, fields)

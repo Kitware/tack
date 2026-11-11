@@ -315,3 +315,29 @@ def test_the_cpu_and_metal_keep_the_host_conversion(monkeypatch):
     assert _device_read.device_for(grid, {**options, "copy": False}) is None
     assert _device_read.device_for(grid, {**options, "merge_points": 1e-6}) is None
     assert "metal" not in _device_read.DEVICE_TYPES
+
+
+def test_a_tolerance_of_one_is_not_an_exact_merge(on_device):
+    """``merge_points=1.0`` is a tolerance, though ``1.0 == True``: the host
+    conversion merges points 0.5 apart, so the device path, which merges exactly,
+    leaves it to the host (Berk's review of #438)."""
+    import vtkmodules.vtkCommonDataModel as dm
+    from vtkmodules.vtkCommonCore import vtkPoints, vtkUnsignedCharArray
+    from vtkmodules.vtkCommonDataModel import vtkCellArray, vtkUnstructuredGrid
+
+    from tack.interop.vtk import vtk_to_dataset
+
+    grid = vtkUnstructuredGrid()
+    grid.points = vtkPoints(data=np.array(
+        [[0, 0, 0], [10, 0, 0], [0, 10, 0], [0, 0, 10],
+         [10.5, 0, 0], [20, 0, 0], [10, 10, 0], [10, 0, 10]], np.float64))
+    # The types as an array: one constant type is an implicit array, which the
+    # device path leaves to the host.
+    grid.cells = (vtkUnsignedCharArray(np.full(2, dm.VTK_TETRA, np.uint8)),
+                  vtkCellArray(offsets=np.array([0, 4, 8]), connectivity=np.arange(8)))
+    expected = vtk_to_dataset(grid, merge_points=1.0)
+    got, taken = on_device(lambda: vtk_to_dataset(grid, merge_points=1.0))
+    assert expected.num_points == 7 and not taken
+    _assert_same(expected, got)
+    exact, taken = on_device(lambda: vtk_to_dataset(grid, merge_points=True))
+    assert taken and exact.num_points == 8

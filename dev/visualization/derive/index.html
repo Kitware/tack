@@ -19,7 +19,7 @@
         <link rel="prev" href="../extract/">
       
       
-        <link rel="next" href="../sample-and-trace/">
+        <link rel="next" href="../expressions/">
       
       
         
@@ -2477,6 +2477,8 @@
       
         
       
+        
+      
     
     
     
@@ -2714,6 +2716,34 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../expressions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compute with expressions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -5305,9 +5335,9 @@ its input's space, with a derived unit.</p>
 </tr>
 </tbody>
 </table>
-<p><code>dot</code>, <code>cross</code> and <code>composite</code> need fields of one value type. VTK's
-<code>vtkArrayCalculator</code> has no counterpart: a formula of your own is a short
-kernel, as <a href="../write-a-mesh-algorithm/">write a mesh algorithm</a> shows.</p>
+<p><code>dot</code>, <code>cross</code> and <code>composite</code> need fields of one value type. A formula of
+your own, as VTK's <code>vtkArrayCalculator</code> writes one, is an expression of the
+<code>tack-expr</code> package: see <a href="../expressions/">compute with expressions</a>.</p>
 <h2 id="measure-cells">Measure cells<a class="headerlink" href="#measure-cells" title="Permanent link">&para;</a></h2>
 <p><code>cell_geometry(data)</code> gives each cell's measure (volume, area or length) and
 its centroid, as VTK's <code>vtkCellSizeFilter</code> does, as a named tuple of two cell
@@ -5589,13 +5619,13 @@ from. The <a href="../../data/polyhedra/">polyhedra page</a> explains why.</p>
         
         
           
-          <a href="../sample-and-trace/" class="md-footer__link md-footer__link--next" aria-label="Next: Sample and trace">
+          <a href="../expressions/" class="md-footer__link md-footer__link--next" aria-label="Next: Compute with expressions">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Sample and trace
+                Compute with expressions
               </div>
             </div>
             <div class="md-footer__button md-icon">

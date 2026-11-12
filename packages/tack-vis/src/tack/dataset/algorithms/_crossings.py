@@ -50,6 +50,23 @@ from tack.dataset.spaces import H1, L2
 #: fixed so the bits are.
 ROOT_STEPS = tack.constant(32)
 
+#: The largest degree a sub-edge's interpolant is made for (``_line_degree``): a
+#: field of higher degree along one is evaluated at each Illinois step instead.
+MAX_DEGREE = tack.constant(8)
+
+
+def chebyshev_nodes(dtype):
+    """Each degree's Chebyshev-Lobatto points on [0, 1] (``sin(pi j / 2n)^2``, exactly
+    0 and 1 at the ends and symmetric), row ``n`` of ``MAX_DEGREE + 1`` entries
+    flat, in ``dtype``: computed here, so every device interpolates at the same
+    points."""
+    m = int(MAX_DEGREE) + 1
+    table = np.zeros((m, m))
+    for n in range(1, m):
+        table[n, :n + 1] = np.sin(np.pi * np.arange(n + 1) / (2 * n)) ** 2
+        table[n, n] = 1.0
+    return tack.array(table.reshape(-1).astype(dtype.numpy_dtype))
+
 
 
 
@@ -244,6 +261,55 @@ def _straight_at(cells, c, kind, m, x, pc, k1, k2, k3, corners):
     return cells.position(c, pc)
 
 
+@tack.func
+def _line_degree(cells, traced, kind, corners, a, b, pa, pb, degree):
+    # The degree of a field of per-axis order `degree` along the sub-edge from a to b
+    # (pa to pb), in the frame _field_at evaluates it in: an edge's trace and a
+    # triangle's (a total-degree space) are of that degree along any line, as is a
+    # simplex's inside; a tensor frame's, that times the axes the line moves along
+    # (a wedge's triangle counting as one). 0 for degree 0, a field of no known order.
+    n = 0
+    if traced == 1 and kind == 0:
+        n = degree
+    elif traced == 1 and kind == 1:
+        if corners == 4:
+            n = degree * ((a[0] != b[0]) + (a[1] != b[1]))
+        else:
+            n = degree
+    elif cells.NUM_POINTS == cells.DIMENSION + 1:
+        n = degree
+    elif cells.NUM_POINTS == 6:
+        n = degree * ((pa[0] != pb[0] or pa[1] != pb[1]) + (pa[2] != pb[2]))
+    else:
+        n = degree * ((pa[0] != pb[0]) + (pa[1] != pb[1]) + (pa[2] != pb[2]))
+    return n
+
+
+@tack.func
+def _interpolated(values, nodes, n, s):
+    # The degree-n polynomial through values at row n of nodes (Chebyshev-Lobatto),
+    # at s: the barycentric formula (weights (-1)^j, halved at the ends), the node's
+    # value where s is one.
+    row = n * (MAX_DEGREE + 1)
+    top = s - s
+    bottom = s - s
+    hit = -1
+    for j in range(n + 1):
+        d = s - nodes[row + j]
+        if d == 0.0:
+            hit = j
+        else:
+            w = 1.0 - 2.0 * (j % 2)
+            if j == 0 or j == n:
+                w = 0.5 * w
+            top += w * values[j] / d
+            bottom += w / d
+    result = top / bottom
+    if hit >= 0:
+        result = values[hit]
+    return result
+
+
 # ── Kernels ─────────────────────────────────────────────────────────
 
 @tack.kernel
@@ -280,12 +346,16 @@ def _holding(ends, firsts, by_key, per_cell, chosen, cell_rank, cell, na, nb):
 
 
 @tack.kernel
-def _roots(cells, u, nodes, traced, offsets, order, na, nb, ends, weights, lattice, levels,
-           nlevels, on_edges, on_faces, ne, nf, level, steps, ijk, out):
+def _roots(cells, u, nodes, traced, degree, chebyshev, offsets, order, na, nb, ends, weights,
+           lattice, levels, nlevels, on_edges, on_faces, ne, nf, level, steps, ijk, out):
     # Each crossing's root along its sub-edge, walked from its first end in the
     # entity's frame (_oriented): Illinois steps on the field less the cut's value,
     # bracketed by the lattice values the linear filter crossed between. -1 for a
-    # crossing at a lattice point, which keeps it.
+    # crossing at a lattice point, which keeps it. A field of per-axis order
+    # `degree` is a polynomial of known degree along the sub-edge (_line_degree):
+    # the steps are taken on its interpolant through the field at the Chebyshev
+    # points (an H1 field's lattice values at the ends), the same polynomial,
+    # rather than evaluating the field at every step.
     for c in cells:
         e = cells.entity_id(c)
         for r in range(offsets[e], offsets[e + 1]):
@@ -309,13 +379,36 @@ def _roots(cells, u, nodes, traced, offsets, order, na, nb, ends, weights, latti
                 ghi = vb - value
                 side = 0
                 if glo * ghi < 0.0:
+                    n = _line_degree(cells, traced, kind, corners, a, b, pa, pb, degree)
+                    if n > MAX_DEGREE:
+                        n = 0
+                    samples = tack.local_array_like(out, MAX_DEGREE + 1)
+                    if n > 0:
+                        # An H1 field's lattice values are its values at the ends; an
+                        # L2 field's at a shared point may be another cell's, so the
+                        # ends are this cell's too.
+                        samples[0] = va
+                        samples[n] = vb
+                        first = 1
+                        last = n
+                        if traced == 0:
+                            first = 0
+                            last = n + 1
+                        for j in range(first, last):
+                            t = chebyshev[n * (MAX_DEGREE + 1) + j]
+                            samples[j] = _field_at(u, c, nodes, traced, kind, m, a + t * (b - a),
+                                                   pa + t * (pb - pa), k1, k2, k3, corners)
                     for _ in range(ROOT_STEPS):
                         mid = (lo * ghi - hi * glo) / (ghi - glo)
                         if mid <= lo or mid >= hi:
                             break
                         s = mid
-                        gm = _field_at(u, c, nodes, traced, kind, m, a + s * (b - a),
-                                       pa + s * (pb - pa), k1, k2, k3, corners) - value
+                        gm = s - s
+                        if n > 0:
+                            gm = _interpolated(samples, chebyshev, n, s) - value
+                        else:
+                            gm = _field_at(u, c, nodes, traced, kind, m, a + s * (b - a),
+                                           pa + s * (pb - pa), k1, k2, k3, corners) - value
                         if gm == 0.0:
                             break
                         if (gm < 0.0) == (glo < 0.0):
@@ -435,6 +528,19 @@ class Crossings:
                            interpolate.average_cells, exact=_Located(self, interpolate))
 
 
+def _line_order(field):
+    """A field's polynomial order along each reference axis, for ``_roots``'
+    interpolants: an ``H1`` or ``L2`` field's order (its largest, where it varies by
+    cell); 0 for any other space, whose field is evaluated at every step."""
+    space = field.space
+    if not isinstance(space, (H1, L2)):
+        return 0
+    if not space.varies:
+        return int(space.order)
+    orders = space.order
+    return int(orders.max()) if arrays.size_of(orders) else 0
+
+
 class _Located:
     """One cut's crossings placed: each one's holding cell, its ends' nodes there and
     its root, found once and used for every field."""
@@ -458,10 +564,12 @@ class _Located:
                  self.cell, self.na, self.nb)
         self.order, self.offsets = bucket_order(self.cell, data.num_cells)
         cut = x.cut
+        chebyshev = chebyshev_nodes(self.roots.dtype)
         for group in data.launch_groups("cells", [cut]):
             if group.count:
                 cells, tables = self._tables(group)
-                _roots(cells, cut.view(group), *self._basis(cut, group), self.offsets,
+                _roots(cells, cut.view(group), *self._basis(cut, group), _line_order(cut),
+                       chebyshev, self.offsets,
                        self.order, self.na, self.nb, interpolate.ends, interpolate.weights,
                        x.lattice, x.levels, int(x.levels.shape[0]), *tables, self.roots)
 

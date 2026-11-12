@@ -15357,8 +15357,7 @@ neighbouring pieces agree.</p>
 
                   <details class="mkdocstrings-source">
                     <summary>Source code in <code>packages/tack-vis/src/tack/dataset/topology.py</code></summary>
-                    <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">865</span>
-<span class="normal">866</span>
+                    <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">866</span>
 <span class="normal">867</span>
 <span class="normal">868</span>
 <span class="normal">869</span>
@@ -15376,7 +15375,8 @@ neighbouring pieces agree.</p>
 <span class="normal">881</span>
 <span class="normal">882</span>
 <span class="normal">883</span>
-<span class="normal">884</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">point_dims</span><span class="p">,</span> <span class="n">id_dtype</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">offset</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="normal">884</span>
+<span class="normal">885</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">point_dims</span><span class="p">,</span> <span class="n">id_dtype</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">offset</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
     <span class="n">point_dims</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">d</span><span class="p">)</span> <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="n">point_dims</span><span class="p">)</span>
     <span class="k">if</span> <span class="ow">not</span> <span class="mi">1</span> <span class="o">&lt;=</span> <span class="nb">len</span><span class="p">(</span><span class="n">point_dims</span><span class="p">)</span> <span class="o">&lt;=</span> <span class="mi">3</span> <span class="ow">or</span> <span class="nb">min</span><span class="p">(</span><span class="n">point_dims</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">2</span><span class="p">:</span>
         <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;point_dims must be 1 to 3 sizes of at least 2, not </span><span class="si">{</span><span class="n">point_dims</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
@@ -15480,8 +15480,7 @@ is stored once, and <code>faces()</code> makes the shaped cell its other side.</
 
                   <details class="mkdocstrings-source">
                     <summary>Source code in <code>packages/tack-vis/src/tack/dataset/topology.py</code></summary>
-                    <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">608</span>
-<span class="normal">609</span>
+                    <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">609</span>
 <span class="normal">610</span>
 <span class="normal">611</span>
 <span class="normal">612</span>
@@ -15529,7 +15528,8 @@ is stored once, and <code>faces()</code> makes the shaped cell its other side.</
 <span class="normal">654</span>
 <span class="normal">655</span>
 <span class="normal">656</span>
-<span class="normal">657</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">657</span>
+<span class="normal">658</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">types</span><span class="p">,</span> <span class="n">offsets</span><span class="p">,</span> <span class="n">connectivity</span><span class="p">,</span> <span class="n">num_points</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">id_dtype</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
              <span class="n">polyhedra</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
     <span class="bp">self</span><span class="o">.</span><span class="n">types</span> <span class="o">=</span> <span class="n">_as_field</span><span class="p">(</span><span class="n">types</span><span class="p">,</span> <span class="n">tack</span><span class="o">.</span><span class="n">u8</span><span class="p">)</span>
@@ -15666,15 +15666,15 @@ least four, and a polyhedron's connectivity is exactly its faces' points.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/topology.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">677</span>
-<span class="normal">678</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">678</span>
 <span class="normal">679</span>
 <span class="normal">680</span>
 <span class="normal">681</span>
 <span class="normal">682</span>
 <span class="normal">683</span>
 <span class="normal">684</span>
-<span class="normal">685</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">validate</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="normal">685</span>
+<span class="normal">686</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">validate</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;As every topology&#39;s, and with polyhedra: only polyhedra have faces, each at</span>
 <span class="sd">    least four, and a polyhedron&#39;s connectivity is exactly its faces&#39; points.&quot;&quot;&quot;</span>
     <span class="n">_refuse</span><span class="p">(</span><span class="s2">&quot;unstructured topology&quot;</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_id_problems</span><span class="p">())</span>
@@ -15709,8 +15709,7 @@ first use and kept. A cell naming a point more than once has it once.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/topology.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">725</span>
-<span class="normal">726</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">726</span>
 <span class="normal">727</span>
 <span class="normal">728</span>
 <span class="normal">729</span>
@@ -15722,7 +15721,8 @@ first use and kept. A cell naming a point more than once has it once.</p>
 <span class="normal">735</span>
 <span class="normal">736</span>
 <span class="normal">737</span>
-<span class="normal">738</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">738</span>
+<span class="normal">739</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">cell_points</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Each cell&#39;s points, sorted and unique: ``(offsets, point_ids)``, CSR in</span>
 <span class="sd">    ``id_dtype``, as a polyhedral or polyline topology gives them; derived on</span>
@@ -22893,19 +22893,7 @@ carried. Given field <code>arguments</code> too (<code>Field</code>s of
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/ghosts.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">606</span>
-<span class="normal">607</span>
-<span class="normal">608</span>
-<span class="normal">609</span>
-<span class="normal">610</span>
-<span class="normal">611</span>
-<span class="normal">612</span>
-<span class="normal">613</span>
-<span class="normal">614</span>
-<span class="normal">615</span>
-<span class="normal">616</span>
-<span class="normal">617</span>
-<span class="normal">618</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">618</span>
 <span class="normal">619</span>
 <span class="normal">620</span>
 <span class="normal">621</span>
@@ -22921,7 +22909,19 @@ carried. Given field <code>arguments</code> too (<code>Field</code>s of
 <span class="normal">631</span>
 <span class="normal">632</span>
 <span class="normal">633</span>
-<span class="normal">634</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">634</span>
+<span class="normal">635</span>
+<span class="normal">636</span>
+<span class="normal">637</span>
+<span class="normal">638</span>
+<span class="normal">639</span>
+<span class="normal">640</span>
+<span class="normal">641</span>
+<span class="normal">642</span>
+<span class="normal">643</span>
+<span class="normal">644</span>
+<span class="normal">645</span>
+<span class="normal">646</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">visible</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="o">*</span><span class="n">arguments</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;``data`` without its hidden cells (``HIDDENCELL``: data not valid there) and</span>
 <span class="sd">    refined cells (``REFINEDCELL``: an AMR cell a finer level covers), which</span>
@@ -22979,34 +22979,7 @@ with ghost marks they are refused rather than counted twice.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/ghosts.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">224</span>
-<span class="normal">225</span>
-<span class="normal">226</span>
-<span class="normal">227</span>
-<span class="normal">228</span>
-<span class="normal">229</span>
-<span class="normal">230</span>
-<span class="normal">231</span>
-<span class="normal">232</span>
-<span class="normal">233</span>
-<span class="normal">234</span>
-<span class="normal">235</span>
-<span class="normal">236</span>
-<span class="normal">237</span>
-<span class="normal">238</span>
-<span class="normal">239</span>
-<span class="normal">240</span>
-<span class="normal">241</span>
-<span class="normal">242</span>
-<span class="normal">243</span>
-<span class="normal">244</span>
-<span class="normal">245</span>
-<span class="normal">246</span>
-<span class="normal">247</span>
-<span class="normal">248</span>
-<span class="normal">249</span>
-<span class="normal">250</span>
-<span class="normal">251</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">251</span>
 <span class="normal">252</span>
 <span class="normal">253</span>
 <span class="normal">254</span>
@@ -23041,7 +23014,19 @@ with ghost marks they are refused rather than counted twice.</p>
 <span class="normal">283</span>
 <span class="normal">284</span>
 <span class="normal">285</span>
-<span class="normal">286</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">286</span>
+<span class="normal">287</span>
+<span class="normal">288</span>
+<span class="normal">289</span>
+<span class="normal">290</span>
+<span class="normal">291</span>
+<span class="normal">292</span>
+<span class="normal">293</span>
+<span class="normal">294</span>
+<span class="normal">295</span>
+<span class="normal">296</span>
+<span class="normal">297</span>
+<span class="normal">298</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">owned_values</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;The values of ``field`` (a ``Field`` of ``data``, or its name; an evaluated one&#39;s</span>
 <span class="sd">    stored values) that ``data`` owns: all of</span>
@@ -23051,28 +23036,13 @@ with ghost marks they are refused rather than counted twice.</p>
 <span class="sd">    with ghost marks they are refused rather than counted twice.&quot;&quot;&quot;</span>
     <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.carry</span><span class="w"> </span><span class="kn">import</span> <span class="n">_take</span>
     <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.dataset</span><span class="w"> </span><span class="kn">import</span> <span class="n">is_field_key</span>
-    <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.spaces</span><span class="w"> </span><span class="kn">import</span> <span class="n">H1</span><span class="p">,</span> <span class="n">L2</span><span class="p">,</span> <span class="n">Constant</span><span class="p">,</span> <span class="n">Values</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.spaces</span><span class="w"> </span><span class="kn">import</span> <span class="n">L2</span>
 
     <span class="k">if</span> <span class="n">is_field_key</span><span class="p">(</span><span class="n">field</span><span class="p">):</span>
         <span class="n">field</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">fields</span><span class="p">[</span><span class="n">field</span><span class="p">]</span>
     <span class="n">field</span> <span class="o">=</span> <span class="n">field</span><span class="o">.</span><span class="n">space</span><span class="o">.</span><span class="n">stored</span><span class="p">(</span><span class="n">field</span><span class="p">,</span> <span class="n">data</span><span class="p">)</span>
     <span class="n">space</span> <span class="o">=</span> <span class="n">field</span><span class="o">.</span><span class="n">space</span>
-    <span class="n">on_points</span> <span class="o">=</span> <span class="p">(</span><span class="nb">isinstance</span><span class="p">(</span><span class="n">space</span><span class="p">,</span> <span class="n">H1</span><span class="p">)</span> <span class="ow">and</span> <span class="n">space</span><span class="o">.</span><span class="n">order</span> <span class="o">==</span> <span class="mi">1</span><span class="p">)</span> <span class="ow">or</span> <span class="p">(</span>
-        <span class="nb">isinstance</span><span class="p">(</span><span class="n">space</span><span class="p">,</span> <span class="n">Values</span><span class="p">)</span> <span class="ow">and</span> <span class="n">space</span><span class="o">.</span><span class="n">on</span> <span class="o">==</span> <span class="s2">&quot;points&quot;</span><span class="p">)</span>
-    <span class="n">on_cells</span> <span class="o">=</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">space</span><span class="p">,</span> <span class="p">(</span><span class="n">Constant</span><span class="p">,</span> <span class="n">L2</span><span class="p">))</span> <span class="ow">or</span> <span class="p">(</span>
-        <span class="nb">isinstance</span><span class="p">(</span><span class="n">space</span><span class="p">,</span> <span class="n">Values</span><span class="p">)</span> <span class="ow">and</span> <span class="n">space</span><span class="o">.</span><span class="n">on</span> <span class="o">==</span> <span class="s2">&quot;cells&quot;</span><span class="p">)</span>
-    <span class="c1"># Only the marks of where the values live: a filter that lost its points&#39;</span>
-    <span class="c1"># marks but kept its cells&#39; still reduces cell values (integrate&#39;s).</span>
-    <span class="n">lost</span> <span class="o">=</span> <span class="n">_lost</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">_ghosts_lost</span><span class="p">)</span>
-    <span class="n">why</span> <span class="o">=</span> <span class="n">lost</span><span class="o">.</span><span class="n">points</span> <span class="k">if</span> <span class="n">on_points</span> <span class="k">else</span> <span class="n">lost</span><span class="o">.</span><span class="n">cells</span> <span class="k">if</span> <span class="n">on_cells</span> <span class="k">else</span> <span class="p">(</span><span class="n">lost</span><span class="o">.</span><span class="n">cells</span> <span class="ow">or</span> <span class="n">lost</span><span class="o">.</span><span class="n">points</span><span class="p">)</span>
-    <span class="k">if</span> <span class="n">why</span><span class="p">:</span>
-        <span class="n">kind</span> <span class="o">=</span> <span class="s2">&quot;points&quot;</span> <span class="k">if</span> <span class="n">on_points</span> <span class="k">else</span> <span class="s2">&quot;cells&quot;</span> <span class="k">if</span> <span class="n">on_cells</span> <span class="k">else</span> <span class="s2">&quot;cells and points&quot;</span>
-        <span class="n">reason</span> <span class="o">=</span> <span class="n">why</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">why</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="k">else</span> <span class="s2">&quot;the filter that made it does not carry the marks&quot;</span>
-        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span>
-            <span class="sa">f</span><span class="s2">&quot;this dataset is a filter&#39;s output from data with ghost marks, and </span><span class="si">{</span><span class="n">reason</span><span class="si">}</span><span class="s2">: &quot;</span>
-            <span class="sa">f</span><span class="s2">&quot;its shared </span><span class="si">{</span><span class="n">kind</span><span class="si">}</span><span class="s2"> would count once per piece. &quot;</span>
-            <span class="s2">&quot;td.generate_global_ids(pieces) of the outputs marks them by matching &quot;</span>
-            <span class="s2">&quot;(or reduce the input instead, or set the output&#39;s ghosts)&quot;</span><span class="p">)</span>
+    <span class="n">on_points</span><span class="p">,</span> <span class="n">on_cells</span> <span class="o">=</span> <span class="n">refuse_lost</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">space</span><span class="p">)</span>
     <span class="n">values</span> <span class="o">=</span> <span class="n">materialize</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">values</span><span class="p">)</span>
     <span class="n">ghosts</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">ghosts</span>
     <span class="k">if</span> <span class="n">ghosts</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="p">(</span><span class="n">ghosts</span><span class="o">.</span><span class="n">cells</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">ghosts</span><span class="o">.</span><span class="n">points</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">):</span>
@@ -23154,7 +23124,8 @@ takes, is in kelvin (Rankine), the same size of degree with zero at zero
 unyt or pint quantity. A plain number is in the unit the parameter is in (the
 geometry's for a length, the field's for an isovalue), as before.</p>
 <p>unyt (with sympy) is imported on first use, so a program that gives no unit
-pays nothing. Tack hands out strings only, never unyt objects.</p>
+pays nothing; nor does a pure number (<code>"dimensionless"</code>, <code>"1"</code>), which
+Tack's own filters give their results. Tack hands out strings only, never unyt objects.</p>
 
 
 
@@ -23195,17 +23166,18 @@ a string that is no unit raises <code>ValueError</code>.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/units.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">68</span>
-<span class="normal">69</span>
-<span class="normal">70</span>
-<span class="normal">71</span>
-<span class="normal">72</span>
-<span class="normal">73</span>
-<span class="normal">74</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">74</span>
 <span class="normal">75</span>
 <span class="normal">76</span>
 <span class="normal">77</span>
-<span class="normal">78</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">canonical</span><span class="p">(</span><span class="n">unit</span><span class="p">):</span>
+<span class="normal">78</span>
+<span class="normal">79</span>
+<span class="normal">80</span>
+<span class="normal">81</span>
+<span class="normal">82</span>
+<span class="normal">83</span>
+<span class="normal">84</span>
+<span class="normal">85</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">canonical</span><span class="p">(</span><span class="n">unit</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;``unit`` (a string, or ``None`` for unknown) in unyt&#39;s canonical spelling;</span>
 <span class="sd">    a string that is no unit raises ``ValueError``.&quot;&quot;&quot;</span>
     <span class="k">if</span> <span class="n">unit</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
@@ -23215,7 +23187,8 @@ a string that is no unit raises <code>ValueError</code>.</p>
     <span class="k">if</span> <span class="ow">not</span> <span class="n">unit</span><span class="o">.</span><span class="n">strip</span><span class="p">():</span>
         <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;an empty unit: give &#39;dimensionless&#39; for a pure number, or None &quot;</span>
                          <span class="s2">&quot;for unknown&quot;</span><span class="p">)</span>
-    <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="n">_parsed</span><span class="p">(</span><span class="n">unit</span><span class="p">))</span>
+    <span class="n">pure</span> <span class="o">=</span> <span class="n">_PURE</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">unit</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">pure</span> <span class="k">if</span> <span class="n">pure</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="nb">str</span><span class="p">(</span><span class="n">_parsed</span><span class="p">(</span><span class="n">unit</span><span class="p">))</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -23241,20 +23214,20 @@ in <code>target</code>. Both must be known and of the same dimensions.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/units.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">81</span>
-<span class="normal">82</span>
-<span class="normal">83</span>
-<span class="normal">84</span>
-<span class="normal">85</span>
-<span class="normal">86</span>
-<span class="normal">87</span>
-<span class="normal">88</span>
-<span class="normal">89</span>
-<span class="normal">90</span>
-<span class="normal">91</span>
-<span class="normal">92</span>
-<span class="normal">93</span>
-<span class="normal">94</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">conversion</span><span class="p">(</span><span class="n">source</span><span class="p">,</span> <span class="n">target</span><span class="p">):</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 88</span>
+<span class="normal"> 89</span>
+<span class="normal"> 90</span>
+<span class="normal"> 91</span>
+<span class="normal"> 92</span>
+<span class="normal"> 93</span>
+<span class="normal"> 94</span>
+<span class="normal"> 95</span>
+<span class="normal"> 96</span>
+<span class="normal"> 97</span>
+<span class="normal"> 98</span>
+<span class="normal"> 99</span>
+<span class="normal">100</span>
+<span class="normal">101</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">conversion</span><span class="p">(</span><span class="n">source</span><span class="p">,</span> <span class="n">target</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;``(factor, offset)``: a value in ``source`` is ``factor * value + offset``</span>
 <span class="sd">    in ``target``. Both must be known and of the same dimensions.&quot;&quot;&quot;</span>
     <span class="k">if</span> <span class="n">source</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
@@ -23294,19 +23267,19 @@ offset). Unknown is the same only as unknown.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/units.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 97</span>
-<span class="normal"> 98</span>
-<span class="normal"> 99</span>
-<span class="normal">100</span>
-<span class="normal">101</span>
-<span class="normal">102</span>
-<span class="normal">103</span>
-<span class="normal">104</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">104</span>
 <span class="normal">105</span>
 <span class="normal">106</span>
 <span class="normal">107</span>
 <span class="normal">108</span>
-<span class="normal">109</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">same</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">):</span>
+<span class="normal">109</span>
+<span class="normal">110</span>
+<span class="normal">111</span>
+<span class="normal">112</span>
+<span class="normal">113</span>
+<span class="normal">114</span>
+<span class="normal">115</span>
+<span class="normal">116</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">same</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Whether units ``a`` and ``b`` (canonical strings or ``None``) are one unit:</span>
 <span class="sd">    equal, or both known and one a relabelling of the other (factor 1, no</span>
 <span class="sd">    offset). Unknown is the same only as unknown.&quot;&quot;&quot;</span>
@@ -23344,10 +23317,10 @@ cannot be checked, so it is not refused).</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/units.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">112</span>
-<span class="normal">113</span>
-<span class="normal">114</span>
-<span class="normal">115</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">compatible</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">):</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">119</span>
+<span class="normal">120</span>
+<span class="normal">121</span>
+<span class="normal">122</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">compatible</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Whether units ``a`` and ``b`` may meet: one unit, or either unknown (which</span>
 <span class="sd">    cannot be checked, so it is not refused).&quot;&quot;&quot;</span>
     <span class="k">return</span> <span class="n">a</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">b</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">same</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">)</span>
@@ -23377,17 +23350,17 @@ differ. <code>None</code> if any is unknown.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/units.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">118</span>
-<span class="normal">119</span>
-<span class="normal">120</span>
-<span class="normal">121</span>
-<span class="normal">122</span>
-<span class="normal">123</span>
-<span class="normal">124</span>
-<span class="normal">125</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">125</span>
 <span class="normal">126</span>
 <span class="normal">127</span>
-<span class="normal">128</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">common</span><span class="p">(</span><span class="n">what</span><span class="p">,</span> <span class="n">units</span><span class="p">):</span>
+<span class="normal">128</span>
+<span class="normal">129</span>
+<span class="normal">130</span>
+<span class="normal">131</span>
+<span class="normal">132</span>
+<span class="normal">133</span>
+<span class="normal">134</span>
+<span class="normal">135</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">common</span><span class="p">(</span><span class="n">what</span><span class="p">,</span> <span class="n">units</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;The one unit of ``units`` (canonical strings or ``None``), or ``ValueError``</span>
 <span class="sd">    naming ``what`` (``&quot;the pieces&#39; geometry&quot;``, say) when two known units</span>
 <span class="sd">    differ. ``None`` if any is unknown.&quot;&quot;&quot;</span>
@@ -23423,12 +23396,12 @@ differ. <code>None</code> if any is unknown.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/units.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">131</span>
-<span class="normal">132</span>
-<span class="normal">133</span>
-<span class="normal">134</span>
-<span class="normal">135</span>
-<span class="normal">136</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">check</span><span class="p">(</span><span class="n">what</span><span class="p">,</span> <span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">):</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">138</span>
+<span class="normal">139</span>
+<span class="normal">140</span>
+<span class="normal">141</span>
+<span class="normal">142</span>
+<span class="normal">143</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">check</span><span class="p">(</span><span class="n">what</span><span class="p">,</span> <span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;``ValueError`` naming ``what`` unless units ``a`` and ``b`` may meet</span>
 <span class="sd">    (``compatible``).&quot;&quot;&quot;</span>
     <span class="k">if</span> <span class="ow">not</span> <span class="n">compatible</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">):</span>
@@ -23460,19 +23433,19 @@ Rankine for Fahrenheit). <code>None</code> stays <code>None</code>.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/units.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">139</span>
-<span class="normal">140</span>
-<span class="normal">141</span>
-<span class="normal">142</span>
-<span class="normal">143</span>
-<span class="normal">144</span>
-<span class="normal">145</span>
-<span class="normal">146</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">146</span>
 <span class="normal">147</span>
 <span class="normal">148</span>
 <span class="normal">149</span>
 <span class="normal">150</span>
-<span class="normal">151</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">delta</span><span class="p">(</span><span class="n">unit</span><span class="p">):</span>
+<span class="normal">151</span>
+<span class="normal">152</span>
+<span class="normal">153</span>
+<span class="normal">154</span>
+<span class="normal">155</span>
+<span class="normal">156</span>
+<span class="normal">157</span>
+<span class="normal">158</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">delta</span><span class="p">(</span><span class="n">unit</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;The unit of a difference of values in ``unit``: itself, or for a unit with an</span>
 <span class="sd">    offset zero, the absolute unit of the same size (kelvin for degrees Celsius,</span>
 <span class="sd">    Rankine for Fahrenheit). ``None`` stays ``None``.&quot;&quot;&quot;</span>
@@ -23511,14 +23484,7 @@ with an offset zero is refused (take its <code>delta</code> first, or convert).<
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/units.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">154</span>
-<span class="normal">155</span>
-<span class="normal">156</span>
-<span class="normal">157</span>
-<span class="normal">158</span>
-<span class="normal">159</span>
-<span class="normal">160</span>
-<span class="normal">161</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">161</span>
 <span class="normal">162</span>
 <span class="normal">163</span>
 <span class="normal">164</span>
@@ -23530,7 +23496,14 @@ with an offset zero is refused (take its <code>delta</code> first, or convert).<
 <span class="normal">170</span>
 <span class="normal">171</span>
 <span class="normal">172</span>
-<span class="normal">173</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">derived</span><span class="p">(</span><span class="o">*</span><span class="n">terms</span><span class="p">):</span>
+<span class="normal">173</span>
+<span class="normal">174</span>
+<span class="normal">175</span>
+<span class="normal">176</span>
+<span class="normal">177</span>
+<span class="normal">178</span>
+<span class="normal">179</span>
+<span class="normal">180</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">derived</span><span class="p">(</span><span class="o">*</span><span class="n">terms</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;The unit of a product of powers: ``terms`` are ``(unit, exponent)`` pairs (a</span>
 <span class="sd">    bare unit is to the first power). ``None`` if any unit is unknown; a unit</span>
 <span class="sd">    with an offset zero is refused (take its ``delta`` first, or convert).&quot;&quot;&quot;</span>
@@ -23576,19 +23549,19 @@ the dimensions and the size decide, never how the unit was written.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/units.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">181</span>
-<span class="normal">182</span>
-<span class="normal">183</span>
-<span class="normal">184</span>
-<span class="normal">185</span>
-<span class="normal">186</span>
-<span class="normal">187</span>
-<span class="normal">188</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">188</span>
 <span class="normal">189</span>
 <span class="normal">190</span>
 <span class="normal">191</span>
 <span class="normal">192</span>
-<span class="normal">193</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">named</span><span class="p">(</span><span class="n">unit</span><span class="p">):</span>
+<span class="normal">193</span>
+<span class="normal">194</span>
+<span class="normal">195</span>
+<span class="normal">196</span>
+<span class="normal">197</span>
+<span class="normal">198</span>
+<span class="normal">199</span>
+<span class="normal">200</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">named</span><span class="p">(</span><span class="n">unit</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;``unit`` shown by the SI derived unit of its dimensions and size, if one is</span>
 <span class="sd">    (``&quot;Pa*m**3&quot;`` as ``&quot;J&quot;``, ``&quot;kg*m/s**2&quot;`` as ``&quot;N&quot;``), else unchanged. Only</span>
 <span class="sd">    the dimensions and the size decide, never how the unit was written.&quot;&quot;&quot;</span>
@@ -23627,22 +23600,26 @@ logarithm of metres, or of kilometres per metre, depends on the unit).</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/units.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">196</span>
-<span class="normal">197</span>
-<span class="normal">198</span>
-<span class="normal">199</span>
-<span class="normal">200</span>
-<span class="normal">201</span>
-<span class="normal">202</span>
-<span class="normal">203</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">203</span>
 <span class="normal">204</span>
 <span class="normal">205</span>
-<span class="normal">206</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">dimensionless_or_none</span><span class="p">(</span><span class="n">what</span><span class="p">,</span> <span class="n">unit</span><span class="p">):</span>
+<span class="normal">206</span>
+<span class="normal">207</span>
+<span class="normal">208</span>
+<span class="normal">209</span>
+<span class="normal">210</span>
+<span class="normal">211</span>
+<span class="normal">212</span>
+<span class="normal">213</span>
+<span class="normal">214</span>
+<span class="normal">215</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">dimensionless_or_none</span><span class="p">(</span><span class="n">what</span><span class="p">,</span> <span class="n">unit</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;``&quot;dimensionless&quot;`` for a pure number, ``None`` for unknown, and</span>
 <span class="sd">    ``ValueError`` naming ``what`` for anything with dimensions or a scale (a</span>
 <span class="sd">    logarithm of metres, or of kilometres per metre, depends on the unit).&quot;&quot;&quot;</span>
     <span class="k">if</span> <span class="n">unit</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
         <span class="k">return</span> <span class="kc">None</span>
+    <span class="k">if</span> <span class="n">unit</span> <span class="ow">in</span> <span class="n">_PURE</span><span class="p">:</span>
+        <span class="k">return</span> <span class="s2">&quot;dimensionless&quot;</span>
     <span class="n">parsed</span> <span class="o">=</span> <span class="n">_parsed</span><span class="p">(</span><span class="n">unit</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">parsed</span><span class="o">.</span><span class="n">is_dimensionless</span> <span class="ow">and</span> <span class="n">parsed</span><span class="o">.</span><span class="n">base_value</span> <span class="o">==</span> <span class="mf">1.0</span><span class="p">:</span>
         <span class="k">return</span> <span class="s2">&quot;dimensionless&quot;</span>
@@ -23676,16 +23653,7 @@ and no unit is a pure number.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/units.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">212</span>
-<span class="normal">213</span>
-<span class="normal">214</span>
-<span class="normal">215</span>
-<span class="normal">216</span>
-<span class="normal">217</span>
-<span class="normal">218</span>
-<span class="normal">219</span>
-<span class="normal">220</span>
-<span class="normal">221</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">221</span>
 <span class="normal">222</span>
 <span class="normal">223</span>
 <span class="normal">224</span>
@@ -23700,7 +23668,16 @@ and no unit is a pure number.</p>
 <span class="normal">233</span>
 <span class="normal">234</span>
 <span class="normal">235</span>
-<span class="normal">236</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">quantity</span><span class="p">(</span><span class="n">value</span><span class="p">):</span>
+<span class="normal">236</span>
+<span class="normal">237</span>
+<span class="normal">238</span>
+<span class="normal">239</span>
+<span class="normal">240</span>
+<span class="normal">241</span>
+<span class="normal">242</span>
+<span class="normal">243</span>
+<span class="normal">244</span>
+<span class="normal">245</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">quantity</span><span class="p">(</span><span class="n">value</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;``(magnitude, unit)`` of a quantity -- a string ``&quot;10 cm&quot;``, a pair ``(value,</span>
 <span class="sd">    unit)`` with ``unit`` a string, or a unyt or pint quantity (``.units`` and</span>
 <span class="sd">    ``.value`` or ``.magnitude``) -- or ``None`` for anything else (a plain</span>
@@ -23752,16 +23729,7 @@ as given, taken to be in <code>unit</code> already. Converting a quantity needs
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/units.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">239</span>
-<span class="normal">240</span>
-<span class="normal">241</span>
-<span class="normal">242</span>
-<span class="normal">243</span>
-<span class="normal">244</span>
-<span class="normal">245</span>
-<span class="normal">246</span>
-<span class="normal">247</span>
-<span class="normal">248</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">248</span>
 <span class="normal">249</span>
 <span class="normal">250</span>
 <span class="normal">251</span>
@@ -23773,7 +23741,16 @@ as given, taken to be in <code>unit</code> already. Converting a quantity needs
 <span class="normal">257</span>
 <span class="normal">258</span>
 <span class="normal">259</span>
-<span class="normal">260</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">magnitude</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="n">unit</span><span class="p">,</span> <span class="n">what</span><span class="p">):</span>
+<span class="normal">260</span>
+<span class="normal">261</span>
+<span class="normal">262</span>
+<span class="normal">263</span>
+<span class="normal">264</span>
+<span class="normal">265</span>
+<span class="normal">266</span>
+<span class="normal">267</span>
+<span class="normal">268</span>
+<span class="normal">269</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">magnitude</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="n">unit</span><span class="p">,</span> <span class="n">what</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;``value`` as a number (or numbers) in ``unit``: a quantity (``quantity``)</span>
 <span class="sd">    converted, scale and offset; a sequence of quantities each; anything else</span>
 <span class="sd">    as given, taken to be in ``unit`` already. Converting a quantity needs</span>
@@ -23821,12 +23798,12 @@ velocity): a quantity's magnitude and unit, else the value as given and
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/units.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">263</span>
-<span class="normal">264</span>
-<span class="normal">265</span>
-<span class="normal">266</span>
-<span class="normal">267</span>
-<span class="normal">268</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">number_and_unit</span><span class="p">(</span><span class="n">value</span><span class="p">):</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">272</span>
+<span class="normal">273</span>
+<span class="normal">274</span>
+<span class="normal">275</span>
+<span class="normal">276</span>
+<span class="normal">277</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">number_and_unit</span><span class="p">(</span><span class="n">value</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;``(number, unit)`` of a parameter that may bring its own unit (a mass, a</span>
 <span class="sd">    velocity): a quantity&#39;s magnitude and unit, else the value as given and</span>
 <span class="sd">    ``None``.&quot;&quot;&quot;</span>
@@ -23857,15 +23834,15 @@ time.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/units.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">271</span>
-<span class="normal">272</span>
-<span class="normal">273</span>
-<span class="normal">274</span>
-<span class="normal">275</span>
-<span class="normal">276</span>
-<span class="normal">277</span>
-<span class="normal">278</span>
-<span class="normal">279</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">time_unit</span><span class="p">(</span><span class="n">unit</span><span class="p">):</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">280</span>
+<span class="normal">281</span>
+<span class="normal">282</span>
+<span class="normal">283</span>
+<span class="normal">284</span>
+<span class="normal">285</span>
+<span class="normal">286</span>
+<span class="normal">287</span>
+<span class="normal">288</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">time_unit</span><span class="p">(</span><span class="n">unit</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;``unit`` (a string or ``None``) canonical, refused unless it is a unit of</span>
 <span class="sd">    time.&quot;&quot;&quot;</span>
     <span class="n">unit</span> <span class="o">=</span> <span class="n">canonical</span><span class="p">(</span><span class="n">unit</span><span class="p">)</span>

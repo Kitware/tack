@@ -324,7 +324,9 @@ def _wrap_natively(thunks):
 def _get_device_info(array):
     """Determine DLPack device type and data pointer for an array."""
     buf = array._buffer
-    cls_name = type(buf).__name__
+    # A view's buffer (``array[i:j]``) is of a subclass of its root's class,
+    # with the root's attributes over its own, shifted pointer.
+    cls_name = type(getattr(buf, "_root", buf)).__name__
 
     if cls_name == "NumpyBuffer":
         # CPU: numpy array data pointer

@@ -56,8 +56,9 @@ an image: its positions are computed from its origin and spacing, never stored.
 | `vtkRectilinearGrid` | `StructuredTopology` over a `CartesianProduct` of its axes |
 | `vtkStructuredGrid` | `StructuredTopology` with explicit positions |
 | `vtkUnstructuredGrid` of shaped cells | `UnstructuredTopology` |
-| `vtkUnstructuredGrid` with polyhedra | `PolyhedralTopology`, every cell a polyhedron of its faces |
-| polygons, polylines | `PolygonalTopology`, `PolylineTopology` |
+| `vtkUnstructuredGrid` with polyhedra | `UnstructuredTopology`, the polyhedra beside the shaped cells (`polyhedral="all"`: a `PolyhedralTopology`, every cell a polyhedron of its faces) |
+| polygons | `UnstructuredTopology`, the polygons beside the triangles and quads (`polyhedral="all"`: a `PolygonalTopology`, every cell a polygon) |
+| polylines | `PolylineTopology` |
 | `vtkPolyData` | the unstructured grid of its cells; triangle strips as their triangles |
 | point data, cell data | `H1` fields, `Constant` fields; a point and a cell array of one name are two fields |
 | `vtkGhostType` | the ghost marks, `data.ghosts` |
@@ -227,7 +228,8 @@ new values their cell data.
 |  | `FaceGeometry` | — | faces (edges) |
 |  | `FaceCenters` | — | faces (edges) |
 |  | `EdgeLengths` | — | faces (edges) |
-| Fields from fields | `Gradients` | `vtkGradientFilter` | fields |
+| Fields from fields | `Calculator` (needs `tack-expr`) | `vtkArrayCalculator` | fields |
+|  | `Gradients` | `vtkGradientFilter` | fields |
 |  | `FlowQuantities` | `vtkGradientFilter` | fields |
 |  | `Project` | `vtkCellDataToPointData`, `vtkPointDataToCellData` | fields |
 |  | `ValuesAtCenters` | — | fields |
@@ -524,16 +526,19 @@ so.
 
 | Option | Does | Use it for |
 |---|---|---|
-| `polyhedral=True` | reads every cell as a polyhedron of its faces | a mesh to treat as polyhedra throughout |
-| `polyhedral="split"` | gives a `PartitionedDataSet` of two pieces over the same points: the shaped cells, and the polyhedra | a large mesh with a few polyhedra, so the shaped cells stay shaped |
+| `polyhedral="all"` | reads every cell as a polyhedron of its faces | a mesh to treat as polyhedra throughout, or an algorithm that does not take polyhedra beside shaped cells yet |
+| `polyhedral="split"` | gives a `PartitionedDataSet` of two pieces over the same points: the shaped cells, and the polyhedra | nothing new: [deprecated](../reference/deprecations.md) since 0.8 and removed in 0.9, now that the default reading keeps the shaped cells shaped in one topology |
 | `merge_points=True` (or a tolerance) | merges coincident points before anything else is read | a mesh written per processor and put together without merging, such as OpenFOAM's `foamToVTK` of a decomposed case |
 | `orient=True` | turns inside-out cells outward, and repairs inconsistently wound polyhedra | meshes from converters that write cells in the reverse of VTK's order |
 | `id_dtype` | the topology's id type; by default `i32`, unless the grid is too large for it | choosing the id width yourself |
 
-A topology holds either shaped cells or polyhedra for now, which is why a grid
-that has any polyhedra reads as polyhedra. With `polyhedral="split"`, each
-point is owned by one of the two pieces, so reductions count it once; see
-[Pieces](../data/pieces.md).
+By default a grid's polyhedra stand beside its shaped cells in one
+`UnstructuredTopology`, as VTK holds them: one point and one cell numbering,
+and a face a hexahedron and a polyhedron share is one face with both as its
+sides. Every algorithm takes such meshes but `shrink` and `subdivide`, which
+say so by name (as do spaces that need a reference element in every cell,
+`H1` above order 1 and `L2`); `polyhedral="all"` reads the mesh the way they
+take it.
 
 Inside-out cells are found on every read and named in a warning. Wedges are
 the usual case: VTK's documentation long described the wedge's corner order

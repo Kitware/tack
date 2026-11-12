@@ -80,6 +80,23 @@ def _arrows(positions, vectors, scale, by, scales, res, step, out, source, conne
             connectivity[c + 17] = centre
 
 
+@tack.kernel
+def _used_points(cells, marks, used):
+    # The points of each cell that is not hidden or refined.
+    for c in cells:
+        e = cells.entity_id(c)
+        if (tack.i32(marks[e]) & 40) == 0:
+            for j in range(cells.NUM_POINTS):
+                tack.atomic_max(used, cells.point_id(c, j), 1)
+
+
+@tack.kernel
+def _from_kept(kept, source):
+    # An arrow point's source, a kept point's number, as the point's own id.
+    for i in range(source.shape[0]):
+        source[i] = kept[source[i]]
+
+
 @on_inputs_device
 def glyphs(data, vectors, scale=1.0, scale_by=None, resolution=8, fields=None):
     """An arrow at each of ``data``'s points along ``vectors`` (a 3-vector field on the
@@ -90,10 +107,15 @@ def glyphs(data, vectors, scale=1.0, scale_by=None, resolution=8, fields=None):
     ``resolution`` points round, as triangles wound outward. Its points carry
     the point's fields; cell fields are left behind. A zero vector gives an
     arrow of no size. Glyph a subset (``mask_points``) or a slice to see
-    anything in a dense field."""
+    anything in a dense field. Points only hidden or refined cells use have no
+    arrow."""
+    from tack.dataset.algorithms._refine import _masks
     from tack.dataset.ghosts import visible
 
-    data = visible(data)
+    marks, hidden = _masks(data)
+    if hidden and not getattr(data.topology, "reference_cells", True):
+        data = visible(data)                  # polyhedra and polygons: the cells left
+        hidden = 0
     if not isinstance(data.geometry.space, H1) or data.geometry.space.order != 1:
         raise TypeError("glyphs places arrows at the points: an H1 order-1 geometry")
     res = int(resolution)
@@ -107,17 +129,36 @@ def glyphs(data, vectors, scale=1.0, scale_by=None, resolution=8, fields=None):
         sizes = _field(data, scale_by)
         if arrays.width_of(sizes.values) or not _on_points(sizes):
             raise TypeError("scale_by is a scalar field on the points")
-    n = data.num_points
+    positions, directions = data.geometry.values, field.values
+    by = sizes.values if sizes is not None else None
+    kept = None
+    if hidden:
+        # The points some cell that is not hidden or refined uses, in order -- the
+        # points the cells left once extracted would have.
+        from tack.dataset.algorithms._common import _compact
+        from tack.dataset.carry import _point_values, _take
+
+        used = tack.zeros((data.num_points,), tack.i32)
+        for group in data.launch_groups("cells", []):
+            if group.count:
+                _used_points(data.domain_view("cells", group), marks, used)
+        _, kept, _ = _compact(used, data.id_dtype)
+        n = data.num_points
+        positions = _take(arrays.materialize(_point_values(positions, n)), kept)
+        directions = _take(arrays.materialize(_point_values(directions, n)), kept)
+        by = _take(arrays.materialize(_point_values(by, n)), kept) if by is not None else None
+    n = arrays.size_of(positions)
     total = n * (3 * res + 2)
     idt = id_types.at_least(data.id_dtype, total)
     out = tack.empty((total,), tack.vec(3, data.dtype))
     source = tack.empty((total,), data.id_dtype)
     connectivity = tack.empty((n * 18 * res,), idt)
     if n:
-        by = sizes.values if sizes is not None else tack.empty((1,), data.dtype)
-        _arrows(data.geometry.values, field.values,
-                float(scale), int(sizes is not None), by, res,
+        _arrows(positions, directions, float(scale), int(sizes is not None),
+                by if by is not None else tack.empty((1,), data.dtype), res,
                 2.0 * math.pi / res, out, source, connectivity)
+        if kept is not None:
+            _from_kept(kept, source)
     types, offsets = uniform_cells(int(shapes.TRIANGLE), n * 6 * res, idt)
     topology = UnstructuredTopology(types, offsets, connectivity, num_points=total)
     return carry(data, topology, points=Take(source),

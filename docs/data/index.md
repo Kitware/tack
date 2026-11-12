@@ -133,7 +133,7 @@ The table pairs the VTK names you know with Tack's. The
 | `vtkRectilinearGrid` | `td.rectilinear_grid` |
 | `vtkStructuredGrid` | `td.StructuredTopology` with positions per point |
 | `vtkUnstructuredGrid` | `td.UnstructuredTopology` |
-| `vtkPolyData` | `td.PolygonalTopology`, `td.PolylineTopology`, or an `UnstructuredTopology` of triangles and quads |
+| `vtkPolyData` | an `UnstructuredTopology` of its polygons, triangles and quads, or a `td.PolylineTopology` |
 | `vtkSelection` | a `td.Set` in `data.sets` |
 | `vtkPartitionedDataSet` | `td.PartitionedDataSet` |
 | `vtkOverlappingAMR` | `td.AMRDataSet` |

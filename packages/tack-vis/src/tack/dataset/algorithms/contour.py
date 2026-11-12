@@ -490,7 +490,7 @@ def contour(data, field, value, merge_points=True, fields=None, dimension=None,
             data, field, value, levels, nlevels, subdivision,
             lambda refined, name: contour(refined, name, value, merge_points=merge_points,
                                           fields=fields, dimension=dimension),
-            tolerance=tolerance, exact=exact)
+            tolerance=tolerance, exact=exact, fields=fields)
     if isinstance(space, H1) and space.order != 1:
         from tack.dataset.algorithms.subdivide import _cell_families
 

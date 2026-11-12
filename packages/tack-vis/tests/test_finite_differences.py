@@ -378,3 +378,28 @@ def test_marks_that_hide_nothing_change_nothing():
         _marked(data, 0.3, on, bit)
         np.testing.assert_array_equal(
             td.finite_differences(data, "u", order=4, derivative=2).values.numpy(), plain)
+
+
+@pytest.mark.parametrize("derivative", [1, 2])
+@pytest.mark.parametrize("layout", ["aos", "soa"])
+def test_a_vector_field_in_either_layout(derivative, layout):
+    """The positions as a field: the identity for gradient, zero for second
+    derivatives, whether the components are interleaved or arrays of their own."""
+    data = td.uniform_grid((5, 4, 3), dtype=tack.f64)
+    data.fields["v"] = td.Field(td.H1(data), tack.array(data.positions(), tack.vec3(tack.f64),
+                                                        layout=layout))
+    got = td.finite_differences(data, "v", derivative=derivative).values.numpy()
+    want = np.eye(3).reshape(-1) if derivative == 1 else np.zeros(27)
+    np.testing.assert_allclose(got, np.broadcast_to(want, got.shape), atol=1e-12)
+
+
+@pytest.mark.parametrize("dims,spacing", [((4,), (0.0,)), ((4, 3), (0.0, 1.0))])
+@pytest.mark.parametrize("derivative", [1, 2])
+def test_a_collapsed_grid_has_zero_derivatives_not_nan(dims, spacing, derivative):
+    """A line of zero length, or a plane collapsed along one axis: the positions'
+    derivatives are singular, so the derivatives are zero, as documented."""
+    data = td.uniform_grid(dims, spacing=spacing, dtype=tack.f64)
+    data.fields["u"] = td.Field(td.H1(data), tack.array(np.arange(data.num_points,
+                                                                  dtype=np.float64)))
+    got = td.finite_differences(data, "u", derivative=derivative).values.numpy()
+    np.testing.assert_array_equal(got, 0.0)

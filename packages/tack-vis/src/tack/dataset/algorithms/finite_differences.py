@@ -17,6 +17,7 @@ from tack.dataset.dataset import Field
 from tack.dataset.ghosts import Ghosts, _has
 from tack.dataset.spaces import H1, Constant, Values
 from tack.dataset.topology import StructuredTopology
+from tack.lang.array import SoaArray
 from tack.runtime.dispatch import on_inputs_device
 
 __all__ = ['finite_differences']
@@ -103,11 +104,11 @@ def _reach(marks, bit, masked, p, i, n, stride, cap):
 
 
 @tack.func
-def _apply(values, width, comp, positions, p, stride, left, right, cap, starts, lengths,
+def _apply(values, vs, vo, positions, p, stride, left, right, cap, starts, lengths,
            weights, span):
     """The derivative along one index axis at point `p`, with `left` and `right`
-    points to take on either side, of the field's component `comp` and of the
-    positions: `(du, dx)`."""
+    points to take on either side, of a component of the field (point `q`'s at
+    `values[q * vs + vo]`) and of the positions: `(du, dx)`."""
     c = min(left, cap) * (cap + 1) + min(right, cap)
     s = starts[c]
     du = weights[0] * 0.0
@@ -115,31 +116,43 @@ def _apply(values, width, comp, positions, p, stride, left, right, cap, starts, 
     for m in range(lengths[c]):
         w = weights[c * span + m]
         q = p + (s + m) * stride
-        du += w * values[q * width + comp]
+        du += w * values[q * vs + vo]
         dx += w * positions[q]
     return du, dx
 
 
 @tack.func
-def _mixed(values, width, comp, positions, marks, bit, masked, p, sa, la, ra, jb, nb, sb,
+def _mixed(values, vs, vo, positions, marks, bit, masked, p, sa, la, ra, jb, nb, sb,
            cap, starts, lengths, weights, span):
     """The mixed second derivative along index axes `a` (stride `sa`, with `la` and
-    `ra` points on either side of `p`) and `b`, of the field's component `comp` and
-    of the positions: the derivative along `a` of the derivatives along `b`, each
-    of those with the points it has itself, so that no stencil reaches a hidden
-    point. Without marks it is the product of the two stencils."""
+    `ra` points on either side of `p`) and `b`, of a component of the field (as
+    `_apply` reads it) and of the positions: the derivative along `a` of the
+    derivatives along `b`, each of those with the points it has itself, so that no
+    stencil reaches a hidden point. Without marks it is the product of the two
+    stencils."""
     ca = min(la, cap) * (cap + 1) + min(ra, cap)
     duv = weights[0] * 0.0
     dxv = tack.vec3(duv)
     for m in range(lengths[ca]):
         q = p + (starts[ca] + m) * sa
         lb, rb = _reach(marks, bit, masked, q, jb, nb, sb, cap)
-        du, dx = _apply(values, width, comp, positions, q, sb, lb, rb, cap, starts, lengths,
+        du, dx = _apply(values, vs, vo, positions, q, sb, lb, rb, cap, starts, lengths,
                         weights, span)
         w = weights[ca * span + m]
         duv += w * du
         dxv += w * dx
     return duv, dxv
+
+
+@tack.func
+def _unit(v):
+    """`v` normalized, or `v` itself (zero) where it has no length: a collapsed axis
+    leaves the frame singular, so `_metrics` gives zero, not NaN."""
+    n = v.norm()
+    s = n * 0.0
+    if n != 0.0:
+        s = 1.0 / n
+    return v * s
 
 
 @tack.func
@@ -152,22 +165,22 @@ def _completed(ja, jb, jc, fa, fb, fc):
     flat = fa + fb + fc
     if flat == 1:
         if fa != 0:
-            ja = jb.cross(jc).normalized()
+            ja = _unit(jb.cross(jc))
         elif fb != 0:
-            jb = jc.cross(ja).normalized()
+            jb = _unit(jc.cross(ja))
         else:
-            jc = ja.cross(jb).normalized()
+            jc = _unit(ja.cross(jb))
     elif flat == 2:
         line = ja
         if fb == 0:
             line = jb
         if fc == 0:
             line = jc
-        t = line.normalized()
+        t = _unit(line)
         other = tack.vec3(1.0, 0.0, 0.0)
         if abs(t[0]) > 0.5:
             other = tack.vec3(0.0, 1.0, 0.0)
-        u = t.cross(other).normalized()
+        u = _unit(t.cross(other))
         v = t.cross(u)
         if fa == 0:
             jb = u
@@ -204,8 +217,8 @@ def _metrics(ja, jb, jc):
 
 
 @tack.kernel
-def _gradient(values, width, comp, positions, marks, bit, masked, nan, nx, ny, nz, cap,
-              starts, lengths, weights, span, count, out):
+def _gradient(values, vs, vo, width, comp, positions, marks, bit, masked, nan, nx, ny, nz,
+              cap, starts, lengths, weights, span, count, out):
     for p in range(count):
         base = (p * width + comp) * 3
         if masked != 0 and (marks[p] & bit) != 0:
@@ -219,11 +232,11 @@ def _gradient(values, width, comp, positions, marks, bit, masked, nan, nx, ny, n
             la, ra = _reach(marks, bit, masked, p, i, nx, 1, cap)
             lb, rb = _reach(marks, bit, masked, p, j, ny, nx, cap)
             lc, rc = _reach(marks, bit, masked, p, k, nz, nx * ny, cap)
-            ua, ja = _apply(values, width, comp, positions, p, 1, la, ra, cap, starts,
+            ua, ja = _apply(values, vs, vo, positions, p, 1, la, ra, cap, starts,
                             lengths, weights, span)
-            ub, jb = _apply(values, width, comp, positions, p, nx, lb, rb, cap, starts,
+            ub, jb = _apply(values, vs, vo, positions, p, nx, lb, rb, cap, starts,
                             lengths, weights, span)
-            uc, jc = _apply(values, width, comp, positions, p, nx * ny, lc, rc, cap, starts,
+            uc, jc = _apply(values, vs, vo, positions, p, nx * ny, lc, rc, cap, starts,
                             lengths, weights, span)
             ja, jb, jc = _completed(ja, jb, jc, la + ra == 0, lb + rb == 0, lc + rc == 0)
             da, db, dc = _metrics(ja, jb, jc)
@@ -234,9 +247,9 @@ def _gradient(values, width, comp, positions, marks, bit, masked, nan, nx, ny, n
 
 
 @tack.kernel
-def _hessian(values, width, comp, positions, marks, bit, masked, nan, nx, ny, nz, cap,
-             starts, lengths, weights, span, cap2, starts2, lengths2, weights2, span2, count,
-             out):
+def _hessian(values, vs, vo, width, comp, positions, marks, bit, masked, nan, nx, ny, nz,
+             cap, starts, lengths, weights, span, cap2, starts2, lengths2, weights2, span2,
+             count, out):
     for p in range(count):
         base = (p * width + comp) * 9
         if masked != 0 and (marks[p] & bit) != 0:
@@ -252,23 +265,23 @@ def _hessian(values, width, comp, positions, marks, bit, masked, nan, nx, ny, nz
             la, ra = _reach(marks, bit, masked, p, i, nx, 1, cap2)
             lb, rb = _reach(marks, bit, masked, p, j, ny, sy, cap2)
             lc, rc = _reach(marks, bit, masked, p, k, nz, sz, cap2)
-            ua, ja = _apply(values, width, comp, positions, p, 1, la, ra, cap, starts,
+            ua, ja = _apply(values, vs, vo, positions, p, 1, la, ra, cap, starts,
                             lengths, weights, span)
-            ub, jb = _apply(values, width, comp, positions, p, sy, lb, rb, cap, starts,
+            ub, jb = _apply(values, vs, vo, positions, p, sy, lb, rb, cap, starts,
                             lengths, weights, span)
-            uc, jc = _apply(values, width, comp, positions, p, sz, lc, rc, cap, starts,
+            uc, jc = _apply(values, vs, vo, positions, p, sz, lc, rc, cap, starts,
                             lengths, weights, span)
-            uaa, xaa = _apply(values, width, comp, positions, p, 1, la, ra, cap2, starts2,
+            uaa, xaa = _apply(values, vs, vo, positions, p, 1, la, ra, cap2, starts2,
                               lengths2, weights2, span2)
-            ubb, xbb = _apply(values, width, comp, positions, p, sy, lb, rb, cap2, starts2,
+            ubb, xbb = _apply(values, vs, vo, positions, p, sy, lb, rb, cap2, starts2,
                               lengths2, weights2, span2)
-            ucc, xcc = _apply(values, width, comp, positions, p, sz, lc, rc, cap2, starts2,
+            ucc, xcc = _apply(values, vs, vo, positions, p, sz, lc, rc, cap2, starts2,
                               lengths2, weights2, span2)
-            uab, xab = _mixed(values, width, comp, positions, marks, bit, masked, p, 1, la, ra,
+            uab, xab = _mixed(values, vs, vo, positions, marks, bit, masked, p, 1, la, ra,
                               j, ny, sy, cap, starts, lengths, weights, span)
-            uac, xac = _mixed(values, width, comp, positions, marks, bit, masked, p, 1, la, ra,
+            uac, xac = _mixed(values, vs, vo, positions, marks, bit, masked, p, 1, la, ra,
                               k, nz, sz, cap, starts, lengths, weights, span)
-            ubc, xbc = _mixed(values, width, comp, positions, marks, bit, masked, p, sy, lb,
+            ubc, xbc = _mixed(values, vs, vo, positions, marks, bit, masked, p, sy, lb,
                               rb, k, nz, sz, cap, starts, lengths, weights, span)
             ja, jb, jc = _completed(ja, jb, jc, la + ra == 0, lb + rb == 0, lc + rc == 0)
             da, db, dc = _metrics(ja, jb, jc)
@@ -382,9 +395,14 @@ def finite_differences(data, field, order=2, derivative=1):
     if not n:
         return Field(space, out, unit)
     values = materialize(field.values)
-    flat = values._scalar_view() if width_of(field.values) else values
+    if isinstance(values, SoaArray):
+        # Each component its own array: read it at stride 1.
+        reads = [(c, 1, 0) for c in values.components]
+    else:
+        flat = values._scalar_view() if width_of(field.values) else values
+        reads = [(flat, width, comp) for comp in range(width)]
     if arrays.dtype_of(field.values) != dtype:
-        flat = flat.astype(dtype)
+        reads = [(v.astype(dtype), vs, vo) for v, vs, vo in reads]
     marks, bit, masked = _hidden(data, field)
     starts, lengths, weights, cap, span = _table(order, 1, dtype)
     nx, ny, nz = sizes
@@ -392,12 +410,12 @@ def finite_differences(data, field, order=2, derivative=1):
     nan = float("nan")
     if derivative == 2:
         starts2, lengths2, weights2, cap2, span2 = _table(order, 2, dtype)
-    for comp in range(width):
+    for comp, (flat, vs, vo) in enumerate(reads):
         if derivative == 1:
-            _gradient(flat, width, comp, positions, marks, bit, masked, nan, nx, ny, nz, cap,
-                      starts, lengths, weights, span, n, target)
+            _gradient(flat, vs, vo, width, comp, positions, marks, bit, masked, nan, nx, ny,
+                      nz, cap, starts, lengths, weights, span, n, target)
         else:
-            _hessian(flat, width, comp, positions, marks, bit, masked, nan, nx, ny, nz, cap,
-                     starts, lengths, weights, span, cap2, starts2, lengths2, weights2, span2,
-                     n, target)
+            _hessian(flat, vs, vo, width, comp, positions, marks, bit, masked, nan, nx, ny,
+                     nz, cap, starts, lengths, weights, span, cap2, starts2, lengths2,
+                     weights2, span2, n, target)
     return Field(space, out, unit)

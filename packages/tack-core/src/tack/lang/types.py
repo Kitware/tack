@@ -64,6 +64,16 @@ def integer_type_for_value(value: int) -> ScalarType:
     raise TypeError(f"Integer value {value} is outside Tack's 64-bit range")
 
 
+def integer_type_for_range(*values: int) -> ScalarType:
+    """The narrowest of i32, i64 and u64 that holds every one of ``values``
+    (`integer_type_for_value` for each, the widest of them); ``TypeError`` if
+    none does -- a negative value beside one only u64 holds."""
+    kinds = [integer_type_for_value(int(v)) for v in values]
+    if u64 in kinds and any(int(v) < 0 for v in values):
+        raise TypeError(f"no integer type of Tack's holds {min(values)} and {max(values)}")
+    return u64 if u64 in kinds else (i64 if i64 in kinds else i32)
+
+
 # Map numpy dtypes back to tack types
 _numpy_to_tack = {
     np.dtype(np.int8):    i8,

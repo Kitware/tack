@@ -34,6 +34,7 @@ from tack.lang.types import (
     get_default_float,
     i32,
     i64,
+    integer_type_for_range,
     integer_type_for_value,
     mat,
     vec,
@@ -132,6 +133,164 @@ class DeviceBuffer:
     def nbytes(self) -> int:
         raise NotImplementedError
 
+    def _view_fields(self, start: int, count: int) -> dict:
+        """What a buffer over scalar elements ``[start, start + count)`` of this
+        one's storage sets differently from it (`view_buffer`): the shifted
+        pointer and the shorter size, in this class's own attributes. A backend
+        whose buffers can be viewed overrides it."""
+        raise BufferError(f"{self.backend_name or type(self).__name__} arrays have no "
+                          f"views; copy the elements instead")
+
+
+class _View:
+    """What a buffer over a stretch of another buffer's storage (`view_buffer`,
+    behind ``array[i:j]``) does differently from that buffer, its root.
+
+    Each view is of a subclass of its root's own class (`_view_class`), so
+    binding it to a kernel, reading, writing and filling it run the root
+    class's code over the view's shifted pointer and size. What concerns the
+    allocation rather than the stretch stays with the root: the view frees
+    nothing (the root does, once no view holds it), never starts zeroed, and
+    shares the root's write count (`DeviceBuffer.version`, so a write through
+    any view of an allocation changes the revision of every view of it) and
+    its being handed outside Tack (``_shared``: a launch over any part of
+    shared memory completes before returning)."""
+
+    starts_zeroed = False
+    _owned = False
+
+    @property
+    def version(self):
+        return self._root.version
+
+    @version.setter
+    def version(self, value):
+        self._root.version = value
+
+    @property
+    def _shared(self):
+        return getattr(self._root, "_shared", False)
+
+    @_shared.setter
+    def _shared(self, value):
+        self._root._shared = value
+
+    def export_memory(self):
+        raise BufferError("a view has no allocation of its own to export; export the "
+                          "array it views, or a copy of this one")
+
+    def __del__(self):
+        pass
+
+
+#: Per root buffer class, its view class (`_view_class`).
+_VIEW_CLASSES: dict = {}
+
+#: A root's attributes a view does not take: what `_View` keeps with the root
+#: (the write count, being shared), what frees or recycles the allocation, and
+#: values cached for the root's own pointer.
+_NOT_VIEWED = frozenset({"version", "_shared", "_owned", "_pool", "_capacity", "_export_buf",
+                         "_address", "_span", "starts_zeroed"})
+
+
+def _view_class(root_class):
+    cls = _VIEW_CLASSES.get(root_class)
+    if cls is None:
+        cls = type(f"{root_class.__name__}View", (_View, root_class),
+                   {"__module__": root_class.__module__, "__doc__": _View.__doc__})
+        _VIEW_CLASSES[root_class] = cls
+    return cls
+
+
+def pointer_view_fields(buffer, start, count, as_pointer=int):
+    """`DeviceBuffer._view_fields` for a buffer over a device pointer
+    (``_device_ptr``, its ``address`` as an int) with ``_numpy_dtype``,
+    ``_shape`` and ``_nbytes``: CUDA's, HIP's and Level Zero's. The pointer is
+    kept as ``as_pointer`` makes it, the type the backend's calls take."""
+    size = buffer._numpy_dtype.itemsize
+    return {"_shape": (count,), "_nbytes": count * size,
+            "_device_ptr": as_pointer(buffer.address + start * size)}
+
+
+def view_buffer(buffer: DeviceBuffer, start: int, count: int) -> DeviceBuffer:
+    """A buffer over scalar elements ``[start, start + count)`` of ``buffer``'s
+    storage, which it keeps alive. A view of a view is a view of their root."""
+    root = getattr(buffer, "_root", buffer)
+    start += getattr(buffer, "_start", 0)
+    fields = root._view_fields(start, count)
+    cls = _view_class(type(root))
+    view = object.__new__(cls)
+    view.__dict__.update((k, v) for k, v in vars(root).items() if k not in _NOT_VIEWED)
+    view.__dict__.update(fields)
+    view._root, view._start = root, start
+    return view
+
+
+#: A host copy into a CPU buffer of at least this many bytes runs on several
+#: threads (`_host_copy`); a smaller one on the calling thread.
+_PARALLEL_COPY_BYTES = 32 << 20
+#: Each thread's least share of a parallel copy.
+_COPY_CHUNK_BYTES = 8 << 20
+#: At most this many threads copy: a few already take what memory gives (jura,
+#: 174M ids from i64 into fresh i32 pages: 1 thread 0.33 s, 4 0.09, 8 0.13).
+_COPY_THREADS = 8
+_copy_pool = None
+
+
+def _copy_threads():
+    import os
+    env = os.environ.get("TACK_CPU_THREADS")
+    cores = int(env) if env and env.isdigit() and int(env) > 0 else (os.cpu_count() or 1)
+    return max(1, min(_COPY_THREADS, cores))
+
+
+def _reset_copy_pool():
+    global _copy_pool
+    _copy_pool = None
+
+
+def _host_copy(dst: np.ndarray, src: np.ndarray):
+    """``np.copyto(dst, src)`` -- its ``same_kind`` casting, so a conversion such
+    as i64 to i32 happens in the copy -- for arrays of one shape, by up to
+    `_COPY_THREADS` threads of their own when it is large (NumPy leaves the GIL
+    while it copies). A new CPU buffer's pages are first touched here, so the
+    copy also spreads their faults; the buffer's range already has its NUMA
+    policy (`_interleave_range`), whichever thread touches it. On jura a 1 GB
+    copy into new pages took 0.31 s on one thread and 0.11-0.15 on 4-8. Arrays whose
+    memory may overlap take one ``np.copyto``, which reads its source as it was:
+    split, a chunk could be written before another thread read it."""
+    global _copy_pool
+    nbytes = max(dst.nbytes, src.nbytes)
+    threads = _copy_threads()
+    if (nbytes < _PARALLEL_COPY_BYTES or threads < 2 or dst.shape != src.shape
+            or not (dst.flags.c_contiguous and src.flags.c_contiguous)
+            or np.may_share_memory(dst, src)):
+        np.copyto(dst, src)
+        return
+    if not np.can_cast(src.dtype, dst.dtype, "same_kind"):
+        np.copyto(dst, src)                         # raises as it would
+        return
+    if _copy_pool is None:
+        import os
+        from concurrent.futures import ThreadPoolExecutor
+        _copy_pool = ThreadPoolExecutor(max_workers=_COPY_THREADS,
+                                        thread_name_prefix="tack-copy")
+        os.register_at_fork(after_in_child=_reset_copy_pool)
+    d, s = dst.reshape(-1), src.reshape(-1)
+    k = int(min(threads, max(1, nbytes // _COPY_CHUNK_BYTES)))
+    step = -(-d.size // k)
+    for done in [_copy_pool.submit(np.copyto, d[i * step:(i + 1) * step],
+                                   s[i * step:(i + 1) * step]) for i in range(k)]:
+        done.result()
+
+
+def _converts_in_copy(buffer, host: np.ndarray, numpy_dtype) -> bool:
+    """Whether ``host`` may go into ``buffer`` (of ``numpy_dtype``) unconverted, the
+    copy converting it (`_host_copy`): a CPU buffer, and a number type that
+    ``same_kind`` casting takes to ``numpy_dtype`` as ``astype`` would."""
+    return (type(buffer) is NumpyBuffer and host.dtype.kind in "biuf"
+            and np.can_cast(host.dtype, numpy_dtype, "same_kind"))
+
 
 class NumpyBuffer(DeviceBuffer):
     """CPU backend buffer — just a numpy array, uninitialized when new."""
@@ -144,7 +303,7 @@ class NumpyBuffer(DeviceBuffer):
     def from_numpy(self, arr: np.ndarray):
         # A reshaped array shares this buffer under another shape; the
         # element count already matches, so copy in the buffer's own shape.
-        np.copyto(self._data, arr.reshape(self._data.shape))
+        _host_copy(self._data, arr.reshape(self._data.shape))
 
     def to_numpy(self) -> np.ndarray:
         return self._data.copy()
@@ -154,6 +313,9 @@ class NumpyBuffer(DeviceBuffer):
 
     def fill(self, value):
         self._data.fill(value)
+
+    def _view_fields(self, start, count):
+        return {"_data": self._data.reshape(-1)[start:start + count]}
 
     @property
     def nbytes(self) -> int:
@@ -267,7 +429,17 @@ class Array:
         target = backend_of(device)
         if target is self._backend or target.memory_domain == self._backend.memory_domain:
             return self
-        return array(self.numpy(), self.dtype, device=target)
+        return array(self._host_values(), self.dtype, device=target)
+
+    def _host_values(self) -> np.ndarray:
+        """The values as `numpy` gives them, for reading at once: a CPU array's own
+        memory rather than a copy of it (a copy from every other device). For a
+        copy elsewhere, which copies again: `to_device` of 3 GB on jura took
+        0.72 s more in `numpy`'s copy than in the upload."""
+        data = getattr(self._buffer, "_data", None)
+        if type(self._buffer) is not NumpyBuffer or not isinstance(data, np.ndarray):
+            return self.numpy()
+        return data if data.shape == self._host_shape else data.reshape(self._host_shape)
 
     @property
     def scalar_dtype(self):
@@ -491,7 +663,12 @@ class Array:
         transfer of that element, so many elements are read with
         ``numpy()``. Arrays are not written this way; see ``tack.copyto``
         and ``fill``.
+
+        A slice of the first dimension, ``a[i:j]``, is a view: an array of
+        those rows over the same storage, as in NumPy (see `_rows`).
         """
+        if isinstance(index, slice):
+            return self._rows(index)
         shape = self.shape
         indices = index if isinstance(index, tuple) else (index,)
         if len(indices) != len(shape) or not all(
@@ -503,8 +680,8 @@ class Array:
             else:
                 wanted = f"{len(shape)} integer indices"
             raise TypeError(
-                f"an array of shape {shape} takes {wanted} on the host, not {index!r}; "
-                f"to read many elements use numpy()")
+                f"an array of shape {shape} takes {wanted} on the host, or a[i:j] for a "
+                f"view of rows, not {index!r}; to read many elements use numpy()")
         flat = 0
         for i, extent in zip(indices, shape, strict=True):
             i = int(i)
@@ -526,6 +703,34 @@ class Array:
     def __iter__(self):
         raise TypeError(
             "an array is not iterated by element from the host; iterate over numpy()")
+
+    def _rows(self, rows: slice) -> 'Array':
+        """``a[i:j]``: rows ``i`` to ``j`` of the first dimension as an array over
+        the same storage, which it keeps alive. Bounds are as Python's and
+        NumPy's (negative from the end, clamped); a step other than 1 is refused,
+        since a view is one contiguous stretch. Kernels, copies, reductions and
+        DLPack take it as any array; writes through it are writes to this
+        array, counted as such (`DeviceBuffer.version`), and it is read-only
+        if this array is. An empty range gives a new empty array."""
+        shape = self.shape
+        if not shape:
+            raise TypeError("a zero-dimensional array has no rows to slice")
+        start, stop, step = rows.indices(shape[0])
+        if step != 1:
+            raise ValueError(
+                f"a view is one contiguous stretch of rows, so a[i:j] takes no step, not "
+                f"{rows.step!r}; tack.arrays.Strided reads every k-th element")
+        count = max(stop - start, 0)
+        new_shape = (count, *shape[1:])
+        if count == 0:
+            return empty(new_shape, self.dtype, device=self._backend)
+        per_row = int(math.prod(self._host_shape[1:]))
+        buffer = view_buffer(self._buffer, start * per_row, count * per_row)
+        out = _array_view(self.dtype, new_shape, buffer, self._writable, self._device)
+        hold = getattr(self, '_dlpack_hold', None)
+        if hold is not None:
+            out._dlpack_hold = hold
+        return out
 
     def _scalar_view(self):
         """A flat scalar view for storage-level copy, reductions and interop."""
@@ -680,6 +885,12 @@ class SoaArray(Array):
         return reduce_numpy([c._reduce(op) for c in self._components], op)
 
     def __getitem__(self, index):
+        if isinstance(index, slice):
+            if not self.shape:
+                raise TypeError("a zero-dimensional array has no rows to slice")
+            # Each component's rows: a view of each, so the SOA array of them is
+            # a view of this one.
+            return SoaArray(tuple(c[index] for c in self._components), self.dtype.shape)
         values = [c[index] for c in self._components]
         return np.array(values, dtype=self.scalar_dtype.numpy_dtype).reshape(self.dtype.shape)
 
@@ -1033,7 +1244,11 @@ def array(obj, dtype=None, *, device=None, layout=None) -> Array:
             raise ValueError(f"input shape {shape} must end with element shape {dtype.shape}")
         shape = shape[:-rank]
     out = empty(shape, dtype, device=device, layout=layout or "aos")
-    out._upload(host.astype(out.scalar_dtype.numpy_dtype, copy=False))
+    target = out.scalar_dtype.numpy_dtype
+    # Into the CPU's memory a conversion happens in the copy (`_host_copy`).
+    if not _converts_in_copy(out._buffer, host, target):
+        host = host.astype(target, copy=False)
+    out._upload(host)
     return out
 
 
@@ -1052,6 +1267,30 @@ def asarray(obj, dtype=None, *, device=None, layout=None) -> Array:
     return array(obj, dtype, device=device, layout=layout)
 
 
+def _storage(array):
+    """``[(root buffer, first scalar, scalars)]``: the storage ``array`` occupies,
+    one entry per buffer (an SOA array's components'). A view's is a stretch of
+    its root's."""
+    arrays = array.components if isinstance(array, SoaArray) else (array,)
+    out = []
+    for a in arrays:
+        buffer = a._buffer
+        out.append((getattr(buffer, "_root", buffer), getattr(buffer, "_start", 0),
+                    a.scalar_size))
+    return out
+
+
+def _partly_overlap(a, b):
+    """Whether arrays ``a`` and ``b`` share storage other than element for element:
+    stretches of one root that overlap without starting at the same scalar."""
+    for root, start, count in _storage(a):
+        for other, other_start, other_count in _storage(b):
+            if (root is other and start != other_start
+                    and start < other_start + other_count and other_start < start + count):
+                return True
+    return False
+
+
 def copyto(dst: Array, src):
     """Copy ``src`` into the existing array ``dst``, as ``np.copyto`` does.
 
@@ -1062,6 +1301,11 @@ def copyto(dst: Array, src):
 
     It only writes into Tack arrays. `numpy` reads one into a new NumPy
     array; ``np.copyto`` copies between NumPy arrays.
+
+    ``src`` and ``dst`` may overlap -- two views of one array's rows, say
+    ``copyto(a[1:], a[:-1])`` -- and the result is as if ``src`` were read whole
+    first, as NumPy's: a source over part of the destination's storage is
+    copied to new storage before it is written.
     """
     if not isinstance(dst, Array):
         raise TypeError(f"copyto() writes into a Tack array, not {type(dst).__name__}")
@@ -1072,6 +1316,10 @@ def copyto(dst: Array, src):
         from tack.runtime.dispatch import same_device
         same_device("copyto()", (dst, src))
         dst._check_writable()
+        if _partly_overlap(dst, src):
+            # The copy runs element by element, in no order: an element written
+            # before another reads it would be read already overwritten.
+            src = src.copy()
         from tack.algorithms.copy import copy as _copy
         if src.layout == dst.layout == "aos":
             _copy(src._scalar_view(), dst._scalar_view(), dst.scalar_size)
@@ -1083,7 +1331,12 @@ def copyto(dst: Array, src):
                              f"of {dst.dtype} elements")
         _copy(src.reshape(src.size), dst.reshape(dst.size), dst.size)
         return
-    host = np.asarray(src, dtype=dst.scalar_dtype.numpy_dtype)
+    target = dst.scalar_dtype.numpy_dtype
+    # Into the CPU's memory a NumPy array's conversion happens in the copy
+    # (`_host_copy`), not in a converted copy made first.
+    if not (isinstance(src, np.ndarray) and _converts_in_copy(dst._buffer, src, target)):
+        src = np.asarray(src, dtype=target)
+    host = src
     expected = dst._host_shape
     if host.shape != expected:
         try:
@@ -1097,11 +1350,28 @@ def copyto(dst: Array, src):
 def arange(start, stop=None, step=1, dtype=None, *, device=None) -> Array:
     """Evenly spaced values in ``[start, stop)``, as ``np.arange``.
 
-    Without ``dtype``, integer arguments give i32 (i64 if a value needs it)
-    and any float argument gives the default float type (`get_default_float`).
+    Without ``dtype``, integer arguments give i32 (i64, then u64, if a value
+    needs it) and any float argument gives the default float type
+    (`get_default_float`). Integers are made in their integer type, so a range
+    past 2**63 keeps every value (NumPy's own rounds through float64 there).
     """
     if stop is None:
         start, stop = 0, start
+    integral = all(isinstance(v, (int, np.integer)) and not isinstance(v, (bool, np.bool_))
+                   for v in (start, stop, step))
+    if integral and step != 0:
+        # Integers in an integer type, made in it, so none is rounded: NumPy's
+        # own arange goes through float64 for ends past i64 (2**63 and
+        # 2**63 + 1 the same), whatever the type it is told after.
+        start, stop, step = int(start), int(stop), int(step)
+        n = len(range(start, stop, step))
+        if dtype is None:
+            ends = (start, start + step * (n - 1)) if n else (start, stop)
+            dtype = integer_type_for_range(*ends)
+        dtype = as_dtype(dtype)
+        if dtype.numpy_dtype.kind in "iu":
+            return array(np.arange(start, stop, step, dtype=dtype.numpy_dtype), dtype,
+                         device=device)
     values = np.arange(start, stop, step)
     if dtype is None:
         dtype = _host_dtype(values, [start, stop, step])
@@ -1158,8 +1428,14 @@ def from_dlpack(x, *, device=None, copy: bool = False) -> Array:
         a = tack.from_dlpack(vtk_capsule)
     """
     if copy:
-        host = x if isinstance(x, np.ndarray) else np.from_dlpack(x)
-        return array(host, device=device)
+        if isinstance(x, np.ndarray) or hasattr(x, "__dlpack__"):
+            host = x if isinstance(x, np.ndarray) else np.from_dlpack(x)
+            return array(host, device=device)
+        # A raw capsule has no __dlpack__ for NumPy to call: imported as Tack
+        # imports one, then copied.
+        from tack.lang.dlpack import dlpack_to_array
+        out = dlpack_to_array(x).copy()
+        return out if device is None else out.to_device(device)
 
     from tack.lang.dlpack import dlpack_to_array
     return dlpack_to_array(x, device=device)

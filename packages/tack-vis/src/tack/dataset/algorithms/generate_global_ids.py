@@ -129,17 +129,25 @@ def _marks(piece, lost=False):
 
 def _boundary_points(topology):
     """The points on ``topology``'s boundary faces, sorted: from the faces' rows (four
-    ids a face, padded with -1), or a polyhedral topology's faces, of any size."""
+    ids a face, padded with -1), or a polyhedral topology's faces, of any size; a
+    mixed one's stored polyhedral faces (its first face ids) from their points,
+    since one of more than four has no row."""
+    from tack.dataset.polyhedra import _ranges
+
     faces = topology.faces()
     boundary = arrays.to_host(faces.boundary()).astype(np.int64)
-    if hasattr(faces, "rows"):
-        chosen = arrays.to_host(faces.rows).reshape(-1, 4)[boundary]
+    stored = None
+    if not hasattr(faces, "rows"):
+        stored = boundary
+        chosen = np.zeros(0, np.int64)
     else:
-        from tack.dataset.polyhedra import _ranges
-
+        chosen = arrays.to_host(faces.rows).reshape(-1, 4)[boundary].reshape(-1)
+        if getattr(topology, "has_polyhedra", False):
+            stored = boundary[boundary < topology.num_polyhedral_faces]
+    if stored is not None and len(stored):
         offsets = arrays.to_host(topology.face_offsets).astype(np.int64)
-        chosen = arrays.to_host(topology.face_points)[
-            _ranges(offsets[boundary], offsets[boundary + 1] - offsets[boundary])]
+        chosen = np.concatenate([chosen, arrays.to_host(topology.face_points)[
+            _ranges(offsets[stored], offsets[stored + 1] - offsets[stored])]])
     chosen = np.unique(chosen)
     return chosen[chosen >= 0].astype(np.int64)
 

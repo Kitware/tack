@@ -809,8 +809,11 @@ def test_hidden_cells_are_never_processed():
     marks[::3] = Ghosts.HIDDENCELL
     whole.ghosts = Ghosts(cells=marks)
     rest = td.extract_cells(td.wavelet(6), np.flatnonzero(marks == 0))
+    # tetrahedralize and extract_edges leave them out in place, the points all
+    # kept (test_hidden_cells_in_place.py, test_masked_filters.py).
+    assert td.extract_edges(whole).num_cells == td.extract_edges(rest).num_cells
     for filter in (_FILTERS["contour"], _FILTERS["clip"], _FILTERS["threshold"],
-                   td.extract_surface, td.extract_edges, td.tetrahedralize,
+                   td.extract_surface,
                    lambda d: td.contour(d, d.fields["RTData"], 160.0),
                    lambda d: td.extract_cells(d, np.arange(d.num_cells))):
         a, b = filter(whole), filter(rest)

@@ -19,11 +19,12 @@ meet more than two cells."""
 import numpy as np
 
 import tack
+from tack import arrays
 from tack.algorithms.scan import exclusive_scan
-from tack.arrays import CountingArray
+from tack.arrays import CountingArray, materialize, size_of
 from tack.dataset import ids, shapes
 from tack.dataset.algorithms._common import _compact, _table
-from tack.dataset.carry import Pieces, Same, carry
+from tack.dataset.carry import Interpolate, Pieces, Same, carry
 from tack.dataset.topology import UnstructuredTopology, uniform_cells
 
 # A structured hexahedron's two splits into 5 (VTK's corner order): a tetrahedron of
@@ -46,18 +47,42 @@ _PIECES = {
 }
 
 
+# Cells left out, as ``ghosts.visible`` leaves them out: hidden or refined
+# (``Ghosts.MASKED_CELLS``).
+_MASKED = tack.constant(40, tack.i32)
+
+
+@tack.func
+def _left_out(marks, hidden, e):
+    return hidden == 1 and (tack.i32(marks[e]) & _MASKED) != 0
+
+
 @tack.kernel
-def _piece_counts(cells, pieces, counts):
+def _piece_counts(cells, pieces, counts, marks, hidden):
+    # A hidden or refined cell makes no pieces.
     for c in cells:
-        counts[cells.entity_id(c)] = pieces
+        e = cells.entity_id(c)
+        counts[e] = 0 if _left_out(marks, hidden, e) else pieces
+
+
+def _masks(data):
+    """``(marks, 1)``: the cells' ghost marks where some are hidden or refined;
+    else ``(a stand-in, 0)``."""
+    from tack.dataset.ghosts import Ghosts, _has
+
+    ghosts = data.ghosts
+    if ghosts is not None and ghosts.cells is not None and _has(ghosts.cells,
+                                                                Ghosts.MASKED_CELLS):
+        return ghosts.cells, 1
+    return tack.zeros((1,), tack.u8), 0
 
 
 @tack.kernel
-def _split_cells(cells, table, pieces, width, starts, connectivity, sources):
+def _split_cells(cells, table, pieces, width, starts, connectivity, sources, marks, hidden):
     for c in cells:
         e = cells.entity_id(c)
         at = starts[e]
-        for t in range(pieces):
+        for t in range(0 if _left_out(marks, hidden, e) else pieces):
             for v in range(width):
                 connectivity[(at + t) * width + v] = cells.point_id(c, table[t * width + v])
             sources[at + t] = e
@@ -79,75 +104,78 @@ def _emit(cells, c, connectivity, at, p, a, b, d):
 
 
 @tack.kernel
-def _parity_tets(cells, even, odd, shift, starts, connectivity, sources):
+def _parity_tets(cells, even, odd, shift, starts, connectivity, sources, marks, hidden):
     # A structured grid's hexahedra, 5 tetrahedra each, the split by the parity of
     # (i + j + k) in the whole grid: the topology's offset's parity is ``shift``.
     for c in cells:
         e = cells.entity_id(c)
-        at = starts[e]
-        flip = (c[0] + c[1] + c[2] + shift) % 2
-        for t in range(5):
-            r = 4 * t
-            if flip == 0:
-                _emit(cells, c, connectivity, at + t, even[r], even[r + 1], even[r + 2],
-                      even[r + 3])
-            else:
-                _emit(cells, c, connectivity, at + t, odd[r], odd[r + 1], odd[r + 2],
-                      odd[r + 3])
-            sources[at + t] = e
+        if not _left_out(marks, hidden, e):
+            at = starts[e]
+            flip = (c[0] + c[1] + c[2] + shift) % 2
+            for t in range(5):
+                r = 4 * t
+                if flip == 0:
+                    _emit(cells, c, connectivity, at + t, even[r], even[r + 1], even[r + 2],
+                          even[r + 3])
+                else:
+                    _emit(cells, c, connectivity, at + t, odd[r], odd[r + 1], odd[r + 2],
+                          odd[r + 3])
+                sources[at + t] = e
 
 
 @tack.kernel
-def _cone_tets(cells, rank, starts, connectivity, sources):
+def _cone_tets(cells, rank, starts, connectivity, sources, marks, hidden):
     # Each cell as the cone from its corner of smallest rank (its point's id, or
     # global id) over the faces without it, a quadrilateral face split from its
     # own corner of smallest rank.
     for c in cells:
         e = cells.entity_id(c)
-        at = starts[e]
-        apex = 0
-        for j in range(1, cells.NUM_POINTS):
-            if rank[cells.point_id(c, j)] < rank[cells.point_id(c, apex)]:
-                apex = j
-        t = 0
-        if cells.NUM_FACES == 4 and cells.NUM_POINTS == 4:
-            _emit(cells, c, connectivity, at, 0, 1, 2, 3)        # a tetrahedron is one
-            sources[at] = e
-            t = 1
-        else:
-            for f in range(cells.NUM_FACES):
-                n = 4 if cells.face_corner(f, 3) >= 0 else 3
-                holds = 0
-                for j in range(n):
-                    if cells.face_corner(f, j) == apex:
-                        holds = 1
-                if holds == 0:
-                    if n == 3:
-                        _emit(cells, c, connectivity, at + t, apex, cells.face_corner(f, 0),
-                              cells.face_corner(f, 1), cells.face_corner(f, 2))
-                        sources[at + t] = e
-                        t += 1
-                    else:
-                        m = 0
-                        for j in range(1, 4):
-                            if (rank[cells.point_id(c, cells.face_corner(f, j))]
-                                    < rank[cells.point_id(c, cells.face_corner(f, m))]):
-                                m = j
-                        q0 = cells.face_corner(f, m)
-                        q1 = cells.face_corner(f, (m + 1) % 4)
-                        q2 = cells.face_corner(f, (m + 2) % 4)
-                        q3 = cells.face_corner(f, (m + 3) % 4)
-                        _emit(cells, c, connectivity, at + t, apex, q0, q1, q2)
-                        _emit(cells, c, connectivity, at + t + 1, apex, q0, q2, q3)
-                        sources[at + t] = e
-                        sources[at + t + 1] = e
-                        t += 2
+        if not _left_out(marks, hidden, e):
+            at = starts[e]
+            apex = 0
+            for j in range(1, cells.NUM_POINTS):
+                if rank[cells.point_id(c, j)] < rank[cells.point_id(c, apex)]:
+                    apex = j
+            t = 0
+            if cells.NUM_FACES == 4 and cells.NUM_POINTS == 4:
+                _emit(cells, c, connectivity, at, 0, 1, 2, 3)        # a tetrahedron is one
+                sources[at] = e
+                t = 1
+            else:
+                for f in range(cells.NUM_FACES):
+                    n = 4 if cells.face_corner(f, 3) >= 0 else 3
+                    holds = 0
+                    for j in range(n):
+                        if cells.face_corner(f, j) == apex:
+                            holds = 1
+                    if holds == 0:
+                        if n == 3:
+                            _emit(cells, c, connectivity, at + t, apex, cells.face_corner(f, 0),
+                                  cells.face_corner(f, 1), cells.face_corner(f, 2))
+                            sources[at + t] = e
+                            t += 1
+                        else:
+                            m = 0
+                            for j in range(1, 4):
+                                if (rank[cells.point_id(c, cells.face_corner(f, j))]
+                                        < rank[cells.point_id(c, cells.face_corner(f, m))]):
+                                    m = j
+                            q0 = cells.face_corner(f, m)
+                            q1 = cells.face_corner(f, (m + 1) % 4)
+                            q2 = cells.face_corner(f, (m + 2) % 4)
+                            q3 = cells.face_corner(f, (m + 3) % 4)
+                            _emit(cells, c, connectivity, at + t, apex, q0, q1, q2)
+                            _emit(cells, c, connectivity, at + t + 1, apex, q0, q2, q3)
+                            sources[at + t] = e
+                            sources[at + t + 1] = e
+                            t += 2
 
 
 @tack.kernel
-def _fan_counts(loop_offsets, counts):
+def _fan_counts(loop_offsets, counts, marks, hidden):
     for c in range(counts.shape[0]):
-        counts[c] = max(loop_offsets[c + 1] - loop_offsets[c] - 2, 0)
+        counts[c] = 0 if _left_out(marks, hidden, c) else max(
+            loop_offsets[c + 1] - loop_offsets[c] - 2, 0)
 
 
 @tack.func
@@ -176,7 +204,8 @@ def _turn(x, loop_points, first, a, b, c, drop):
 
 
 @tack.kernel
-def _ears(loop_offsets, loop_points, x, starts, after, before, connectivity, sources):
+def _ears(loop_offsets, loop_points, x, starts, after, before, connectivity, sources, marks,
+          hidden):
     # Each polygon by ear cutting in its plane -- the plane of its Newell normal's
     # largest component -- so a concave one is covered once (a fan from its first
     # corner covers part of it twice and part not at all). An ear is a corner
@@ -189,7 +218,7 @@ def _ears(loop_offsets, loop_points, x, starts, after, before, connectivity, sou
         first = loop_offsets[c]
         n = loop_offsets[c + 1] - first
         at = starts[c]
-        if n >= 3:
+        if n >= 3 and not _left_out(marks, hidden, c):
             nx = 0.0
             ny = 0.0
             nz = 0.0
@@ -277,6 +306,161 @@ def _kept_pieces(kept, width, connectivity, sources, out_connectivity, out_sourc
         out_sources[i] = sources[t]
 
 
+# ── Polyhedra beside shapes ─────────────────────────────────────────
+
+@tack.kernel
+def _polyhedral_tet_counts(cells, counts, marks, hidden):
+    # A polyhedron's tetrahedra: each face's triangles coned to its cell point, a
+    # triangle one, a quad two, a polygon of n points n (fanned from its face point);
+    # none for a hidden or refined one.
+    for c in cells:
+        e = cells.entity_id(c)
+        t = 0
+        if not _left_out(marks, hidden, e):
+            for k in range(cells.num_faces(c)):
+                n = cells.side_num_points(c, k)
+                t += 1 if n == 3 else (2 if n == 4 else n)
+        counts[e] = t
+
+
+@tack.kernel
+def _polygon_flags(face_offsets, flags):
+    for f in range(flags.shape[0]):
+        flags[f] = 1 if face_offsets[f + 1] - face_offsets[f] >= 5 else 0
+
+
+@tack.kernel
+def _cell_point_sizes(cells, sizes):
+    for c in cells:
+        sizes[cells.index(c)] = cells.num_points(c)
+
+
+@tack.kernel
+def _face_point_sizes(face_offsets, flags, slots, first, sizes):
+    for f in range(flags.shape[0]):
+        if flags[f] == 1:
+            sizes[first + slots[f]] = face_offsets[f + 1] - face_offsets[f]
+
+
+@tack.kernel
+def _cell_point_members(cells, offsets, members, average_cells):
+    for c in cells:
+        i = cells.index(c)
+        for j in range(cells.num_points(c)):
+            members[offsets[i] + j] = cells.point_id(c, j)
+        average_cells[i] = cells.entity_id(c)
+
+
+@tack.kernel
+def _face_point_members(face_offsets, face_points, flags, slots, first, sides, offsets,
+                        members, average_cells):
+    for f in range(flags.shape[0]):
+        if flags[f] == 1:
+            i = first + slots[f]
+            for j in range(face_offsets[f + 1] - face_offsets[f]):
+                members[offsets[i] + j] = face_points[face_offsets[f] + j]
+            side = sides[f]
+            average_cells[i] = side[0] if side[0] >= 0 else side[2]
+
+
+@tack.func
+def _upright(x, connectivity, at, p, a, b, d):
+    # Tetrahedron (p, a, b, d) of output points into slot at, turned if needed so
+    # its volume is positive.
+    u = x[a] - x[p]
+    v = x[b] - x[p]
+    w = x[d] - x[p]
+    turn = u.dot(v.cross(w)) < 0.0
+    connectivity[4 * at] = p
+    connectivity[4 * at + 1] = a
+    connectivity[4 * at + 2] = d if turn else b
+    connectivity[4 * at + 3] = b if turn else d
+
+
+@tack.kernel
+def _polyhedral_tets(cells, rank, flags, slots, x, num_points, num_cell_points, starts,
+                     connectivity, sources, marks, hidden):
+    # Each polyhedron's faces' triangles coned to its cell point (output point
+    # num_points + its index): a quad split from its corner of smallest rank, as
+    # a shape's is, so a shape beside it splits their face alike; a polygon fanned
+    # from its face point, which both its cells make the same.
+    for c in cells:
+        e = cells.entity_id(c)
+        at = starts[e]
+        apex = num_points + cells.index(c)
+        for k in range(0 if _left_out(marks, hidden, e) else cells.num_faces(c)):
+            n = cells.side_num_points(c, k)
+            if n == 3:
+                _upright(x, connectivity, at, apex, cells.side_point_id(c, k, 0),
+                         cells.side_point_id(c, k, 1), cells.side_point_id(c, k, 2))
+                sources[at] = e
+                at += 1
+            elif n == 4:
+                m = 0
+                for j in range(1, 4):
+                    if rank[cells.side_point_id(c, k, j)] < rank[cells.side_point_id(c, k, m)]:
+                        m = j
+                q0 = cells.side_point_id(c, k, m)
+                q1 = cells.side_point_id(c, k, (m + 1) % 4)
+                q2 = cells.side_point_id(c, k, (m + 2) % 4)
+                q3 = cells.side_point_id(c, k, (m + 3) % 4)
+                _upright(x, connectivity, at, apex, q0, q1, q2)
+                _upright(x, connectivity, at + 1, apex, q0, q2, q3)
+                sources[at] = e
+                sources[at + 1] = e
+                at += 2
+            else:
+                middle = num_points + num_cell_points + slots[cells.face_id(c, k)]
+                for j in range(n):
+                    _upright(x, connectivity, at, apex, middle, cells.side_point_id(c, k, j),
+                             cells.side_point_id(c, k, (j + 1) % n))
+                    sources[at] = e
+                    at += 1
+
+
+@tack.kernel
+def _new_positions(old, offsets, members, num_points, out):
+    # The input points, then each new point the mean of its members.
+    for i in range(out.shape[0]):
+        if i < num_points:
+            out[i] = old[i]
+        else:
+            k = i - num_points
+            total = old[members[offsets[k]]]
+            for j in range(offsets[k] + 1, offsets[k + 1]):
+                total += old[members[j]]
+            out[i] = total / (offsets[k + 1] - offsets[k])
+
+
+def _polyhedral_points(data, group, odt):
+    """The points a mixed topology's polyhedra add when tetrahedralized: one a cell
+    and one a face of five points or more, each an average of input points:
+    ``(slots, flags, offsets, members, average_cells, added)``, ``slots`` each
+    polygon face's place among the face points."""
+    t = data.topology
+    nfp = t.num_polyhedral_faces
+    flags = tack.empty((nfp,), tack.i32)
+    slots = tack.empty((nfp,), odt)
+    polygons = 0
+    if nfp:
+        _polygon_flags(t.face_offsets, flags)
+        polygons = exclusive_scan(flags, slots, nfp)
+    added = group.count + polygons
+    sizes = tack.empty((added,), odt)
+    _cell_point_sizes(group.view(), sizes)
+    if polygons:
+        _face_point_sizes(t.face_offsets, flags, slots, group.count, sizes)
+    offsets = tack.empty((added + 1,), odt)
+    total = exclusive_scan(sizes, offsets, added, close=True)
+    members = tack.empty((total,), odt)
+    average_cells = tack.empty((added,), data.id_dtype)
+    _cell_point_members(group.view(), offsets, members, average_cells)
+    if polygons:
+        _face_point_members(t.face_offsets, t.face_points, flags, slots, group.count,
+                            t.faces().sides, offsets, members, average_cells)
+    return slots, flags, offsets, members, average_cells, added
+
+
 def _without_repeats(connectivity, sources, count, width):
     """The pieces whose points are distinct. VTK keeps the others, of no volume,
     but their faces repeat and would meet more than two cells."""
@@ -317,10 +501,22 @@ def _tetrahedra(data, fields):
         groups = [g for g in data.topology.groups()
                   if g.count and int(g.shape.ID) in _CONE_TETS]
         per = _CONE_TETS
+    # Hidden and refined cells make no tetrahedra, left out in place (where
+    # extracting the rest made a structured grid's hexahedra unstructured,
+    # split in 6, not 5): #403. Polyhedra beside the shapes, coned from points
+    # they add (a hidden one's too: the points stay all of data's, and a face
+    # point may be its visible neighbour's).
+    marks, hidden = _masks(data)
+    t = data.topology
+    polyhedra = next((g for g in t.groups() if g.count and not g.shape.REFERENCE), None) \
+        if t.has_polyhedra else None
     counts = tack.zeros((n,), tack.i32)
     for group in groups:
-        _piece_counts(group.view(), per[int(group.shape.ID)], counts)
-    odt = ids.for_output(data, 24 * n)
+        _piece_counts(group.view(), per[int(group.shape.ID)], counts, marks, hidden)
+    if polyhedra is not None:
+        _polyhedral_tet_counts(polyhedra.view(), counts, marks, hidden)
+    odt = ids.for_output(data, 24 * n + (8 * size_of(t.face_points) + data.num_points
+                                         if polyhedra is not None else 0))
     starts = tack.empty((n,), odt)
     count = exclusive_scan(counts, starts, n) if n else 0
     connectivity = tack.empty((4 * count,), odt)
@@ -335,10 +531,36 @@ def _tetrahedra(data, fields):
         view = data.domain_view("cells", group)        # with the corners' positions
         if structured:
             _parity_tets(view, _table("even tets", _EVEN_TETS), _table("odd tets", _ODD_TETS),
-                         shift, starts, connectivity, sources)
+                         shift, starts, connectivity, sources, marks, hidden)
         else:
-            _cone_tets(view, rank, starts, connectivity, sources)
-    return _pieces_topology(data, connectivity, sources, count, shapes.TETRA, 4, fields)
+            _cone_tets(view, rank, starts, connectivity, sources, marks, hidden)
+    if polyhedra is None:
+        return _pieces_topology(data, connectivity, sources, count, shapes.TETRA, 4, fields)
+    slots, flags, offsets, members, average_cells, added = _polyhedral_points(data, polyhedra,
+                                                                              odt)
+    x = materialize(data.geometry.values)
+    positions = tack.empty((data.num_points + added,), tack.vec(3, arrays.dtype_of(x)))
+    _new_positions(x, offsets, members, data.num_points, positions)
+    _polyhedral_tets(polyhedra.view(), rank, flags, slots, positions, data.num_points,
+                     polyhedra.count, starts, connectivity, sources, marks, hidden)
+    connectivity, sources, count = _without_repeats(connectivity, sources, count, 4)
+    types, cell_offsets = uniform_cells(int(shapes.TETRA), count, connectivity.dtype, 4)
+    out = UnstructuredTopology(types, cell_offsets, connectivity,
+                               num_points=data.num_points + added)
+    # The input points as they are, then the added ones, each an average.
+    kept = tack.arange(data.num_points, dtype=data.id_dtype)
+    ends = tack.empty((data.num_points,), tack.vec(2, data.id_dtype))
+    weights = tack.zeros((data.num_points,), arrays.dtype_of(x))
+    if data.num_points:
+        _twice(kept, ends)
+    points = Interpolate(ends, weights, averages=(offsets, members), average_cells=average_cells)
+    return carry(data, out, points=points, cells=Pieces(sources), fields=fields)
+
+
+@tack.kernel
+def _twice(ids, ends):
+    for i in range(ids.shape[0]):
+        ends[i] = [ids[i], ids[i]]
 
 
 def _split(data, kind, fields):
@@ -349,8 +571,10 @@ def _split(data, kind, fields):
     n = data.num_cells
     groups = [g for g in data.topology.groups() if g.count and int(g.shape.ID) in tables]
     counts = tack.zeros((n,), tack.i32)
+    # Hidden and refined cells make no pieces, left out in place (#405).
+    marks, hidden = _masks(data)
     for group in groups:
-        _piece_counts(group.view(), len(tables[int(group.shape.ID)]), counts)
+        _piece_counts(group.view(), len(tables[int(group.shape.ID)]), counts, marks, hidden)
     most = max((len(tables[int(g.shape.ID)]) for g in groups), default=0)
     odt = ids.for_output(data, most * width * n)
     starts = tack.empty((n,), odt)
@@ -360,5 +584,5 @@ def _split(data, kind, fields):
     for group in groups:
         table = np.asarray(tables[int(group.shape.ID)], np.int32)
         _split_cells(group.view(), _table(("pieces", kind, int(group.shape.ID)), table),
-                     len(table), width, starts, connectivity, sources)
+                     len(table), width, starts, connectivity, sources, marks, hidden)
     return _pieces_topology(data, connectivity, sources, count, shape, width, fields)

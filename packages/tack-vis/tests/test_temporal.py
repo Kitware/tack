@@ -481,6 +481,61 @@ def test_pathlines_build_each_meshs_locator_once(monkeypatch):
         paths[copy] = out.world_positions()
     np.testing.assert_array_equal(paths[True], paths[False])
 
+@pytest.mark.parametrize("integrator", ["rk4", "euler"])
+def test_advection_on_one_mesh_runs_the_kernel_and_gives_the_hosts_paths(monkeypatch,
+                                                                          integrator):
+    """Steps on one mesh -- the same topology, or a new one of the same arrays, as
+    a reader gives -- go through the advection kernel with the velocity blended in
+    time; the host's integration, which probes both steps, gives the same paths:
+    substeps, a particle leaving the mesh (stopped where it was), one released
+    within an interval, and a velocity that stops for a moment (t = 1) without
+    stopping the particles."""
+    from tack.dataset import temporal
+
+    def flow(x, t):
+        v = 0.2 * _swirl(x, t)
+        v[:, 0] += 0.5
+        return v * (t - 1.0) ** 2             # zero everywhere at t = 1
+
+    def steps():
+        # Every step a new grid (a new topology of the same arrays), but the
+        # tetrahedra at t = 0.5: another mesh, so the intervals to it and from it
+        # go on the host, and the two after the stop at t = 1 on the device.
+        for t in (0.0, 0.5, 1.0, 1.5, 2.0):
+            grid = _flow(t, flow)
+            if t == 0.5:
+                grid = td.tetrahedralize(grid)
+                grid.time, grid.time_unit = t, "s"
+            yield grid
+
+    seeds = [[7.0, 5.0, 1.0], [5.0, 3.5, 1.0], [9.8, 5.0, 1.0], [2.0, 2.0, 1.0]]
+    runs = {}
+    for where in ("device", "host"):
+        if where == "host":
+            monkeypatch.setattr(temporal.Advection, "_advance_on_device",
+                                temporal.Advection._advance_on_host)
+        ran = []
+        real = temporal.Advection._advance_on_device
+        monkeypatch.setattr(temporal.Advection, "_advance_on_device",
+                            lambda self, *a, ran=ran, real=real: (ran.append(1),
+                                                                  real(self, *a)))
+        advection = td.Advection("v", seeds, integrator=integrator, step_size=0.1)
+        advection.inject([[3.0, 7.0, 1.0]], time=0.75)
+        for step in steps():
+            out = advection.update(step)
+        assert len(ran) == 2              # the intervals ending at 1.5 and 2.0
+        runs[where] = out
+        monkeypatch.undo()
+    device, host = runs["device"], runs["host"]
+    np.testing.assert_allclose(device.world_positions(), host.world_positions(), atol=2e-5)
+    for name in ("status", "seed", "release", "time"):
+        np.testing.assert_array_equal(device.fields[name].values.numpy(),
+                                      host.fields[name].values.numpy())
+    status = device.fields["status"].values.numpy()
+    assert status[2] & td.ParticleStatus.SPATIAL_BOUNDS                 # left at x = 10
+    assert (status[[0, 1, 3, 4]] == 17).all()                           # still moving
+
+
 def test_advection_over_pieces_is_the_wholes():
     def rotation(x, t):
         v = np.zeros_like(x)

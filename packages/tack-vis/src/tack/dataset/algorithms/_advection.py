@@ -41,6 +41,9 @@ HANDOFF = tack.constant(128, tack.i32)
 # Not Viskores': it stopped where the velocity's speed was at or below the
 # terminal speed (vtkStreamTracer's TerminalSpeed), with TERMINATE.
 SLOW_SPEED = tack.constant(256, tack.i32)
+# Not Viskores': it reached the end time (``until``), paused, not stopped:
+# temporal advection's driver clears it and goes on at the next step.
+_AT_END = tack.constant(512, tack.i32)
 
 
 class ParticleStatus(enum.IntFlag):
@@ -78,6 +81,9 @@ _LAST = tack.constant(4, tack.i32)       # the last point inside, for the push o
 _OUT = tack.constant(5, tack.i32)        # where the push out ends
 
 
+_END = tack.constant(6, tack.i32)        # a whole step's end, before it is taken (until)
+
+
 # The integrators, as the kernel numbers them.
 _EULER = tack.constant(0, tack.i32)
 _RK4 = tack.constant(1, tack.i32)
@@ -101,7 +107,7 @@ _MAX_DIV = tack.constant(18446744073709551616.0)
 def _advect(mesh, velocity, h, max_steps, method, by_length, eps, xs, times, steps, status,
             trace, trace_times, lengths, capacity, record, ghosts, handoff, budget, first,
             moved, hints, tol, min_step, max_step, max_length, terminal, hs, travelled,
-            beyond, beyond_time, beyond_length):
+            beyond, beyond_time, beyond_length, until, t_end):
     # by_length: h is an arc length, and the particle follows the velocity's
     # direction, v / |v| -- vtkStreamTracer's length unit -- with the time a
     # unit of length takes, 1 / |v|, integrated beside it by the same weights.
@@ -136,6 +142,14 @@ def _advect(mesh, velocity, h, max_steps, method, by_length, eps, xs, times, ste
     # piece holds, and a particle pushed into one goes on from there. The
     # arrays are written only there (zero otherwise, as the caller fills them),
     # so a launch that skips a stopped particle keeps them.
+    #
+    # until (temporal advection, by time only): the velocity is read at each
+    # point's time (velocity.value_at), and a particle goes no further than
+    # t_end: the step reaching it is cut short there and the particle pauses
+    # (_AT_END). A whole step is taken only when its stages and its end are in
+    # the mesh; otherwise the particle stops where it was (SPATIAL_BOUNDS),
+    # with no bisection, as Advection's integration on the host does; and the
+    # flow stopping for a moment does not stop it.
     for q in range(xs.shape[0]):
         x = xs[q]
         t = times[q]
@@ -145,6 +159,8 @@ def _advect(mesh, velocity, h, max_steps, method, by_length, eps, xs, times, ste
         hc = hs[q]
         gone = travelled[q]
         final = 0
+        at_end = 0
+        take = 0
         forced = 0
         ratio = h - h
         here = 0
@@ -181,45 +197,63 @@ def _advect(mesh, velocity, h, max_steps, method, by_length, eps, xs, times, ste
         # or with its steps done -- stays where it is; one that stopped at an
         # earlier call's step limit goes on.
         running = 1
-        if (st & (SPATIAL_BOUNDS | ZERO_VELOCITY | HANDOFF)) != 0 or n >= max_steps:
+        if (st & (SPATIAL_BOUNDS | ZERO_VELOCITY | HANDOFF | _AT_END)) != 0 or n >= max_steps:
             running = 0
         elif first == 1:
             st = st & ~TERMINATE
         while running == 1:
-            # Where to locate the particle next.
+            # Where to locate the particle next, and at what time (in the
+            # time unit; until only).
             p = x
+            tp = t
+            take = 0
             if mode == _STEP and stage == 0 and max_length > 0.0 and by_length == 1:
                 # The last step lands on max_length.
                 if gone + sub >= max_length:
                     sub = max_length - gone
                     final = 1
+            if mode == _STEP and stage == 0 and until == 1 and t + sub >= t_end:
+                # The last step lands on t_end.
+                sub = t_end - t
+                at_end = 1
             if (mode == _STEP or mode == _CHECK) and method == _RK45:
                 if stage == 1:
                     p = x + sub * (0.2 * k1)
+                    tp = t + 0.2 * sub
                 elif stage == 2:
                     p = x + sub * ((3.0 / 40.0) * k1 + (9.0 / 40.0) * k2)
+                    tp = t + 0.3 * sub
                 elif stage == 3:
                     p = x + sub * (0.3 * k1 - 0.9 * k2 + 1.2 * k3)
+                    tp = t + 0.6 * sub
                 elif stage == 4:
                     p = x + sub * ((-11.0 / 54.0) * k1 + 2.5 * k2 - (70.0 / 27.0) * k3
                                    + (35.0 / 27.0) * k4)
+                    tp = t + sub
                 elif stage == 5:
                     p = x + sub * ((1631.0 / 55296.0) * k1 + (175.0 / 512.0) * k2
                                    + (575.0 / 13824.0) * k3 + (44275.0 / 110592.0) * k4
                                    + (253.0 / 4096.0) * k5)
+                    tp = t + 0.875 * sub
             elif mode == _STEP or mode == _CHECK:
                 if stage == 1:
                     p = x + (0.5 * sub) * k1
+                    tp = t + 0.5 * sub
                 elif stage == 2:
                     p = x + (0.5 * sub) * k2
+                    tp = t + 0.5 * sub
                 elif stage == 3:
                     p = x + sub * k3
-            elif mode == _TRIAL:
+                    tp = t + sub
+            elif mode == _TRIAL or mode == _END:
                 p = x + sub * vel
+                tp = t + sub
             elif mode == _START or mode == _LAST:
                 p = curr
+                tp = t + r0
             elif mode == _OUT:
                 p = out
+                tp = t + r0 + push
 
             # Its cell, ranked as the locator ranks them -- holding the point
             # ahead of coming within the tolerance, then the smaller id -- tried
@@ -231,7 +265,7 @@ def _advect(mesh, velocity, h, max_steps, method, by_length, eps, xs, times, ste
                 last = best
             v = p - p
             if found == 1:
-                v = velocity.value(mesh, best, best_type, best_pc, best_tet)
+                v = velocity.value_at(mesh, best, best_type, best_pc, best_tet, tp)
             raw = v.dot(v)            # the speed squared, before the length unit
             # Along the direction, the time a unit of length takes; a speed
             # at zero velocity's threshold stops the particle as before.
@@ -258,7 +292,10 @@ def _advect(mesh, velocity, h, max_steps, method, by_length, eps, xs, times, ste
                 st = st | HANDOFF
                 running = 0
             elif mode == _STEP or mode == _CHECK:
-                if found == 0:
+                if found == 0 and until == 1:
+                    st = st | SPATIAL_BOUNDS
+                    running = 0
+                elif found == 0:
                     if mode == _STEP:
                         # Viskores' SmallStep: from the particle, bisect the step.
                         mode = _START
@@ -326,58 +363,23 @@ def _advect(mesh, velocity, h, max_steps, method, by_length, eps, xs, times, ste
                             hc = nh
                             sub = nh
                             final = 0
+                            at_end = 0
                             stage = 1
                             redo = 1
                     if mode == _STEP and redo == 0:
-                        start = x
-                        x = x + sub * vel
-                        if by_length == 1:
-                            t += sub * pace
-                            gone += sub
+                        if until == 1:
+                            mode = _END          # its end in the mesh first
                         else:
-                            t += sub
-                            gone += (x - start).norm()
-                        n += 1
-                        here += 1
-                        took = 1
-                        if record == 1:
-                            trace[q * capacity + length] = x
-                            trace_times[q * capacity + length] = t
-                            length += 1
-                        if method == _RK45 and tol > 0.0:
-                            # The next step, from this one's error.
-                            nh = max_step + 0.0 * sub
-                            if ratio > 0.0:
-                                nh = 0.9 * sub * pow(ratio, -0.2)
-                            hc = min(max(nh, min_step), max_step)
-                            forced = 0
-                        # A step that left the particle where it was, to the
-                        # bit, would leave it there every step after (RK45's at
-                        # its longest step): it has stopped, however slow the
-                        # flow's unit makes its speed. Near a stagnation point
-                        # a step's move falls below an ulp, and the particle
-                        # sat out its remaining steps.
-                        stuck = 0
-                        if all(x == start) and (method != _RK45 or tol <= 0.0
-                                                or sub >= max_step):
-                            stuck = 1
-                        sub = hc
-                        if vel.dot(vel) <= _ZERO_SPEED2 or stuck == 1:
-                            st = st | ZERO_VELOCITY | TERMINATE
-                            running = 0
-                        elif n == max_steps:
-                            st = st | TERMINATE
-                            running = 0
-                        elif final == 1 or (max_length > 0.0
-                                            and gone >= max_length - 0.001 * hc):
-                            # At max_length, or a sliver of a step short of it (the
-                            # steps' sum rounded below it).
-                            st = st | TERMINATE
-                            running = 0
-                        elif here == budget:
-                            running = 0
+                            take = 1
                     elif mode != _STEP:
                         mode = _TRIAL
+            elif mode == _END:
+                if found == 1:
+                    mode = _STEP
+                    take = 1
+                else:
+                    st = st | SPATIAL_BOUNDS
+                    running = 0
             elif mode == _START:
                 if found == 0:
                     # The seed itself is outside: it cannot move.
@@ -466,6 +468,59 @@ def _advect(mesh, velocity, h, max_steps, method, by_length, eps, xs, times, ste
                 div = 1.0
                 stage = 0
                 final = 0
+            if take == 1:
+                start = x
+                x = x + sub * vel
+                if by_length == 1:
+                    t += sub * pace
+                    gone += sub
+                else:
+                    t += sub
+                    gone += (x - start).norm()
+                n += 1
+                here += 1
+                took = 1
+                if record == 1:
+                    trace[q * capacity + length] = x
+                    trace_times[q * capacity + length] = t
+                    length += 1
+                if method == _RK45 and tol > 0.0:
+                    # The next step, from this one's error.
+                    nh = max_step + 0.0 * sub
+                    if ratio > 0.0:
+                        nh = 0.9 * sub * pow(ratio, -0.2)
+                    hc = min(max(nh, min_step), max_step)
+                    forced = 0
+                # A step that left the particle where it was, to the
+                # bit, would leave it there every step after (RK45's at
+                # its longest step): it has stopped, however slow the
+                # flow's unit makes its speed. Near a stagnation point
+                # a step's move falls below an ulp, and the particle
+                # sat out its remaining steps.
+                stuck = 0
+                if all(x == start) and (method != _RK45 or tol <= 0.0
+                                        or sub >= max_step):
+                    stuck = 1
+                sub = hc
+                if at_end == 1:
+                    # At t_end, to the bit: paused until the next interval.
+                    t = t_end + 0.0 * t
+                    st = st | _AT_END
+                    running = 0
+                elif until == 0 and (vel.dot(vel) <= _ZERO_SPEED2 or stuck == 1):
+                    st = st | ZERO_VELOCITY | TERMINATE
+                    running = 0
+                elif n == max_steps:
+                    st = st | TERMINATE
+                    running = 0
+                elif final == 1 or (max_length > 0.0
+                                    and gone >= max_length - 0.001 * hc):
+                    # At max_length, or a sliver of a step short of it (the
+                    # steps' sum rounded below it).
+                    st = st | TERMINATE
+                    running = 0
+                elif here == budget:
+                    running = 0
             if bisect == 1:
                 # The next trial step, or the push out once the bracket is small --
                 # or after _MAX_HALVINGS halvings, so a push out always ends in a
@@ -494,7 +549,7 @@ def _advect(mesh, velocity, h, max_steps, method, by_length, eps, xs, times, ste
 def _running(steps, status, max_steps, count):
     # Particles a later launch would move: not stopped, steps left.
     for q in range(steps.shape[0]):
-        if (status[q] & (SPATIAL_BOUNDS | ZERO_VELOCITY | HANDOFF | TERMINATE)) == 0 \
+        if (status[q] & (SPATIAL_BOUNDS | ZERO_VELOCITY | HANDOFF | TERMINATE | _AT_END)) == 0 \
                 and steps[q] < max_steps:
             tack.atomic_add(count, 0, 1)
 
@@ -549,6 +604,33 @@ def _velocity(data, field):
         raise TypeError(f"advection takes point data, cell data or an interpolated field "
                         f"of one order per shape, not {field.space!r}")
     return by_id
+
+
+@tack.device_class
+class _Steady:
+    """A velocity by cell id (``by_id``) the same at every time."""
+
+    def __init__(self, velocity):
+        self.velocity = velocity
+
+    @tack.func
+    def value_at(self, mesh, e, kind, pc, tet, t):
+        return self.velocity.value(mesh, e, kind, pc, tet)
+
+
+@tack.device_class
+class _InTime:
+    """Two steps' velocities by cell id on one mesh, linear in time between them:
+    ``before`` at time 0, ``after`` at ``span``, held beyond."""
+
+    def __init__(self, before, after, span):
+        self.before, self.after, self.span = before, after, span
+
+    @tack.func
+    def value_at(self, mesh, e, kind, pc, tet, t):
+        a = min(max(t / self.span, 0.0), 1.0)
+        return (1.0 - a) * self.before.value(mesh, e, kind, pc, tet) \
+            + a * self.after.value(mesh, e, kind, pc, tet)
 
 
 def _parameters(data, field, unit, who, step_size, tolerance=None, min_step=None,
@@ -650,7 +732,7 @@ def check_piece(data, field):
 
 def _run(data, field, seeds, step_size, steps, integrator, locator, record, resume=None,
          handoff=False, unit="time", tolerance=None, min_step=None, max_step=None,
-         max_length=None, neighbors=False, terminal_speed=None):
+         max_length=None, neighbors=False, terminal_speed=None, before=None, until=None):
     """``resume``, ``(times, steps, status)`` for the seeds -- or with each one's
     current step and length so far, ``(times, steps, status, step, travelled)``
     -- goes on from there: ``steps`` counts the steps already taken, and a
@@ -663,12 +745,23 @@ def _run(data, field, seeds, step_size, steps, integrator, locator, record, resu
     another step (``None``: none).
     ``neighbors`` walks from a particle's last cell to its face neighbours before
     searching the bins (``CellLocator.cell_neighbors``).
+    ``before`` (temporal advection, by time): a dataset on ``data``'s mesh whose
+    ``field`` is the velocity at time 0, ``data``'s being at ``until``, linear
+    between; each particle goes from its time (``resume``) to ``until`` at most,
+    pausing there (``_AT_END``), and stops where it was when a step would leave
+    the mesh.
 
     Returns ``(xs, times, steps, status, (trace, trace_times), lengths, capacity,
     (step, travelled))``."""
     tol, low, high = check_arguments(steps, integrator, step_size, tolerance, min_step,
                                      max_step, max_length, terminal_speed, unit)
     velocity, positions = check_piece(data, field)
+    if before is None:
+        velocity = _Steady(velocity)
+    else:
+        if unit != "time" or not until > 0.0:
+            raise ValueError("advection in time steps by time, to a positive end time")
+        velocity = _InTime(_velocity(before, field), velocity, float(until))
     locator = locator or cached_locator(data)
     if not locator.serves(data):
         raise ValueError("the locator was built for another topology or geometry, or "
@@ -726,6 +819,7 @@ def _run(data, field, seeds, step_size, steps, integrator, locator, record, resu
                    ghosts, 1 if marks is not None else 0), xs.device,
                   (tol, low, high, 0.0 if max_length is None else float(max_length),
                    0.0 if terminal_speed is None else float(terminal_speed), hs, travelled,
-                   beyond, beyond_time, beyond_length))
+                   beyond, beyond_time, beyond_length,
+                   0 if before is None else 1, 0.0 if before is None else float(until)))
     return (xs, times, taken, status, (trace, trace_times), lengths, capacity,
             (hs, travelled, beyond, beyond_time, beyond_length))

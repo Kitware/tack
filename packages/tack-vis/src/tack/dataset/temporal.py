@@ -143,6 +143,28 @@ def _same_mesh(a, b):
     return all(_equal(getattr(a, name), getattr(b, name)) for name in a._STORED)
 
 
+@tack.kernel
+def _moved_apart(a, b, out):
+    for i in range(out.shape[0]):
+        out[i] = 1.0 if any(a[i] != b[i]) else 0.0
+
+
+def _same_positions(a, b):
+    """Whether two geometries' values (arrays of points, stored or implicit) are
+    the same points, compared on their device."""
+    if a is b:
+        return True
+    n = arrays.size_of(a)
+    if n != arrays.size_of(b) or arrays.width_of(a) != arrays.width_of(b):
+        return False
+    if not n:
+        return True
+    device = a.device if isinstance(a, tack.Array) else b.device
+    flags = tack.empty((n,), tack.f32, device=device)
+    _moved_apart(a, b, flags)
+    return flags.max() == 0.0
+
+
 def _refuse_another_mesh(what, kept, data):
     if not _same_mesh(kept, data.topology):
         raise ValueError(f"{what} needs one mesh over the steps, and this step is on "
@@ -416,7 +438,14 @@ class Advection:
     substep from step to step. A particle leaving the mesh stops where it last
     was, marked ``SPATIAL_BOUNDS``; one released outside has ``SUCCESS``
     cleared. Times convert between the steps' unit and the velocity's (a
-    velocity in m/s over steps in minutes)."""
+    velocity in m/s over steps in minutes).
+
+    Two steps on one mesh -- the same topology, or one of the same arrays and
+    positions, as a reader gives each step -- are integrated in one launch of
+    ``advect``'s kernel, the velocity blended in time between them, on the
+    steps' device. Steps on different meshes, or over pieces, are integrated on
+    the host, probing each step's mesh at every stage; both give the same
+    paths."""
 
     def __init__(self, field, seeds=None, integrator="rk4", step_size=None, copy=True):
         if integrator not in ("rk4", "euler"):
@@ -540,6 +569,46 @@ class Advection:
         return self._particles(data)
 
     def _advance(self, before, now, t0, t1):
+        if (not isinstance(now, PartitionedDataSet)
+                and np.array_equal(np.asarray(before.origin), np.asarray(now.origin))
+                and _same_mesh(before.topology, now.topology)
+                and _same_positions(before.geometry.values, now.geometry.values)):
+            self._advance_on_device(before, now, t0, t1)
+        else:
+            self._advance_on_host(before, now, t0, t1)
+
+    def _advance_on_device(self, before, now, t0, t1):
+        """Both steps on one mesh: the advection kernel, with the velocity blended
+        in time, carries every moving particle from its time to ``t1`` in one
+        run (Viskores' and VTK's way of keeping the loop off the host)."""
+        from tack.dataset.algorithms._advection import _AT_END, _run
+
+        scale = self._velocity_scale(now)
+        span = t1 - t0
+        moving = np.flatnonzero(((self.status & 1) != 0) & ((self.status & 2) == 0)
+                                & (self.time < t1 - 1e-12 * max(abs(t1), 1.0)))
+        if not len(moving):
+            return
+        # The kernel's times are from t0, in the velocity's time unit.
+        limit = self.step_size if self.step_size is not None else span
+        start = (self.time[moving] - t0) * scale
+        n = len(moving)
+        with now.device:
+            xs, times, _, status, *_ = _run(
+                now, self.field, self.x[moving], limit * scale, 1 << 30, self.integrator,
+                None, False, resume=(start, np.zeros(n, np.int32), self.status[moving]),
+                before=before, until=span * scale)
+        status = status.numpy().astype(np.int32)
+        ended = (status & int(_AT_END)) != 0
+        self.x[moving] = xs.numpy().astype(np.float64).reshape(n, 3) + np.asarray(now.origin)
+        self.time[moving] = np.where(ended, t1, t0 + times.numpy().astype(np.float64) / scale)
+        # A particle that would have left stops where it was, as on the host.
+        left = (status & 4) != 0
+        self.status[moving] = np.where(left, status | 2, status) & ~int(_AT_END)
+
+    def _advance_on_host(self, before, now, t0, t1):
+        """Each step's velocity probed in its own mesh at every stage: steps on
+        different meshes, or over pieces."""
         scale = self._velocity_scale(now)
         span = t1 - t0
 

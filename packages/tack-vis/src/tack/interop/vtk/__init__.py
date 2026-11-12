@@ -310,6 +310,22 @@ def _shared(host, element):
     return tack.array_from_ptr(host, (host.shape[0],), element, device="cpu")
 
 
+def _owned(host, element):
+    """``host``, a NumPy view of a VTK array only the conversion holds (one a merge
+    made), as a writable CPU array of ``element``s over the same memory, taken over
+    rather than copied, as a copy would be; ``None`` where the conversion is on
+    another device or the values are of another type, for the caller to copy."""
+    import numpy as np
+
+    scalar = element.scalar_dtype if hasattr(element, "scalar_dtype") else element
+    from tack.runtime.dispatch import get_backend
+
+    if (get_backend().name != "cpu" or not isinstance(host, np.ndarray)
+            or not host.flags.c_contiguous or host.dtype != np.dtype(scalar.numpy_dtype)):
+        return None
+    return tack.array_from_ptr(host, (host.shape[0],), element, device="cpu", writable=True)
+
+
 class _Held:
     """A NumPy view of a Tack array's memory that holds the array: NumPy keeps this
     object as the view's base, so a VTK array over the view keeps the Tack array,
@@ -462,12 +478,15 @@ def _from_vtk(array, dtype=None):
     return np.asarray(array)
 
 
-def _array_to_field(array, float_dtype, share=False, device=None):
+def _array_to_field(array, float_dtype, share=False, device=None, owned=False):
     """A VTK data array's values as a field's: floating point in ``float_dtype`` (in
     its own type when that is ``None``), integers in their own type, bits as u8 0
     and 1; a constant or affine array stays implicit. With ``share``, VTK's memory
     where it can be: ``device``'s (``_shared_on_device``) when the conversion is on
-    one, else the host's (``_shared``)."""
+    one, else the host's (``_shared``). ``owned`` says only the conversion holds the
+    array (a merge made it), which is then taken over, writable, rather than copied
+    (``_owned``). A copy reads VTK's memory once, converting only a type that
+    differs."""
     import numpy as np
     from vtkmodules.vtkCommonCore import vtkBitArray
 
@@ -501,10 +520,15 @@ def _array_to_field(array, float_dtype, share=False, device=None):
         shared = _shared(host, dtype if n == 1 else tack.vec(n, dtype))
         if shared is not None:
             return shared
+    if owned and not share:
+        taken = _owned(host, dtype if n == 1 else tack.vec(n, dtype))
+        if taken is not None:
+            return taken
     values = np.ascontiguousarray(host)
     field = tack.empty((array.number_of_tuples,), dtype if n == 1 else tack.vec(n, dtype))
     if values.size:
-        tack.copyto(field, values.reshape((-1,) if n == 1 else (-1, n)).astype(dtype.numpy_dtype))
+        tack.copyto(field, values.reshape((-1,) if n == 1 else (-1, n))
+                    .astype(dtype.numpy_dtype, copy=False))
     return field
 
 
@@ -562,7 +586,8 @@ def _arrays_of(attributes):
             yield name, attributes.GetAbstractArray(i)
 
 
-def _attributes_to_fields(attributes, space, float_dtype, share=False, device=None):
+def _attributes_to_fields(attributes, space, float_dtype, share=False, device=None,
+                          owned=False):
     from vtkmodules.vtkCommonCore import vtkDataArray
 
     from tack.dataset import Field
@@ -574,8 +599,8 @@ def _attributes_to_fields(attributes, space, float_dtype, share=False, device=No
         # Named data arrays: string and other abstract arrays have no values to compute on,
         # the ghost array becomes the ghost marks and the global ids the global ids.
         if name and name not in skipped and isinstance(array, vtkDataArray):
-            fields[name] = Field(space, _array_to_field(array, float_dtype, share, device),
-                                 _units_label(array))
+            fields[name] = Field(space, _array_to_field(array, float_dtype, share, device,
+                                                        owned), _units_label(array))
     return fields
 
 
@@ -673,6 +698,43 @@ def _suspects(types, offsets, connectivity, x):
     return flags.numpy().astype(bool)
 
 
+def _negative_cells(kind, corners, first, corner):
+    """Which of some cells of VTK type ``kind`` (``corners`` each; ``first`` names one
+    in the error a cell that is not 3D raises) have a negative volume, summed over
+    their faces in f64 about their centre: ``corner`` is their corners' positions,
+    ``(cells, corners, 3)``. The decision `_oriented_connectivity` makes for the
+    cells its screen (`_suspect_frames`) flags, on any device's flags alike."""
+    import numpy as np
+
+    corner = np.asarray(corner).astype(np.float64)
+    centre = corner.mean(axis=1)
+    volume = np.zeros(corner.shape[0])
+    for ring in _face_tables(kind, corners, first):
+        ring_x = corner[:, ring] - centre[:, None]
+        middle = ring_x.mean(axis=1)
+        for j in range(len(ring)):
+            volume += np.einsum("ij,ij->i", middle,
+                                np.cross(ring_x[:, j], ring_x[:, (j + 1) % len(ring)]))
+    return volume < 0
+
+
+def _warn_inside_out(inverted, stacklevel):
+    """The warning for inside-out cells left as they are: ``inverted`` maps a VTK type
+    to ``(cells, corners)``."""
+    import warnings
+
+    count = sum(cells.size for cells, _ in inverted.values())
+    names = {10: "tetrahedra", 12: "hexahedra", 13: "wedges", 14: "pyramids"}
+    listed = ", ".join(f"{cells.size} {names[k]}" for k, (cells, _) in inverted.items())
+    why = ("; VTK's documentation gave the wedge the reverse order until March 2026 "
+           "(its code never did), so writers that followed it write wedges this way"
+           if 13 in inverted else "")
+    warnings.warn(f"{count} cells are inside out ({listed}): their corners are in the "
+                  "reverse of VTK's order, so their volumes are negative and their faces "
+                  f"point inward{why}; vtk_to_dataset(..., orient=True) turns them outward",
+                  stacklevel=stacklevel + 1)
+
+
 def _oriented_connectivity(grid, orient, cells=None):
     """The grid's connectivity with its inside-out cells turned outward, or ``None``
     where there is nothing to change. A cell is inside out when its corners are in
@@ -685,14 +747,17 @@ def _oriented_connectivity(grid, orient, cells=None):
     those cells."""
     import numpy as np
 
-    chosen = (np.arange(grid.number_of_cells, dtype=np.int64) if cells is None
-              else np.asarray(cells, np.int64))
-    types = np.asarray(grid.cell_types)[chosen] if chosen.size else np.zeros(0, np.uint8)
+    # Every cell (``cells`` None) is read as VTK holds it, not through an index array.
+    every = cells is None
+    chosen = None if every else np.asarray(cells, np.int64)
+    types = np.asarray(grid.cell_types)
+    if not every:
+        types = types[chosen] if chosen.size else np.zeros(0, np.uint8)
     kinds = [k for k in _ORIENTATION if (types == k).any()] if types.size else []
     if not kinds:
         return None
     stored = grid.GetCells()
-    offsets = np.asarray(stored.offsets_array).astype(np.int64)
+    offsets = np.asarray(stored.offsets_array).astype(np.int64, copy=False)
     connectivity = np.asarray(stored.connectivity_array)
     x = _vtk_points(grid)
     if x.dtype not in (np.float32, np.float64):
@@ -700,41 +765,27 @@ def _oriented_connectivity(grid, orient, cells=None):
     flagged = _suspects(np.asarray(grid.cell_types), offsets, connectivity, x)
     inverted = {}
     for kind in kinds:
-        cells = chosen[types == kind]
+        cells = np.flatnonzero(types == kind) if every else chosen[types == kind]
         corners = int(offsets[cells[0] + 1] - offsets[cells[0]])
         suspect = cells[flagged[cells]]
         if not suspect.size:
             continue
         rows = connectivity[offsets[suspect][:, None] + np.arange(corners)]
-        corner = x[rows].astype(np.float64)                         # (cells, corners, 3)
-        centre = corner.mean(axis=1)
-        volume = np.zeros(suspect.size)
-        for ring in _face_tables(kind, corners, int(suspect[0])):
-            ring_x = corner[:, ring] - centre[:, None]
-            middle = ring_x.mean(axis=1)
-            for j in range(len(ring)):
-                volume += np.einsum("ij,ij->i", middle,
-                                    np.cross(ring_x[:, j], ring_x[:, (j + 1) % len(ring)]))
-        inside_out = suspect[volume < 0]
+        inside_out = suspect[_negative_cells(kind, corners, int(suspect[0]), x[rows])]
         if inside_out.size:
             inverted[kind] = (inside_out, corners)
     if not inverted:
         return None
-    count = sum(cells.size for cells, _ in inverted.values())
     if not orient:
-        import warnings
-
-        names = {10: "tetrahedra", 12: "hexahedra", 13: "wedges", 14: "pyramids"}
-        listed = ", ".join(f"{cells.size} {names[k]}" for k, (cells, _) in inverted.items())
-        why = ("; VTK's documentation gave the wedge the reverse order until March 2026 "
-               "(its code never did), so writers that followed it write wedges this way"
-               if 13 in inverted else "")
-        warnings.warn(f"{count} cells are inside out ({listed}): their corners are in the "
-                      "reverse of VTK's order, so their volumes are negative and their faces "
-                      f"point inward{why}; vtk_to_dataset(..., orient=True) turns them outward",
-                      stacklevel=4)
+        _warn_inside_out(inverted, stacklevel=4)
         return None
-    repaired = np.array(connectivity)
+    # Point ids in 32 bits where they fit, as the topology keeps them: VTK's are 64,
+    # converted in a parallel copy (174M on AhmedML).
+    from tack.lang.array import _host_copy
+
+    repaired = np.empty(connectivity.shape, np.int32 if grid.number_of_points < 2**31
+                        else connectivity.dtype)
+    _host_copy(repaired, np.ascontiguousarray(connectivity))
     for kind, (cells, corners) in inverted.items():
         rows = offsets[cells][:, None] + np.arange(corners)
         repaired[rows] = repaired[rows][:, list(_ORIENTATION[kind][1])]
@@ -865,9 +916,9 @@ def _mixed_polyhedra(grid, types, orient=False):
     n = types.size
     polyhedra = np.flatnonzero(types == 42)
     locations, faces = grid.polyhedron_face_locations, grid.polyhedron_faces
-    loc_offsets = np.asarray(locations.offsets_array).astype(np.int64)
-    loc_faces = np.asarray(locations.connectivity_array).astype(np.int64)
-    face_offsets = np.asarray(faces.offsets_array).astype(np.int64)
+    loc_offsets = np.asarray(locations.offsets_array).astype(np.int64, copy=False)
+    loc_faces = np.asarray(locations.connectivity_array).astype(np.int64, copy=False)
+    face_offsets = np.asarray(faces.offsets_array).astype(np.int64, copy=False)
     face_conn = np.asarray(faces.connectivity_array)
     ids = np.int32 if grid.number_of_points < 2**31 else np.int64
     count = loc_offsets[polyhedra + 1] - loc_offsets[polyhedra]
@@ -903,32 +954,55 @@ def _mixed_polyhedra(grid, types, orient=False):
             np.asarray(cell_faces), np.asarray(sides, np.uint8))
 
 
+@tack.func
+def _f64(p):
+    return tack.vec3(tack.f64(p[0]), tack.f64(p[1]), tack.f64(p[2]))
+
+
+@tack.kernel
+def _negative_volumes(x, cell_rings, ring_offsets, ring_points, negative):
+    # 1 where a polyhedron's signed volume is negative: its rings as VTK lists them
+    # (outward for it), each fanned from its first point, the fans' signed volumes
+    # summed about the cell's first point in f64 (exact for a closed cell, wherever
+    # that point is, and precise far from the origin).
+    for c in range(negative.shape[0]):
+        first = cell_rings[c]
+        origin = _f64(x[ring_points[ring_offsets[first]]])
+        total = origin[0] - origin[0]
+        for r in range(first, cell_rings[c + 1]):
+            s = ring_offsets[r]
+            a = _f64(x[ring_points[s]]) - origin
+            for j in range(1, ring_offsets[r + 1] - s - 1):
+                b = _f64(x[ring_points[s + j]]) - origin
+                d = _f64(x[ring_points[s + j + 1]]) - origin
+                total += a.dot(b.cross(d))
+        negative[c] = 1 if total < 0.0 else 0
+
+
 def _inside_out_rings(grid, count, ring_offsets, ring_points):
     """How many polyhedra, each ``count`` rings of ``ring_offsets``/``ring_points`` as
-    VTK lists them (outward for the cell), have a negative volume: each ring fanned
-    from its first point, the cell's volume the sum of the fans' signed volumes about
-    the origin (exact for a closed cell, wherever the origin is). On the host, in
-    whole-array steps."""
+    VTK lists them (outward for the cell), have a negative volume
+    (``_negative_volumes``), on the CPU over the arrays where they lie."""
     import numpy as np
+
+    from tack.lang.types import from_numpy_dtype
 
     if not count.size:
         return 0
-    x = _vtk_points(grid).astype(np.float64)
-    sizes = np.diff(ring_offsets)
-    first = np.repeat(ring_offsets[:-1], sizes)
-    j = np.arange(ring_points.size, dtype=np.int64) - first
-    following = first + (j + 1) % np.repeat(sizes, sizes)
-    # Triangles (first, j, j + 1) for j from 1 to size - 2 of each ring.
-    fan = (j >= 1) & (j <= np.repeat(sizes, sizes) - 2)
-    a = x[ring_points[first[fan]]]
-    b = x[ring_points[np.flatnonzero(fan)]]
-    c = x[ring_points[following[fan]]]
-    signed = np.einsum("ij,ij->i", a, np.cross(b, c))
-    ring_of = np.repeat(np.arange(sizes.size), sizes)[fan]
-    per_ring = np.bincount(ring_of, signed, minlength=sizes.size)
-    cell_of = np.repeat(np.arange(count.size), count)
-    volumes = np.bincount(cell_of, per_ring, minlength=count.size)
-    return int(np.count_nonzero(volumes < 0))
+    cpu = tack.device("cpu")
+
+    def wrapped(host, dtype, shape=None):
+        host = np.ascontiguousarray(host)
+        return tack.array_from_ptr(host, shape or host.shape, dtype, device=cpu)
+
+    x = _vtk_points(grid)
+    cell_rings = np.concatenate([[0], np.cumsum(count)]).astype(np.int64)
+    negative = tack.empty((count.size,), tack.u8, device=cpu)
+    _negative_volumes(wrapped(x, tack.vec(3, from_numpy_dtype(x.dtype)), (x.shape[0],)),
+                      wrapped(cell_rings, tack.i64),
+                      wrapped(np.asarray(ring_offsets, np.int64), tack.i64),
+                      wrapped(ring_points, from_numpy_dtype(ring_points.dtype)), negative)
+    return int(np.count_nonzero(negative.numpy()))
 
 
 def _inside_out_polyhedra(grid, topology, listed, orient):
@@ -1216,6 +1290,17 @@ def vtk_to_dataset(grid, dtype=_DEFAULT_FLOAT, polyhedral=None, orient=False, id
     be shared -- an origin to subtract, a type to convert, triangle strips,
     collapsed hexahedra, polyhedra -- is copied as before.
 
+    With a discrete GPU (CUDA, HIP, Level Zero) the default device, an unstructured
+    grid of linear shapes and polyhedra is converted there: VTK's arrays are copied
+    to the device once (ids narrowed to the topology's type on the host first) and
+    the merge of ``merge_points``, the screen and repair of inside-out cells and the
+    matching of polyhedra's faces run on it, giving the dataset the host conversion
+    gives, bit for bit (``_device_read``). What it does not do -- a merge with a
+    tolerance, ``polyhedral``, ``copy=False``, polylines or polygons, higher orders,
+    collapsed hexahedra to convert, polyhedra to turn outward -- the host conversion
+    does, its arrays then copied to the device. The CPU and Metal convert on the
+    host.
+
     A grid whose points, offsets, connectivity or data arrays are in a GPU's
     memory (VTK's device arrays, as ``array_to_vtk`` makes) is made on that
     device instead, whatever the default device (the default if it is of that
@@ -1287,6 +1372,22 @@ def _far_origin(grid):
 #: A VTK hexahedron's edges, as pairs of its corners.
 _HEXAHEDRON_EDGES = ((0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4),
                      (0, 4), (1, 5), (2, 6), (3, 7))
+_HEXAHEDRON_EDGE_ENDS = tack.constant(tuple(k for edge in _HEXAHEDRON_EDGES for k in edge),
+                                      tack.i32)
+
+
+@tack.kernel
+def _collapsed_edges(types, offsets, connectivity, flags):
+    # 1 for a hexahedron with an edge whose two corners are one point.
+    for c in range(flags.shape[0]):
+        flag = 0
+        if types[c] == 12:
+            s = offsets[c]
+            for e in range(12):
+                if (connectivity[s + _HEXAHEDRON_EDGE_ENDS[2 * e]]
+                        == connectivity[s + _HEXAHEDRON_EDGE_ENDS[2 * e + 1]]):
+                    flag = 1
+        flags[c] = flag
 
 
 def _collapsed_hexahedra(types, offsets, connectivity):
@@ -1304,24 +1405,29 @@ def _collapsed_hexahedra(types, offsets, connectivity):
     def host(values):
         return np.asarray(values if isinstance(values, np.ndarray) else to_host(values))
 
+    from tack.lang.types import from_numpy_dtype
+
     t = host(types).reshape(-1)
-    hexes = np.flatnonzero(t == 12)
-    if not len(hexes):
-        return None
-    o = host(offsets).astype(np.int64)
+    o = host(offsets).astype(np.int64, copy=False)
     c = host(connectivity)
     # Every collapse converted below joins an edge's two corners, so only rows with
     # a collapsed edge need the sort -- in most meshes none, and the 21M rows of a
-    # large mesh are not sorted for nothing.
-    corner = [c[o[hexes] + k] for k in range(8)]
-    collapsed = np.zeros(len(hexes), bool)
-    for a, b in _HEXAHEDRON_EDGES:
-        collapsed |= corner[a] == corner[b]
-    if not collapsed.any():
+    # large mesh are not sorted for nothing. They are found by a kernel over the
+    # arrays where they lie (NumPy's columns of corners took 0.6 s on AhmedML).
+    cpu = tack.device("cpu")
+
+    def wrapped(values):
+        values = np.ascontiguousarray(values)
+        return tack.array_from_ptr(values, values.shape, from_numpy_dtype(values.dtype),
+                                   device=cpu)
+
+    flags = tack.empty((t.size,), tack.u8, device=cpu)
+    if t.size:
+        _collapsed_edges(wrapped(t), wrapped(o), wrapped(c), flags)
+    hexes = np.flatnonzero(flags.numpy())
+    if not len(hexes):
         return None
-    hexes = hexes[collapsed]
-    rows = np.stack([column[collapsed] for column in corner], axis=1)
-    del corner
+    rows = c[o[hexes][:, None] + np.arange(8)]
     ordered = np.sort(rows, axis=1)
     distinct = 1 + (np.diff(ordered, axis=1) != 0).sum(axis=1)
     if (distinct == 8).all():
@@ -1447,8 +1553,10 @@ def _merged_grid(grid, tolerance):
     apart made one -- as a mesh written per processor (OpenFOAM's) repeats every
     point on a processor boundary -- before Tack reads it, so faces are matched,
     cells oriented and pieces' owners decided once, on the merged points. The
-    merge is ``merge_points``' (``_merged_ids``, through a Tack point cloud of
-    the positions as VTK holds them); each set becomes its smallest point, which
+    merge is ``merge_points``': with no tolerance, equal coordinates sorted from
+    VTK's own array (``_equal_labels``); with one, ``_merged_ids`` through a Tack
+    point cloud of the positions as VTK holds them. Each set becomes its smallest
+    point, which
     keeps its point data. The cells, and the polyhedra's faces, are the same on
     the merged points; cell and field data are shared."""
     import numpy as np
@@ -1460,31 +1568,38 @@ def _merged_grid(grid, tolerance):
     )
     from vtkmodules.vtkCommonDataModel import vtkCellArray, vtkUnstructuredGrid
 
-    from tack.dataset import point_cloud
-    from tack.dataset.algorithms.merge_points import _merged_ids
+    from tack.dataset import ids, point_cloud
+    from tack.dataset.algorithms.merge_points import _equal_labels, _merged_ids, _numbered_roots
 
     n = grid.number_of_points
     x = np.asarray(grid.GetPoints().GetData())
     exact = tack.f64 if x.dtype == np.float64 else tack.f32
-    new_id, kept, count = _merged_ids(point_cloud(x, origin=(0.0, 0.0, 0.0), dtype=exact),
-                                      float(tolerance))
+    if float(tolerance) == 0 and n:
+        # Equal coordinates: sorted, from VTK's own array, without a point cloud.
+        dtype = ids.at_least(tack.i32, n + 1)
+        labels = _equal_labels(tack.array(x, tack.vec3(exact)), dtype, host=x)
+        new_id, kept, count = _numbered_roots(labels, n, dtype)
+    else:
+        new_id, kept, count = _merged_ids(point_cloud(x, origin=(0.0, 0.0, 0.0),
+                                                      dtype=exact), float(tolerance))
     if count == n:
         return grid
     new_id = new_id.numpy()[:n]
     kept = kept.numpy()
     out = vtkUnstructuredGrid()
     out.points = vtkPoints(data=(vtkDoubleArray if x.dtype == np.float64
-                                 else vtkFloatArray)(np.ascontiguousarray(x[kept])))
+                                 else vtkFloatArray)(_host_take(x, kept)))
     stored = grid.GetCells()
     cells = vtkCellArray(offsets=np.asarray(stored.offsets_array, np.int64),
-                         connectivity=new_id[np.asarray(stored.connectivity_array)]
-                         .astype(np.int64))
+                         connectivity=_host_take(new_id, np.asarray(stored.connectivity_array),
+                                                 dtype=np.int64))
     types = vtkUnsignedCharArray(np.asarray(grid.cell_types, np.uint8))
     faces = grid.polyhedron_faces
     if faces is not None and faces.GetNumberOfCells():
         renumbered = vtkCellArray(
             offsets=np.asarray(faces.offsets_array, np.int64),
-            connectivity=new_id[np.asarray(faces.connectivity_array)].astype(np.int64))
+            connectivity=_host_take(new_id, np.asarray(faces.connectivity_array),
+                                    dtype=np.int64))
         out.SetPolyhedralCells(types, cells, grid.polyhedron_face_locations, renumbered)
     else:
         out.SetCells(types, cells)
@@ -1494,10 +1609,44 @@ def _merged_grid(grid, tolerance):
     return out
 
 
+@tack.kernel
+def _take_rows(src, rows, width, out):
+    # Rows of width values each, gathered: out's row i is src's row rows[i].
+    for i in range(rows.shape[0]):
+        r = tack.i64(rows[i])
+        for c in range(width):
+            out[i * width + c] = src[r * width + c]
+
+
+def _host_take(values, rows, out=None, dtype=None):
+    """``values[rows]`` (host arrays; ``values`` rows of any width), gathered by a Tack
+    kernel on the CPU over the arrays where they lie -- into ``out`` (VTK's memory,
+    say) or a new NumPy array of ``dtype`` -- rather than by NumPy's one thread: the
+    point data and connectivity a merge reads moved 0.8 s faster on AhmedML."""
+    import numpy as np
+
+    from tack.lang.types import from_numpy_dtype
+
+    values = np.ascontiguousarray(values)
+    rows = np.ascontiguousarray(rows)
+    if out is None:
+        out = np.empty((rows.shape[0], *values.shape[1:]), dtype or values.dtype)
+    width = int(np.prod(values.shape[1:], dtype=np.int64))
+    if rows.shape[0] and width:
+        cpu = tack.device("cpu")
+
+        def flat(host, writable=False):
+            return tack.array_from_ptr(host, (host.size,), from_numpy_dtype(host.dtype),
+                                       device=cpu, writable=writable)
+
+        _take_rows(flat(values), flat(rows), width, flat(out, True))
+    return out
+
+
 def _take_cell_data(source, target, rows):
     """``target`` (empty) given ``source``'s arrays at ``rows``, each its own class,
     name, component names and information (``UNITS_LABEL``), and active where
-    ``source``'s was: a NumPy gather per array, where ``CopyData`` takes a
+    ``source``'s was: a gather per array (``_host_take``), where ``CopyData`` takes a
     ``vtkIdList`` filled one id at a time. An array that is not numeric (strings) is
     copied by ``InsertTuples`` through such a list."""
     import numpy as np
@@ -1518,7 +1667,7 @@ def _take_cell_data(source, target, rows):
             values, taken = np.asarray(array), np.asarray(out)
             if values.dtype.kind == "S":            # a vtkCharArray, read as bytes
                 values, taken = values.view(np.int8), taken.view(np.int8)
-            taken[...] = values[rows]
+            _host_take(values, rows, out=taken)
         else:
             if listed is None:
                 listed = vtkIdList()
@@ -1600,8 +1749,20 @@ def _vtk_to_dataset(grid, dtype=tack.f32, polyhedral=None, orient=False, id_dtyp
         pieces = (grid.GetPartition(i) for i in range(grid.number_of_partitions))
         return PartitionedDataSet(vtk_to_dataset(piece, **options)
                                   for piece in pieces if piece is not None)
+    if isinstance(grid, vtkUnstructuredGrid) and not share:
+        # A discrete GPU the default device: VTK's arrays there once, the work
+        # there (``_device_read``), where it is what this conversion would do.
+        from tack.interop.vtk import _device_read
+
+        converted = _device_read.convert(grid, options, shift)
+        if converted is not None:
+            return converted
+    # A merge's point data is the conversion's alone: taken over, not copied.
+    merged = False
     if isinstance(grid, vtkUnstructuredGrid) and merge_points not in (None, False):
+        given = grid
         grid = _merged_grid(grid, 0.0 if merge_points is True else merge_points)
+        merged = grid is not given
         options["merge_points"] = None                   # merged: the pieces need not be
     device = _device
     if share and device is None:
@@ -1752,7 +1913,8 @@ def _vtk_to_dataset(grid, dtype=tack.f32, polyhedral=None, orient=False, id_dtyp
     # The classic calls: the pythonic ``point_data``/``cell_data`` set attributes on the
     # wrappers, which VTK 9.7.1 then keeps as ghosts and sweeps on every later wrap.
     point_data, cell_data = grid.GetPointData(), grid.GetCellData()
-    fields = _attributes_to_fields(point_data, H1(topology), dtype, share, device)
+    fields = _attributes_to_fields(point_data, H1(topology), dtype, share, device,
+                                   owned=merged)
     for name, field in _attributes_to_fields(cell_data, Constant(topology), dtype,
                                              share, device).items():
         # A point array and a cell array of one name are two fields of that name.
@@ -1825,7 +1987,9 @@ def _points_geometry(grid, shift, dtype, share, device=None):
         shared = _shared(host, tack.vec(3, dtype))
         if shared is not None:
             return shared, dtype
-    return host - shift, dtype
+    # Subtracted in double precision where there is an origin; without one VTK's
+    # points as they are, which the dataset copies into ``dtype`` once.
+    return (host - shift if np.any(shift) else host), dtype
 
 
 def _shared_ids(values):

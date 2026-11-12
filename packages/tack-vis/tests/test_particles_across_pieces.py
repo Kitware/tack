@@ -338,7 +338,7 @@ def test_a_velocity_read_on_each_piece():
     for seed, (x, steps, status, time) in want.items():
         np.testing.assert_array_equal(got[seed][0], x)
         assert got[seed][1:] == (steps, status, time)
-    assert velocity.calls >= len(pieces)
+    assert velocity.calls == len(pieces)
     lines = td.streamlines(pieces, _Velocity(), SEEDS[:4], 0.02, 200)
     named = td.streamlines(pieces, "v", SEEDS[:4], 0.02, 200)
     assert [p.num_points for p in lines] == [p.num_points for p in named]

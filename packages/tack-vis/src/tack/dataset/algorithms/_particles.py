@@ -249,7 +249,7 @@ def _rounds(data, field, seeds, step_size, steps, integrator, record, unit="time
                 locators[g] = cached_locator(piece)
     boxes = _boxes(blocks, pieces, locators)
     pending = _seeded(blocks, seeds, origin)
-    time_unit = _time_unit(data, field, fields)
+    time_unit = _time_unit(data, field, resolved)
     finished = {g: [] for g in blocks.local}
     traced = {g: [] for g in blocks.local}
     for _ in range(int(steps) + 2):

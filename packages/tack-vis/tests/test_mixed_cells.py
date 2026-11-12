@@ -563,6 +563,7 @@ def test_extract_cells_of_a_mixed_vtk_mesh_goes_back_to_vtk():
 #: same mesh as all polyhedra: what needs a reference element in every cell.
 READY = {
     "contour_1d", "threshold", "extract_geometry", "extract_cells", "extract_extent", "mask",
+    "finite_differences", "finite_differences_hessian",
     "mask_points", "threshold_points", "extract_points", "boundary_faces", "extract_edges",
     "tubes", "glyphs", "warp", "transform", "cylindrical", "spherical", "cell_ids",
     "point_ids", "face_centers", "edge_lengths", "magnitude", "log_values", "dot", "cross",

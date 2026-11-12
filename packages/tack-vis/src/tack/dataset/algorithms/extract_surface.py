@@ -223,8 +223,8 @@ def _fresh_boundary(data, fields):
     faces), fields or a geometry above order 1 (whose surface nodes come
     through the faces), or buckets too crowded to sort a thread each
     (``topology._face_buckets_affordable``). The topology keeps what it found
-    (``_boundary``), so a repeated call costs only the carry, as it did when
-    the first call derived the faces. The surface is on the points it uses
+    (``_boundary``), so a repeated call costs only the carry; the boundary found
+    from the derived faces is kept there in the same way. The surface is on the points it uses
     (``_used_points``), renumbered once."""
     from tack.dataset.topology import (
         _face_bucket_counts,
@@ -239,7 +239,7 @@ def _fresh_boundary(data, fields):
             or any(isinstance(f.space, H1) and f.space.order != 1
                    for f in (data.geometry, *data.fields.values()))):
         return None
-    if topology._boundary is not None:
+    if topology._boundary is not None and topology._boundary[0] == "cells":
         return _on_boundary(data, fields)
     groups = [g for g in topology.groups() if g.shape.NUM_FACES and g.shape.DIMENSION == 3]
     starts = np.concatenate([[0], np.cumsum([g.count * g.shape.NUM_FACES
@@ -301,25 +301,27 @@ def _fresh_boundary(data, fields):
                                connectivity, cells)
     count, points = _used_points(connectivity, data.num_points, idt)
     surface = UnstructuredTopology(types, offsets, connectivity, num_points=count)
-    topology._boundary = (surface, cells, points, None)
+    topology._boundary = ("cells", surface, {"points": Take(points), "cells": Pieces(cells)},
+                          None)
     return _on_boundary(data, fields)
 
 
 def _on_boundary(data, fields):
     """The boundary ``data.topology._boundary`` holds, with ``data``'s fields carried
-    to it. The surface's geometry is kept there too, with the geometry and the
-    positions' revision it was taken from, so a repeated call on the same mesh
-    gives the same surface geometry, and what is kept with that (``mesh_kept``:
-    its normals) is computed once."""
+    to it by its maps. It was found from the cells alone (``"cells"``,
+    ``_fresh_boundary``) or from the derived faces (``"faces"``, which carries face
+    fields too). The surface's geometry is kept there as well, with the geometry
+    and the positions' revision it was taken from, so a repeated call on the same
+    mesh gives the same surface geometry, and what is kept with that
+    (``mesh_kept``: its normals) is computed once."""
     topology = data.topology
-    surface, cells, points, kept = topology._boundary
+    kind, surface, maps, kept = topology._boundary
     source = (data.geometry, arrays._revision(data.geometry.values))
     geometry = None
     if kept is not None and kept[0][0] is source[0] and kept[0][1] == source[1]:
         geometry = kept[1]
-    out = carry(data, surface, points=Take(points), cells=Pieces(cells), geometry=geometry,
-                fields=fields)
-    topology._boundary = (surface, cells, points, (source, out.geometry))
+    out = carry(data, surface, geometry=geometry, fields=fields, **maps)
+    topology._boundary = (kind, surface, maps, (source, out.geometry))
     return out
 
 
@@ -384,8 +386,15 @@ def extract_surface(data, faces=None, fields=None):
         fresh = _fresh_boundary(data, fields)
         if fresh is not None:
             return fresh
+        kept = data.topology._boundary
+        if kept is not None and kept[0] == "faces" and not (
+                data.topology.dimension == 3 and _has_order_two(data, fields)):
+            return _on_boundary(data, fields)
         from tack.dataset.algorithms.boundary_faces import boundary_faces
         faces = boundary_faces(data)
+        boundary = True
+    else:
+        boundary = False
     ids = _face_ids(data, faces)
     topology = data.topology
     if not getattr(topology, "reference_cells", True) and not topology.mixed:
@@ -424,8 +433,12 @@ def extract_surface(data, faces=None, fields=None):
         return _on_used_points(out)
     count, points = _used_points(connectivity, data.num_points, idt)
     surface = UnstructuredTopology(types, offsets, connectivity, num_points=count)
-    return carry(data, surface, points=Take(points), cells=Pieces(cells),
-                 faces_to_cells=Take(ids), fields=fields)
+    maps = {"points": Take(points), "cells": Pieces(cells), "faces_to_cells": Take(ids)}
+    if boundary:
+        # The boundary is the topology's own: kept with it, as the fresh one is.
+        data.topology._boundary = ("faces", surface, maps, None)
+        return _on_boundary(data, fields)
+    return carry(data, surface, fields=fields, **maps)
 
 
 @tack.kernel

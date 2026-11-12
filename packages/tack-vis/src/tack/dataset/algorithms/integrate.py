@@ -12,7 +12,7 @@ import numpy as np
 
 import tack
 from tack import arrays
-from tack.dataset import shapes, units
+from tack.dataset import shapes, units, views
 from tack.dataset.algorithms._common import _field, _with_basis
 from tack.dataset.algorithms.cell_geometry import _signed_twice_area
 from tack.dataset.dataset import Field, is_field_key
@@ -85,6 +85,247 @@ def _cell_integrals(cells, u, points, weights, out):
     for c in cells:
         total, _ = _cell_integral(cells, u, c, points, weights)
         out[cells.entity_id(c)] = total
+
+
+@tack.device_class
+class _Rule:
+    """A Gauss rule of ``N`` points along an axis on [0, 1] (``points``, ``weights``),
+    for a field of ``W`` components (1 a scalar), for ``_tensor_integrals``: ``N``
+    and ``W`` class constants, so its local arrays have a size (``_rule``, one class
+    per pair)."""
+
+    N = 1
+    W = 1
+
+    def __init__(self, points, weights):
+        self.points = points
+        self.weights = weights
+
+
+_rules = {}
+
+
+def _rule(data, n, width=1):
+    """The ``n``-point Gauss-Legendre rule on [0, 1] as a ``_Rule`` for ``width``
+    components, in the geometry's float type."""
+    key = (int(n), int(width))
+    if key not in _rules:
+        _rules[key] = type(f"_Rule{n}x{width}", (_Rule,), {"N": key[0], "W": key[1]})
+    x, w = np.polynomial.legendre.leggauss(int(n))
+    dtype = data.dtype.numpy_dtype
+    return _rules[key](tack.array(((x + 1) / 2).astype(dtype)), tack.array((w / 2).astype(dtype)))
+
+
+@tack.func
+def _basis_at_rule(u, rule, line, b):
+    # The 1D basis at the rule's points: b[q p + i], p = u.ORDER + 1.
+    p = u.ORDER + 1
+    for q in range(rule.N):
+        u.lagrange_values(rule.points[q], line)
+        for i in range(p):
+            b[q * p + i] = line[i]
+
+
+@tack.func
+def _along_x_and_y(b, coeffs, xs, xys, n, p, d):
+    # Component d's cell values (coeffs from d p^3, node i + p (j + p k)) contracted
+    # along x and y, into xys from d n^2 p: xys[(qx n + qy) p + k] = sum_ij b[qx, i]
+    # b[qy, j] coeffs[i + p (j + p k)] (xs, n p^2, between).
+    at = d * p * p * p
+    for qx in range(n):
+        for jk in range(p * p):
+            v = b[qx * p] * coeffs[at + jk * p]
+            for i in range(1, p):
+                v += b[qx * p + i] * coeffs[at + jk * p + i]
+            xs[qx * p * p + jk] = v
+    to = d * n * n * p
+    for qx in range(n):
+        for qy in range(n):
+            for k in range(p):
+                v = b[qy * p] * xs[qx * p * p + k * p]
+                for j in range(1, p):
+                    v += b[qy * p + j] * xs[qx * p * p + k * p + j]
+                xys[to + (qx * n + qy) * p + k] = v
+
+
+@tack.func
+def _along_z(b, xys, n, p, d, qx, qy, qz):
+    # Component d's value at point (qx, qy, qz): xys contracted along z.
+    at = d * n * n * p + (qx * n + qy) * p
+    v = b[qz * p] * xys[at]
+    for k in range(1, p):
+        v += b[qz * p + k] * xys[at + k]
+    return v
+
+
+@tack.device_class
+class _PointElements:
+    """The measure element at each of a rule's points from the geometry's Jacobian
+    there, a point at a time: any geometry of hexahedra or voxels."""
+
+    @tack.func
+    def fill(self, cells, c, rule, out):
+        # out[(qz N + qy) N + qx]: |det J| at point (qx, qy, qz).
+        n = rule.N
+        for qz in range(n):
+            for qy in range(n):
+                for qx in range(n):
+                    pc = tack.vec3(rule.points[qx], rule.points[qy], rule.points[qz])
+                    out[(qz * n + qy) * n + qx] = _element(cells.geometry_jacobian(c, pc), 3)
+
+
+@tack.device_class
+class _TensorElements:
+    """The measure element at each of a rule's points by sum factorization, for a
+    curved geometry in a tensor basis (``views._TensorGeometry``, ORDER + 1 = g
+    nodes an axis): its node positions (less node 0's, as its own Jacobian takes
+    them, so f32 keeps thin cells) contracted along x by the 1D basis' values and
+    derivatives, then along y, keeping the three products a column needs; each
+    column of J at a point is then one contraction along z."""
+
+    @tack.func
+    def fill(self, cells, c, rule, out):
+        g = cells.ORDER + 1
+        n = rule.N
+        line = tack.local_array_like(cells.basis_nodes, cells.ORDER + 1)
+        vb = tack.local_array_like(cells.basis_nodes, rule.N * (cells.ORDER + 1))
+        db = tack.local_array_like(cells.basis_nodes, rule.N * (cells.ORDER + 1))
+        for q in range(n):
+            cells.lagrange_values(rule.points[q], line)
+            for i in range(g):
+                vb[q * g + i] = line[i]
+            cells.lagrange_derivatives(rule.points[q], line)
+            for i in range(g):
+                db[q * g + i] = line[i]
+        cube = g * g * g
+        pos = tack.local_array_like(cells.basis_nodes, 3 * (cells.ORDER + 1) * (cells.ORDER + 1)
+                                    * (cells.ORDER + 1))
+        first = cells.get(cells.dof_index(c, 0))
+        for m in range(cube):
+            x = cells.get(cells.dof_index(c, m)) - first
+            pos[m] = x[0]
+            pos[cube + m] = x[1]
+            pos[2 * cube + m] = x[2]
+        # Along x, by values (xv) and derivatives (xd): [qx g^2 + j + g k] a coordinate.
+        xv = tack.local_array_like(cells.basis_nodes, rule.N * (cells.ORDER + 1) * (cells.ORDER + 1))
+        xd = tack.local_array_like(cells.basis_nodes, rule.N * (cells.ORDER + 1) * (cells.ORDER + 1))
+        # Along y: vv (value, value), vd (x value, y derivative), dv (x derivative, y
+        # value), each [((a n + qx) n + qy) g + k] for coordinate a.
+        vv = tack.local_array_like(cells.basis_nodes, 3 * rule.N * rule.N * (cells.ORDER + 1))
+        vd = tack.local_array_like(cells.basis_nodes, 3 * rule.N * rule.N * (cells.ORDER + 1))
+        dv = tack.local_array_like(cells.basis_nodes, 3 * rule.N * rule.N * (cells.ORDER + 1))
+        for a in range(3):
+            for qx in range(n):
+                for jk in range(g * g):
+                    at = a * cube + jk * g
+                    sv = vb[qx * g] * pos[at]
+                    sd = db[qx * g] * pos[at]
+                    for i in range(1, g):
+                        sv += vb[qx * g + i] * pos[at + i]
+                        sd += db[qx * g + i] * pos[at + i]
+                    xv[qx * g * g + jk] = sv
+                    xd[qx * g * g + jk] = sd
+            for qx in range(n):
+                for qy in range(n):
+                    for k in range(g):
+                        at = qx * g * g + k * g
+                        s_vv = vb[qy * g] * xv[at]
+                        s_vd = db[qy * g] * xv[at]
+                        s_dv = vb[qy * g] * xd[at]
+                        for j in range(1, g):
+                            s_vv += vb[qy * g + j] * xv[at + j]
+                            s_vd += db[qy * g + j] * xv[at + j]
+                            s_dv += vb[qy * g + j] * xd[at + j]
+                        to = ((a * n + qx) * n + qy) * g + k
+                        vv[to] = s_vv
+                        vd[to] = s_vd
+                        dv[to] = s_dv
+        for qz in range(n):
+            for qy in range(n):
+                for qx in range(n):
+                    m = tack.mat3([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0])
+                    for a in range(3):
+                        at = ((a * n + qx) * n + qy) * g
+                        jx = vb[qz * g] * dv[at]
+                        jy = vb[qz * g] * vd[at]
+                        jz = db[qz * g] * vv[at]
+                        for k in range(1, g):
+                            jx += vb[qz * g + k] * dv[at + k]
+                            jy += vb[qz * g + k] * vd[at + k]
+                            jz += db[qz * g + k] * vv[at + k]
+                        m[a, 0] = jx
+                        m[a, 1] = jy
+                        m[a, 2] = jz
+                    out[(qz * n + qy) * n + qx] = abs(m.determinant())
+
+
+@tack.kernel
+def _tensor_integrals(cells, u, rule, geo, out):
+    # Each hexahedron's integral of a scalar field in a tensor basis (u, ORDER + 1 = p
+    # nodes an axis, x fastest) on the rule's N^3 points, by sum factorization: the
+    # 1D basis at the rule's points once, the cell's values contracted one axis at a
+    # time (p^3 -> N p^2 -> N^2 p -> one value a point), so a point costs p
+    # multiply-adds rather than p^3; then the weights times the measure element at
+    # each point, as _cell_integrals.
+    for c in cells:
+        p = u.ORDER + 1
+        n = rule.N
+        line = tack.local_array_like(u.basis_nodes, u.ORDER + 1)
+        b = tack.local_array_like(u.basis_nodes, rule.N * (u.ORDER + 1))
+        coeffs = tack.local_array_like(u.basis_nodes, (u.ORDER + 1) * (u.ORDER + 1) * (u.ORDER + 1))
+        xs = tack.local_array_like(u.basis_nodes, rule.N * (u.ORDER + 1) * (u.ORDER + 1))
+        xys = tack.local_array_like(u.basis_nodes, rule.N * rule.N * (u.ORDER + 1))
+        elements = tack.local_array_like(u.basis_nodes, rule.N * rule.N * rule.N)
+        geo.fill(cells, c, rule, elements)
+        _basis_at_rule(u, rule, line, b)
+        u.dofs_into(c, coeffs)
+        _along_x_and_y(b, coeffs, xs, xys, n, p, 0)
+        total = rule.weights[0] * 0.0
+        for qz in range(n):
+            for qy in range(n):
+                for qx in range(n):
+                    w = (rule.weights[qx] * rule.weights[qy] * rule.weights[qz]
+                         * elements[(qz * n + qy) * n + qx])
+                    total += w * _along_z(b, xys, n, p, 0, qx, qy, qz)
+        out[cells.entity_id(c)] = total
+
+
+@tack.kernel
+def _tensor_vector_integrals(cells, u, rule, geo, out):
+    # _tensor_integrals for a field of rule.W components: each component's values
+    # gathered into its own block and contracted alone; the measure elements once
+    # for all of them.
+    for c in cells:
+        p = u.ORDER + 1
+        n = rule.N
+        cube = p * p * p
+        line = tack.local_array_like(u.basis_nodes, u.ORDER + 1)
+        b = tack.local_array_like(u.basis_nodes, rule.N * (u.ORDER + 1))
+        coeffs = tack.local_array_like(
+            u.basis_nodes, rule.W * (u.ORDER + 1) * (u.ORDER + 1) * (u.ORDER + 1))
+        xs = tack.local_array_like(u.basis_nodes, rule.N * (u.ORDER + 1) * (u.ORDER + 1))
+        xys = tack.local_array_like(u.basis_nodes, rule.W * rule.N * rule.N * (u.ORDER + 1))
+        totals = tack.local_array_like(u.basis_nodes, rule.W)
+        elements = tack.local_array_like(u.basis_nodes, rule.N * rule.N * rule.N)
+        geo.fill(cells, c, rule, elements)
+        _basis_at_rule(u, rule, line, b)
+        for m in range(cube):
+            v = u.dof(c, m)
+            for d in range(rule.W):
+                coeffs[d * cube + m] = v[d]
+        for d in range(rule.W):
+            _along_x_and_y(b, coeffs, xs, xys, n, p, d)
+            totals[d] = rule.weights[0] * 0.0
+        for qz in range(n):
+            for qy in range(n):
+                for qx in range(n):
+                    w = (rule.weights[qx] * rule.weights[qy] * rule.weights[qz]
+                         * elements[(qz * n + qy) * n + qx])
+                    for d in range(rule.W):
+                        totals[d] += w * _along_z(b, xys, n, p, d, qx, qy, qz)
+        e = cells.entity_id(c)
+        for d in range(rule.W):
+            out[e][d] = totals[d]
 
 
 @tack.kernel
@@ -524,6 +765,28 @@ def cell_measures(data, n=None):
     return measures, centroids
 
 
+def _group_integrals(data, field, group, order, out):
+    """``group``'s cells' integrals of ``field`` into ``out``, on the fewest Gauss
+    points exact for the shape: by sum factorization (``_tensor_integrals``,
+    ``_tensor_vector_integrals``) for a field in a tensor basis on hexahedra or
+    voxels, its measure element too on a curved tensor geometry (``_TensorElements``);
+    by a value a point (``_cell_integrals``) otherwise."""
+    cells = data.domain_view("cells", group)
+    view = field.view(group)
+    n = _per_axis(group.shape, _points_per_axis(data, order, group.shape))
+    width = arrays.width_of(field.values)
+    if group.shape in _TENSOR and group.shape.DIMENSION == 3 and isinstance(
+            view, views._TensorBasis):
+        geo = _TensorElements() if isinstance(cells, views._TensorGeometry) else \
+            _PointElements()
+        if width:
+            _tensor_vector_integrals(cells, view, _rule(data, n, width), geo, out)
+        else:
+            _tensor_integrals(cells, view, _rule(data, n), geo, out)
+    else:
+        _cell_integrals(cells, view, *_tables(data, group.shape, n), out)
+
+
 def _cell_values(data, field):
     """Each cell's integral of ``field`` (a field with a basis), by quadrature."""
     field = _with_basis(data, field)
@@ -536,9 +799,7 @@ def _cell_values(data, field):
         if group.count and group.shape.DIMENSION == top:
             # The fewest points exact for the shape (2 an axis on a hexahedron for
             # order 1, not the 4 a collapsed rule needs).
-            n = _per_axis(group.shape, _points_per_axis(data, order, group.shape))
-            _cell_integrals(data.domain_view("cells", group), field.view(group),
-                            *_tables(data, group.shape, n), out)
+            _group_integrals(data, field, group, order, out)
     return out
 
 
@@ -596,8 +857,7 @@ def _mixed_cell_values(data, field, measures):
             continue
         cells = data.domain_view("cells", group)
         if group.shape.REFERENCE:
-            n = _per_axis(group.shape, _points_per_axis(data, order, group.shape))
-            _cell_integrals(cells, field.view(group), *_tables(data, group.shape, n), out)
+            _group_integrals(data, field, group, order, out)
         elif isinstance(space, Constant):
             _times_measures(cells, values, measures, out)
         elif group.shape.DIMENSION == 3:

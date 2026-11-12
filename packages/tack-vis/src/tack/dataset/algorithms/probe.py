@@ -211,12 +211,13 @@ def probe(data, where, fields=None, locator=None):
             values.fill(0)
             order, links = by_cell()
             for group in data.launch_groups("cells", [f]):
-                if (group.count and locator.moved_cell_points is not None
+                fanned = not group.shape.REFERENCE      # beside shapes, in a mixed mesh
+                if (group.count and fanned and locator.moved_cell_points is not None
                         and isinstance(space, H1)):
                     _evaluate_in_moved_tets(data.domain_view("cells", group), f.view(group),
                                             *locator.moved_cell_points, links, order, tets,
                                             pcs, values)
-                elif group.count and locator.polyhedral:
+                elif group.count and fanned:
                     _evaluate_in_tets(data.domain_view("cells", group), f.view(group), links,
                                       order, tets, pcs, values)
                 elif group.count:
@@ -268,6 +269,28 @@ def _held_box(piece, locator):
     return lower - grow, upper + grow
 
 
+def _schema(probed):
+    """``[(name, element type, unit)]`` of what a probe gives back."""
+    return [(n, f.values.dtype, f.unit) for n, f in probed.fields.items()]
+
+
+def _one_schema(schemas, kind):
+    """What probes of the pieces give back, the same from each (``kind``:
+    ``"partition"`` or ``"rank"``, where they came from): one schema, each field's
+    unit the one of all (``units.common``: unknown where one is), else
+    ``ValueError`` naming the first that differs."""
+    first = schemas[0]
+    for k, other in enumerate(schemas[1:], 1):
+        if [(n, d) for n, d, _ in other] != [(n, d) for n, d, _ in first]:
+            raise ValueError(
+                f"probe of a PartitionedDataSet needs the same fields, of the same types, "
+                f"on every piece: {kind} 0's give {[(n, str(d)) for n, d, _ in first]}, "
+                f"{kind} {k}'s {[(n, str(d)) for n, d, _ in other]} (choose fields=)")
+    return [(n, d, units.common(f"probe of a PartitionedDataSet's field {n!r}",
+                                [schema[i][2] for schema in schemas]))
+            for i, (n, d, _) in enumerate(first)]
+
+
 def _probe_pieces(data, where, fields, levels=None):
     """``probe`` with a partitioned source (``probe``'s docstring). With ``levels``
     (each local piece's AMR level), a point two pieces' cells hold goes to the
@@ -283,6 +306,7 @@ def _probe_pieces(data, where, fields, levels=None):
             pieces.append(visible(piece))
     many = isinstance(where, PartitionedDataSet)
     empties = []
+    local = []                               # this rank's pieces' one schema
 
     def check():
         # What each piece gives back, from a probe of no points, refuses a piece
@@ -291,6 +315,10 @@ def _probe_pieces(data, where, fields, levels=None):
         for piece in pieces:
             with piece.device:
                 empties.append(probe(piece, np.zeros((0, 3)), fields))
+        # Every piece gives back the same fields, of one type and unit each: each
+        # point's values are a piece's, and one output field holds them all.
+        if empties:
+            local.append(_one_schema([_schema(empty) for empty in empties], "partition"))
         for target in (where if many else [where]):
             if isinstance(target, DataSet) and not isinstance(target.geometry.space, H1):
                 raise TypeError("probe needs the probed points: an H1 geometry")
@@ -300,10 +328,12 @@ def _probe_pieces(data, where, fields, levels=None):
     # the pieces' geometry, from a rank that has pieces: every rank needs them,
     # one without pieces too, which probes through the others' and receives
     # their answers.
-    mine = None
-    if pieces:
-        mine = [(n, f.values.dtype, f.unit) for n, f in empties[0].fields.items()]
-    given = next((m for m in data.world._allgather(mine) if m is not None), None)
+    mine = local[0] if pieces else None
+    every = data.world._allgather(mine)
+    # Every rank has every rank's, so a mismatch is refused on every rank alike,
+    # before any point is sent.
+    held = [m for m in every if m is not None]
+    given = _one_schema(held, "rank") if held else None
     # A rank with no pieces takes part through a piece of nothing: its block holds
     # no point, and sends its targets to the pieces that do.
     nothing = _stand_in(data, origin)

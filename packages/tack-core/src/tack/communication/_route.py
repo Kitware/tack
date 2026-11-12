@@ -44,13 +44,7 @@ class Routing:
         for g in blocks.local:
             x = self._positions[g]
             asked[g] = {}
-            for d, box in enumerate(every):
-                if box is None or not len(x):
-                    continue
-                lower, upper = box
-                slack = 1e-6 * max(float(np.max(upper - lower)) if len(upper) else 0.0, 1.0)
-                inside = np.all((x >= lower - slack) & (x <= upper + slack), axis=1)
-                rows = np.flatnonzero(inside)
+            for d, rows in _in_boxes(x, every).items():
                 if len(rows):
                     message = _bits(x[rows], blocks.device(g))
                     message["slot"] = tack.array(rows.astype(np.int64), tack.i64,
@@ -97,8 +91,7 @@ class Routing:
         outgoing, self._order = {}, {}
         for g in blocks.local:
             outgoing[g] = {}
-            for d in np.unique(self.destination[g][self.destination[g] >= 0]).tolist():
-                rows = np.flatnonzero(self.destination[g] == d)
+            for d, rows in _by_destination(self.destination[g]):
                 device = blocks.device(g)
                 message = _bits(self._positions[g][rows], device)
                 message["slot"] = tack.array(rows.astype(np.int64), tack.i64, device=device)
@@ -164,6 +157,119 @@ class Routing:
     def _width(self):
         widths = [x.shape[1] for x in self._positions.values() if x.ndim == 2]
         return widths[0] if widths else 3
+
+
+def _by_destination(destination):
+    """``(d, rows)`` for each destination ``d`` of ``destination`` (-1 for none left
+    out), in order of ``d``, each one's rows ascending: one stable sort, not a
+    pass over every point for each destination."""
+    taken = np.flatnonzero(destination >= 0)
+    if not len(taken):
+        return []
+    keys = destination[taken]
+    small = np.int16 if keys.max() < 2 ** 15 else np.int64     # sorted by radix
+    order = taken[np.argsort(keys.astype(small), kind="stable")]
+    sorted_keys = destination[order]
+    cuts = np.flatnonzero(np.diff(sorted_keys)) + 1
+    return [(int(sorted_keys[run[0]]), order[run[0]:run[1]])
+            for run in zip(np.concatenate(([0], cuts)), np.concatenate((cuts, [len(order)])))]
+
+
+def _widened(box):
+    """A box ``(lower, upper)`` widened by its slack: 1e-6 of its largest side, at
+    least 1e-6."""
+    lower, upper = box
+    slack = 1e-6 * max(float(np.max(upper - lower)) if len(upper) else 0.0, 1.0)
+    return lower - slack, upper + slack
+
+
+def _inside(columns, rows, lower, upper):
+    """Which of ``rows`` (indices into ``columns``, the points' coordinates by axis)
+    lie in ``[lower, upper]``, every axis."""
+    keep = np.ones(len(rows), bool)
+    for axis in range(len(lower)):
+        values = columns[axis][rows]
+        keep &= (values >= lower[axis]) & (values <= upper[axis])
+    return rows[keep]
+
+
+#: Boxes up to this many are tested against every point; more are binned.
+_DIRECT_BOXES = 4
+#: Grid cells a box, about: a box's points and those of the cells its corners
+#: cut, which it also tests, about (1 + 1 / 16 ** (1 / 3)) ** 3 = 2 of its own
+#: (8 with 2 cells a box).
+_CELLS_PER_BOX = 16
+
+
+def _in_boxes(x, boxes):
+    """``{d: rows}``: the points of ``x`` (an ``(n, d)`` float64 array) in each box of
+    ``boxes`` (``(lower, upper)``, or ``None`` for a block holding nothing),
+    widened by its slack (``_widened``), the rows in no particular order (a
+    point's rank is its own); boxes holding none of them left out.
+
+    Few boxes are tested against every point. More are binned on a grid over
+    their union, about ``_CELLS_PER_BOX`` cells a box (at most 2**16 cells, so
+    the points sort by cell as 16-bit keys): each point is tested only against
+    the boxes of its cell. A point and a box's corners are placed by the same arithmetic,
+    which rounding keeps in order, so no point in a box falls outside its
+    cells. Testing every point against every box was 2.6 s of a probe of 2M
+    points over 64 pieces."""
+    n = len(x)
+    widened = {d: _widened(box) for d, box in enumerate(boxes) if box is not None}
+    if not n or not widened:
+        return {}
+    columns = np.ascontiguousarray(x.T)
+    every = np.arange(n, dtype=np.int64)
+    if len(widened) <= _DIRECT_BOXES:
+        found = {d: _inside(columns, every, *box) for d, box in widened.items()}
+        return {d: rows for d, rows in found.items() if len(rows)}
+    lows = np.array([box[0] for box in widened.values()])
+    highs = np.array([box[1] for box in widened.values()])
+    origin, extent = lows.min(axis=0), highs.max(axis=0) - lows.min(axis=0)
+    dims_ = x.shape[1]
+    live = extent > 0
+    side = (np.prod(extent[live]) / (_CELLS_PER_BOX * len(widened))) ** (
+        1.0 / max(int(live.sum()), 1)) if live.any() else 1.0
+    dims = np.where(live, np.clip(np.ceil(extent / max(side, 1e-300)), 1, 2 ** 16), 1)
+    while np.prod(dims) > 2 ** 16 - 1:
+        dims = np.maximum(np.ceil(dims / 2), 1)
+    dims = dims.astype(np.int64)
+    inverse = np.where(live, dims / np.where(live, extent, 1.0), 0.0)
+
+    def cells(values, axis):
+        with np.errstate(invalid="ignore"):            # NaNs: outside, keyed apart
+            return np.clip(np.floor((values - origin[axis]) * inverse[axis]), 0,
+                           dims[axis] - 1).astype(np.int64)
+
+    # Each point's cell (outside the union: in no box), then the points by cell.
+    within = np.ones(n, bool)
+    key = np.zeros(n, np.int64)
+    stride = 1
+    for axis in range(dims_):
+        within &= (columns[axis] >= origin[axis]) & (columns[axis] <= origin[axis]
+                                                     + extent[axis])
+        key += cells(columns[axis], axis) * stride
+        stride *= int(dims[axis])
+    key = np.where(within, key, stride).astype(np.uint16 if stride < 2 ** 16 else np.int64)
+    order = np.argsort(key, kind="stable")
+    starts = np.searchsorted(key[order], np.arange(stride + 1))
+    found = {}
+    for d, (lower, upper) in widened.items():
+        first = [int(cells(np.array([lower[a]]), a)[0]) for a in range(dims_)]
+        last = [int(cells(np.array([upper[a]]), a)[0]) for a in range(dims_)]
+        ranges = [np.arange(first[a], last[a] + 1) for a in range(dims_)]
+        grid = np.zeros(1, np.int64)
+        stride = 1
+        for a in range(dims_):
+            grid = (grid[:, None] + ranges[a][None, :] * stride).reshape(-1)
+            stride *= int(dims[a])
+        if not len(grid):
+            continue
+        candidates = np.concatenate([order[starts[c]:starts[c + 1]] for c in grid])
+        rows = _inside(columns, candidates, lower, upper)
+        if len(rows):
+            found[d] = rows
+    return found
 
 
 def _points(points):

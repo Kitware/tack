@@ -154,8 +154,8 @@ two arrays are the safe default.
 
 ## Remember that views share storage
 
-`reshape` returns a **view**, a second array over the same memory. `copy`
-makes independent storage:
+`reshape` and a slice of rows, `a[i:j]`, return a **view**, a second array
+over the same memory. `copy` makes independent storage:
 
 <!-- tack-check: memory-views -->
 ```python
@@ -176,6 +176,10 @@ def number(a):
 number(flat)
 np.testing.assert_allclose(grid.numpy()[1], [4, 5, 6, 7])       # written through the view
 np.testing.assert_allclose(independent.numpy()[1], [0, 0, 0, 0])
+
+line = tack.zeros((8,))
+number(line[2:5])                       # elements 2 to 4 only, numbered from 0
+np.testing.assert_allclose(line.numpy(), [0, 0, 0, 1, 2, 0, 0, 0])
 ```
 
 Passing `grid` and `flat` as two arguments does not give a kernel two

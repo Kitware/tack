@@ -38,17 +38,36 @@ _ROUND = {shapes.Triangle: (0, 1, 2), shapes.Quad: (0, 1, 2, 3), shapes.Pixel: (
 
 
 @tack.kernel
-def _loop_sizes(cells, size, sizes):
+def _loop_sizes(cells, size, sizes, marks, hidden):
+    # A hidden or refined cell has no loop: none of its sides counts.
     for c in cells:
-        sizes[cells.entity_id(c)] = size
+        e = cells.entity_id(c)
+        sizes[e] = 0 if hidden == 1 and (tack.i32(marks[e]) & 40) != 0 else size
 
 
 @tack.kernel
 def _shape_loops(cells, order, offsets, loops):
     for c in cells:
         e = cells.entity_id(c)
-        for j in range(order.shape[0]):
+        for j in range(offsets[e + 1] - offsets[e]):         # none for a cell left out
             loops[offsets[e] + j] = cells.point_id(c, order[j])
+
+
+@tack.kernel
+def _own_sizes(cells, sizes, marks, hidden):
+    # A polygon beside shapes: its points; none for a hidden or refined one.
+    for c in cells:
+        e = cells.entity_id(c)
+        sizes[e] = 0 if hidden == 1 and (tack.i32(marks[e]) & 40) != 0 else cells.num_points(c)
+
+
+@tack.kernel
+def _own_loops(cells, offsets, loops):
+    # A polygon beside shapes: its connectivity is its loop.
+    for c in cells:
+        e = cells.entity_id(c)
+        for j in range(offsets[e + 1] - offsets[e]):         # none for a cell left out
+            loops[offsets[e] + j] = cells.point_id(c, j)
 
 
 @tack.kernel
@@ -123,10 +142,15 @@ def feature_edges(data, angle=30.0, boundary=True, feature=True, non_manifold=Tr
     points (``fields`` chooses which, as ``extract_edges``); cell fields are
     left behind, an edge belonging to every cell around it. Hidden cells are
     left out. The geometry must be ``H1``."""
+    from tack.dataset.algorithms._refine import _masks
     from tack.dataset.ghosts import visible
     from tack.dataset.polyhedra import PolygonalTopology
 
-    data = visible(data)
+    # A shape mesh leaves hidden and refined cells out in place (their loops
+    # empty); polygons take the cells left.
+    if isinstance(data.topology, PolygonalTopology):
+        data = visible(data)
+    marks, hidden = _masks(data)
     if not isinstance(data.geometry.space, H1):
         raise TypeError("feature_edges keeps the points, so needs an H1 geometry")
     topology = data.topology
@@ -145,7 +169,10 @@ def feature_edges(data, angle=30.0, boundary=True, feature=True, non_manifold=Tr
         groups = [g for g in data.launch_groups("cells", []) if g.count]
         for group in groups:
             if group.shape in _ROUND:
-                _loop_sizes(data.domain_view("cells", group), len(_ROUND[group.shape]), sizes)
+                _loop_sizes(data.domain_view("cells", group), len(_ROUND[group.shape]), sizes,
+                            marks, hidden)
+            elif group.shape is shapes.Polygon:                # beside shapes
+                _own_sizes(group.view(), sizes, marks, hidden)
         offsets = tack.empty((n_cells + 1,), tack.i64)
         total = int(exclusive_scan(sizes, offsets, n_cells, close=True))
         loops = tack.empty((total,), idt)
@@ -153,6 +180,8 @@ def feature_edges(data, angle=30.0, boundary=True, feature=True, non_manifold=Tr
             if group.shape in _ROUND:
                 order = _table(("round", group.shape), _ROUND[group.shape])
                 _shape_loops(data.domain_view("cells", group), order, offsets, loops)
+            elif group.shape is shapes.Polygon:
+                _own_loops(group.view(), offsets, loops)
     total = int(loops.shape[0])
     positions = _point_values(data.geometry.values, data.num_points)
     keys = tack.empty((total,), tack.vec(2, idt))

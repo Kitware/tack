@@ -185,21 +185,22 @@ _handed_out = weakref.WeakValueDictionary()
 
 
 def _wrap_host(device, host, nbytes):
-    """``(MTLBuffer, owner)`` over ``host`` (a NumPy array of another library's
-    memory) without a copy: the buffer Tack handed out at that address, or (memory
-    on page boundaries, a whole number of pages long) a new buffer over it, which
-    ``owner`` keeps alive. ``None`` where neither applies, for the caller to copy."""
+    """``(MTLBuffer, owner, offset)`` over ``host`` (a NumPy array of another
+    library's memory) without a copy: the buffer Tack handed out at that address
+    (at its offset, for a view), or (memory on page boundaries, a whole number of
+    pages long) a new buffer over it, which ``owner`` keeps alive. ``None`` where
+    neither applies, for the caller to copy."""
     address = host.ctypes.data
     known = _handed_out.get(address)
     if known is not None and known.nbytes >= nbytes:
-        return known.metal_buffer, known
+        return known.metal_buffer, known, known._offset
     page = mmap.PAGESIZE
     if (host.flags.c_contiguous and host.nbytes >= nbytes > 0 and address % page == 0
             and nbytes % page == 0):
         buffer = device.newBufferWithBytesNoCopy_length_options_deallocator_(
             host, nbytes, 0, None)
         if buffer is not None:
-            return buffer, host
+            return buffer, host, 0
     return None
 
 
@@ -225,6 +226,10 @@ class MetalBuffer(DeviceBuffer):
 
     _pool = None             # where the MTLBuffer goes back when the array dies
     _capacity = 0
+    #: Where the array's memory starts in the MTLBuffer, in bytes: nonzero for a
+    #: view (``array[i:j]``, `_view_fields`), which every binding passes as the
+    #: buffer's offset.
+    _offset = 0
 
     def __init__(self, device, numpy_dtype, shape, sync=None, pool=None):
         nbytes = int(math.prod(shape)) * np.dtype(numpy_dtype).itemsize
@@ -318,6 +323,10 @@ class MetalBuffer(DeviceBuffer):
         self._sync()
         self._view.fill(value)
 
+    def _view_fields(self, start, count):
+        return {"_view": self._view.reshape(-1)[start:start + count],
+                "_offset": self._offset + start * self._view.itemsize}
+
     @property
     def nbytes(self) -> int:
         return self._view.nbytes
@@ -368,7 +377,7 @@ class MetalTextureImage:
         bytes_per_row = W * 4
         bytes_per_image = W * H * 4
         blit_enc.copyFromBuffer_sourceOffset_sourceBytesPerRow_sourceBytesPerImage_sourceSize_toTexture_destinationSlice_destinationLevel_destinationOrigin_(
-            array._buffer.metal_buffer, 0, bytes_per_row, bytes_per_image,
+            array._buffer.metal_buffer, array._buffer._offset, bytes_per_row, bytes_per_image,
             Metal.MTLSizeMake(W, H, D), self.texture, 0, 0,
             Metal.MTLOriginMake(0, 0, 0))
         blit_enc.endEncoding()
@@ -378,7 +387,9 @@ class MetalTextureImage:
 
 class _Uniforms:
     """One launch's packed scalars: a buffer of their values, standing where the
-    launch binds an array (``arg._buffer.metal_buffer``)."""
+    launch binds an array (``arg._buffer.metal_buffer``, at ``_offset``)."""
+
+    _offset = 0
 
     def __init__(self, device, dtype, entries, args):
         values = np.zeros(len(entries), dtype=dtype.numpy_dtype)
@@ -490,7 +501,7 @@ class CompiledMetalKernel:
                     # buffers or a different alias relationship. The indirect
                     # resources also need residency declarations, which also
                     # let Metal track hazards between launches.
-                    self._argument_encoder.setBuffer_offset_atIndex_(value, 0, i)
+                    self._argument_encoder.setBuffer_offset_atIndex_(value, owner._offset, i)
                     encoder.useResource_usage_(
                         value, Metal.MTLResourceUsageRead | Metal.MTLResourceUsageWrite)
                     keep.append(owner)
@@ -744,7 +755,7 @@ class MetalBackend(GPUBackend):
         memory on whole pages, wrapped in place.
         """
         nbytes = int(math.prod(shape)) * np.dtype(dtype.numpy_dtype).itemsize
-        owner = None
+        owner, offset = None, 0
         if isinstance(ptr, np.ndarray):
             # Host memory (unified): a buffer Tack handed out, or page-aligned
             # memory wrapped in place; anything else is copied by the caller.
@@ -754,7 +765,7 @@ class MetalBackend(GPUBackend):
                     "the Metal backend wraps host memory without a copy only where it "
                     "is a buffer Tack handed out or lies on whole pages; copy it with "
                     "tack.array()")
-            ptr, owner = found
+            ptr, owner, offset = found
         if not hasattr(ptr, "contents"):
             raise TypeError(
                 f"the Metal backend wraps an MTLBuffer object, not "
@@ -766,8 +777,10 @@ class MetalBackend(GPUBackend):
         buf._sync = _synchronize_all
         buf._shared = True       # another library's buffer, read without Tack
         buf._metal_buffer = ptr  # expects an MTLBuffer object
-        raw = ptr.contents().as_buffer(nbytes)
-        buf._view = np.frombuffer(raw, dtype=dtype.numpy_dtype).reshape(shape)
+        buf._offset = offset     # a view handed out comes back at its place
+        raw = ptr.contents().as_buffer(offset + nbytes)
+        buf._view = np.frombuffer(raw, dtype=dtype.numpy_dtype, count=int(math.prod(shape)),
+                                  offset=offset).reshape(shape)
         return buf
 
     _max_launch = _MAX_LAUNCH
@@ -872,7 +885,7 @@ class MetalBackend(GPUBackend):
         encoder = command_buffer.computeCommandEncoderWithDescriptor_(
             Metal.MTLComputePassDescriptor.computePassDescriptor())
         encoder.setComputePipelineState_(pipeline)
-        encoder.setBuffer_offset_atIndex_(array._buffer.metal_buffer, 0, 0)
+        encoder.setBuffer_offset_atIndex_(array._buffer.metal_buffer, array._buffer._offset, 0)
         encoder.setBuffer_offset_atIndex_(out_buf, 0, 1)
 
         block_dim = 256

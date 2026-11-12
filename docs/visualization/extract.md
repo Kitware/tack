@@ -3,7 +3,8 @@
 Most pipelines start by extracting the part of a dataset that matters: an
 isosurface, a cut through the volume, the cells in a range or a region, the
 outer surface. Tack has the extraction filters VTK has: `contour`, `slice`,
-`clip`, `threshold`, the cell extractors, and the surface and edge filters.
+`clip`, `threshold`, the cell extractors, and the surface and edge filters,
+and ParaView's `isovolume`.
 Three of them can seem to answer one question, so the page starts by setting
 them side by side. The sections after it give each filter's main options and
 show how to choose the fields that come along.
@@ -74,6 +75,7 @@ Each is cut open at the plane y = 0 to show its inside, and colored by `r`
 | Where an implicit function is zero, a plane say | `slice`, `slice_plane` | the same |
 | The part on one side of a level or a surface | `clip` | whole cells and pieces of cut cells |
 | Cells whose field lies in a range | `threshold` | whole cells |
+| The part where a field lies in a range | `isovolume` | whole cells and pieces of cut cells |
 | Cells by id, by region or by box | `extract_cells`, `extract_geometry`, `extract_extent` | whole cells |
 | The outer surface, its edges, its sharp edges | `extract_surface`, `extract_edges`, `feature_edges` | faces as cells, edges as lines |
 
@@ -255,6 +257,40 @@ assert inside.positions().shape[0] == inside.num_points           # only the poi
 
 The output is an unstructured mesh, even when the input is an image. See the
 [reference](../vis-guide/reference/algorithms.md#tack.dataset.algorithms.threshold.threshold).
+
+## Clip to a range
+
+`isovolume(data, by, lower, upper)` keeps the part of the mesh where `by` lies
+in `[lower, upper]`, as ParaView's Iso Volume does. It is a clip at each end:
+`clip` at `lower`, then a clip of what that keeps below `upper`. Where
+`threshold` keeps or drops whole cells, `isovolume` cuts them at both ends.
+`by` is a point field (or its name), a `Field` the dataset does not hold, or an
+implicit function, whose values the range is then of.
+
+<!-- tack-check: isovolume -->
+```python
+import numpy as np
+
+import tack
+import tack.dataset as td
+
+tack.set_default_device("cpu")
+
+data = td.uniform_grid((21, 21, 21), origin=(-1, -1, -1), spacing=(0.1, 0.1, 0.1))
+data.fields["r"] = td.Field(td.H1(data), tack.array(np.linalg.norm(data.positions(), axis=1)))
+
+shell = td.isovolume(data, "r", 0.3, 0.6)          # cut cells: the part with 0.3 <= r <= 0.6
+cells = td.threshold(data, "r", 0.3, 0.6)          # whole cells, every corner in range
+r = shell.fields["r"].values.numpy()
+volume = td.integrate(shell).measure
+print(f"shell volume {volume:.3f} (the sphere's {4 / 3 * np.pi * (0.6**3 - 0.3**3):.3f}), "
+      f"whole cells {td.integrate(cells).measure:.3f}")
+# shell volume 0.784 (the sphere's 0.792), whole cells 0.416
+assert 0.3 - 1e-6 <= r.min() and r.max() <= 0.6 + 1e-6
+```
+
+A polyhedral mesh is clipped into polyhedra, as `clip` clips it. See the
+[reference](../vis-guide/reference/algorithms.md#tack.dataset.algorithms.isovolume.isovolume).
 
 ## Extract cells by id, by region or by box
 
@@ -478,12 +514,15 @@ The options:
   sub-cells' values crosses the level, as a linear contour of the sub-cells
   would.
 
-`clip` and `threshold` keep what they need not cut. Cells that lie wholly on
-the kept side stay as they are, curved and of their order. Only the others are
+`clip`, `isovolume` and `threshold` keep what they need not cut. Cells that
+lie wholly on the kept side stay as they are, curved and of their order. Only the others are
 cut into linear sub-cells. The result is a `PartitionedDataSet` of the two
 parts, whole cells first, and their shared points are owned once, so
 summaries over both parts count each point once. A dataset of straight cells
 and order-1 fields clips and thresholds into one dataset, as above.
+`isovolume` places its points at the field's roots at both ends: the second
+clip's crossings are found along the sub-cells' edges the first left, between a
+lattice point and the other or the first clip's crossing.
 
 `slice` and `slice_plane` cut a function of position, so only a curved
 geometry makes them subdivide. They follow it on segments, quads, hexahedra
@@ -512,7 +551,7 @@ tetrahedra and triangles each cell is fanned into.
 |---|---|---|---|
 | `threshold`, `extract_cells`, `extract_geometry` | yes | yes | yes |
 | `contour`, `slice` | yes, and above order 1 on segments, quads, hexahedra, triangles, tetrahedra and wedges | yes | contour gives vertices |
-| `clip` | yes | polyhedra, into polyhedra, but not polygons yet | not yet |
+| `clip`, `isovolume` | yes | polyhedra, into polyhedra, but not polygons yet | not yet |
 | `extract_surface` | yes | yes | the chains' ends |
 
 An order-2 `H1` field on pyramids is refused by the cuts. Pyramids support

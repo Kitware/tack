@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 652" role="img" aria-label="An expression compiles once per structure, then runs as one kernel" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13">
+  <style>
+    .ink { fill: #1f2328; }
+    .quiet { fill: #59636e; }
+    .edge { stroke: #8c959f; }
+    .arrow { fill: #8c959f; }
+    .box { fill: none; stroke: #8c959f; stroke-width: 1.25; }
+    .main { fill: #0969da; fill-opacity: 0.12; stroke: #0969da; stroke-width: 2; }
+    @media (prefers-color-scheme: dark) {
+      .ink { fill: #e6edf3; }
+      .quiet { fill: #9198a1; }
+      .edge { stroke: #6e7681; }
+      .arrow { fill: #6e7681; }
+      .box { stroke: #6e7681; }
+      .main { fill: #4493f8; stroke: #4493f8; }
+    }
+  </style>
+  <defs>
+    <marker id="arch-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" class="arrow"/>
+    </marker>
+  </defs>
+  <text x="24" y="30" font-size="15" font-weight="600" class="ink">An expression compiles once per structure, then runs as one kernel</text>
+  <g fill="none" class="edge" stroke-width="1.25">
+    <path d="M330 108V140" marker-end="url(#arch-arrow)"/>
+    <path d="M520 176H480" marker-end="url(#arch-arrow)"/>
+    <path d="M330 212V244" marker-end="url(#arch-arrow)"/>
+    <path d="M330 316V348" marker-end="url(#arch-arrow)"/>
+    <path d="M330 420V452" marker-end="url(#arch-arrow)"/>
+    <path d="M330 524V556" marker-end="url(#arch-arrow)"/>
+    <path d="M628 212V592H480" marker-end="url(#arch-arrow)"/>
+    <path d="M180 280H140V592H180" marker-end="url(#arch-arrow)"/>
+  </g>
+  <rect x="180" y="52" width="300" height="56" rx="8" class="box"/>
+  <text x="330" y="76" text-anchor="middle" font-weight="600" class="ink">Expression text</text>
+  <text x="330" y="92" text-anchor="middle" font-size="11.5" class="quiet">VTK array calculator syntax</text>
+  <rect x="180" y="140" width="300" height="72" rx="8" class="box"/>
+  <text x="330" y="164" text-anchor="middle" font-weight="600" class="ink">Parser</text>
+  <text x="330" y="180" text-anchor="middle" font-size="11.5" class="quiet">Checks types and where each</text>
+  <text x="330" y="196" text-anchor="middle" font-size="11.5" class="quiet">field can be read</text>
+  <rect x="520" y="140" width="216" height="72" rx="8" class="box"/>
+  <text x="628" y="164" text-anchor="middle" font-weight="600" class="ink">Dataset</text>
+  <text x="628" y="180" text-anchor="middle" font-size="11.5" class="quiet">Mesh, fields and</text>
+  <text x="628" y="196" text-anchor="middle" font-size="11.5" class="quiet">their spaces</text>
+  <rect x="180" y="244" width="300" height="72" rx="8" class="box"/>
+  <text x="330" y="268" text-anchor="middle" font-weight="600" class="ink">Kernel source</text>
+  <text x="330" y="284" text-anchor="middle" font-size="11.5" class="quiet">One line per operation,</text>
+  <text x="330" y="300" text-anchor="middle" font-size="11.5" class="quiet">no user text in the source</text>
+  <rect x="180" y="348" width="300" height="72" rx="8" class="box"/>
+  <text x="330" y="372" text-anchor="middle" font-weight="600" class="ink">Module in the cache directory</text>
+  <text x="330" y="388" text-anchor="middle" font-size="11.5" class="quiet">File named by a hash of the source,</text>
+  <text x="330" y="404" text-anchor="middle" font-size="11.5" class="quiet">then imported</text>
+  <rect x="180" y="452" width="300" height="72" rx="8" class="main"/>
+  <text x="330" y="476" text-anchor="middle" font-weight="600" class="ink">Tack JIT compiles the kernel</text>
+  <text x="330" y="492" text-anchor="middle" font-size="11.5" class="ink">Once per expression structure,</text>
+  <text x="330" y="508" text-anchor="middle" font-size="11.5" class="ink">on any Tack backend</text>
+  <rect x="180" y="556" width="300" height="72" rx="8" class="box"/>
+  <text x="330" y="580" text-anchor="middle" font-weight="600" class="ink">td.for_each over the output</text>
+  <text x="330" y="596" text-anchor="middle" font-size="11.5" class="quiet">Reads fields in place,</text>
+  <text x="330" y="612" text-anchor="middle" font-size="11.5" class="quiet">writes one output field</text>
+  <text x="618" y="380" text-anchor="end" font-size="11.5" class="quiet">fields, constants,</text>
+  <text x="618" y="396" text-anchor="end" font-size="11.5" class="quiet">target space as</text>
+  <text x="618" y="412" text-anchor="end" font-size="11.5" class="quiet">kernel arguments</text>
+  <text x="132" y="436" text-anchor="end" font-size="11.5" class="quiet">seen before:</text>
+  <text x="132" y="452" text-anchor="end" font-size="11.5" class="quiet">kernel reused</text>
+</svg>
+

@@ -282,7 +282,14 @@ def clip(data, by, value=0.0, inside=False, fields=None, subdivision=None, toler
     ``contour`` traces them, by López's method -- as caps wound out of it; the
     output is a ``PolyhedralTopology``. A point at exactly ``value`` is kept on
     either side (``inside`` keeps at or below). Polygons and polylines are not
-    clipped yet.
+    clipped yet. Polyhedra beside shapes (a mixed ``UnstructuredTopology``) are
+    clipped the same way, and so is every cut shape beside them, since a shape's
+    pieces would split faces a polyhedron holds whole; a shape kept whole stays
+    as it is, so the output is mixed too, its whole shapes first. There a cell is
+    kept only if a point is strictly above ``value`` (below, with ``inside``): a
+    cell that touches it from the other side is dropped, where the shapes' tables
+    (and VTK's) keep a piece of it of no volume, so a clip through a plane of mesh
+    points has fewer cells than VTK's, all of its volume.
 
     A curved geometry or a field above order 1 (or ``subdivision`` above 1, or a
     ``tolerance``) is clipped through subdivision, as ``contour`` cuts it, and the
@@ -299,8 +306,9 @@ def clip(data, by, value=0.0, inside=False, fields=None, subdivision=None, toler
     from tack.dataset.ghosts import visible
     from tack.dataset.polyhedra import PolygonalTopology, PolyhedralTopology
 
-    polyhedral = isinstance(data.topology, PolyhedralTopology) and \
-        not isinstance(data.topology, PolygonalTopology)
+    mixed = data.topology.has_polyhedra
+    polyhedral = mixed or (isinstance(data.topology, PolyhedralTopology)
+                           and not isinstance(data.topology, PolygonalTopology))
     if not polyhedral and not getattr(data.topology, "reference_cells", True):
         raise NotImplementedError("clip takes cells of the linear shapes or polyhedra, not "
                                   "polygons or polylines")
@@ -340,6 +348,10 @@ def clip(data, by, value=0.0, inside=False, fields=None, subdivision=None, toler
         raise TypeError(f"clip takes point data or an implicit function, not {space!r}")
     precision = _floating_dtype(field.values)
     values = _converted(_point_values(field.values, data.num_points), precision)
+    if mixed:
+        from tack.dataset.algorithms._clip_polyhedra import clip_mixed
+
+        return clip_mixed(data, arrays.materialize(values), float(value), inside, fields)
     if polyhedral:
         from tack.dataset.algorithms._clip_polyhedra import clip_polyhedra
 

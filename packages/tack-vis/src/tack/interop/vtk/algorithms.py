@@ -85,6 +85,7 @@ __all__ = [
     "AsPolyhedra",
     "AverageDown",
     "BoundaryFaces",
+    "Calculator",
     "CellCenters",
     "CellGeometry",
     "CellIds",
@@ -290,6 +291,17 @@ def _entry(vtk_data):
     return entry if entry is not None and entry[0] == _key(vtk_data) else None
 
 
+def _converted(vtk_data):
+    """``vtk_to_dataset(vtk_data, dtype=None, copy=False)``, a grid with polyhedra read
+    with every cell a polyhedron: most filters do not take polyhedra beside shaped
+    cells yet (#307), and each wrapper keeps the reading it had."""
+    from tack.interop.vtk import vtk_to_dataset
+
+    faces = vtk_data.GetPolyhedronFaces() if hasattr(vtk_data, "GetPolyhedronFaces") else None
+    polyhedral = "all" if faces is not None and faces.GetNumberOfCells() else None
+    return vtk_to_dataset(vtk_data, dtype=None, copy=False, polyhedral=polyhedral)
+
+
 def _as_dataset(vtk_data, device=None, world=None):
     """``vtk_to_dataset(vtk_data, dtype=None, copy=False)``, the same Tack dataset for
     the same VTK dataset unchanged (each piece of a ``vtkPartitionedDataSet``);
@@ -315,7 +327,7 @@ def _as_dataset(vtk_data, device=None, world=None):
         return data
     entry = _entry(vtk_data)
     if entry is None:
-        _remember(vtk_data, vtk_to_dataset(vtk_data, dtype=None, copy=False))
+        _remember(vtk_data, _converted(vtk_data))
         entry = getattr(vtk_data, _CACHE)
     copies = entry[1]
     data = copies[None]
@@ -2098,6 +2110,30 @@ class Interpolate(_FieldAlgorithm):
         result = self._function()(data, values.pop("function"), _space(data, self.to),
                                   **values)
         return {self.name: result}
+
+
+class Calculator(_FieldAlgorithm):
+    """``tack_expr.evaluate``: ``expression``, in ``vtkArrayCalculator``'s syntax, over the
+    input's fields, at the points or the cells, as an array ``name``. Fields of any order
+    and curved cells are evaluated through each cell's own map, derivatives exactly.
+    VTK's ``vtkArrayCalculator``; it needs the ``tack-expr`` package."""
+
+    expression = Parameter(None, "the expression, as vtkArrayCalculator writes it "
+                                 "(required)")
+    at = Parameter("points", "where it is evaluated: points or cells")
+    name = Parameter("Result", "the new array's name")
+    replace_invalid = Parameter(None, "a number for NaN and infinite results, as "
+                                      "vtkArrayCalculator's ReplaceInvalidValues")
+
+    def new_fields(self, data):
+        try:
+            import tack_expr
+        except ImportError as error:
+            raise ImportError("Calculator needs the tack-expr package") from error
+        if not self.expression:
+            raise ValueError("Calculator needs an expression")
+        return {self.name: tack_expr.evaluate(self.expression, data, at=self.at,
+                                              replace_invalid=self.replace_invalid)}
 
 
 class Magnitude(_FieldAlgorithm):

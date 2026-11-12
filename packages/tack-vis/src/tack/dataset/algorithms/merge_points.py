@@ -4,6 +4,8 @@
 """``merge_points``: a dataset's coincident points made one, as VTK's
 vtkStaticCleanUnstructuredGrid and Viskores' CleanGrid merge them."""
 
+from types import SimpleNamespace
+
 import numpy as np
 
 import tack
@@ -44,6 +46,20 @@ def _numbered(labels, index, new_id, kept):
         new_id[p] = index[r]
         if r == p:
             kept[index[p]] = p
+
+
+@tack.kernel
+def _run_starts(positions, order, flags):
+    # 1 where a point, in the order of its coordinates' bits, starts a run of equal
+    # coordinates: compared as numbers, so a NaN starts its own.
+    for i in range(flags.shape[0]):
+        start = 1
+        if i > 0:
+            a = positions[order[i]]
+            b = positions[order[i - 1]]
+            if a[0] == b[0] and a[1] == b[1] and a[2] == b[2]:
+                start = 0
+        flags[i] = start
 
 
 @tack.kernel
@@ -124,15 +140,45 @@ def _merged_polyhedra(topology, new_id, count):
     return merged, Take(tack.array(kept.astype(merged.id_dtype.numpy_dtype)))
 
 
+def _equal_labels(positions, dtype, host=None):
+    """Each point's smallest point of equal coordinates, as ``_merged_ids`` with no
+    tolerance labels them, by sorting: the coordinates' bits (taken on the host, a
+    view; -0 made 0 first, as it equals 0) sorted by a stable radix sort, and runs
+    of points whose coordinates compare equal labelled with their first.
+    ``positions`` are 3-vectors (a Tack array), ``host`` the same on the host if
+    the caller has them. No atomics, and no locator: on AhmedML's 24M points
+    0.4-0.8 s against the union-find's 2.3-3.7."""
+    from tack.dataset.buckets import _radix_order, run_firsts
+
+    n = arrays.size_of(positions)
+    if host is None:
+        host = arrays.to_host(positions)
+    host = np.ascontiguousarray(host).reshape(n, 3)
+    host = host + host.dtype.type(0)                  # -0 is 0's bits after this
+    bits = host.view(np.uint32 if host.dtype.itemsize == 4 else np.uint64)
+    keys = tack.array(bits, tack.vec3(tack.u32 if host.dtype.itemsize == 4 else tack.u64))
+    del host, bits
+    order = _radix_order(keys, n, dtype)
+    del keys
+    flags = tack.empty((n,), dtype)
+    _run_starts(positions, order, flags)
+    return run_firsts(order, flags, dtype)
+
+
 def _merged_ids(data, tolerance):
     """``(new_id, kept, count)`` for ``data``'s points within ``tolerance`` of each other
     made one: each point's merged point, each merged point's input point (its set's
-    smallest), and how many there are. Union-find over the points through the
-    locator's bins: each pair hooks the larger root under the smaller (an atomic
-    minimum), until nothing changes, so a set's root is its smallest point
+    smallest), and how many there are. With no tolerance, by sorting the
+    coordinates (``_equal_labels``); otherwise union-find over the points through
+    the locator's bins: each pair hooks the larger root under the smaller (an
+    atomic minimum), until nothing changes, so a set's root is its smallest point
     whatever the order of the hooks."""
     n = data.num_points
     dtype = ids.at_least(tack.i32, n + 1)
+    if tolerance == 0:
+        labels = (_equal_labels(arrays.materialize(data.geometry.values), dtype) if n
+                  else tack.empty((0,), dtype))
+        return _numbered_roots(labels, n, dtype)
     if dtype not in get_backend().supported_atomic_dtypes:
         raise NotImplementedError(f"merging {n} points needs {dtype} atomics, which the "
                                   f"{get_backend().name} backend does not have")
@@ -148,6 +194,12 @@ def _merged_ids(data, tolerance):
             _jump(labels)
             if not int(changed.numpy()[0]):
                 break
+    return _numbered_roots(labels, n, dtype)
+
+
+def _numbered_roots(labels, n, dtype):
+    """``_merged_ids``' result from each point's root (``labels``): the roots numbered
+    in their order, each point its root's number."""
     flags = tack.empty((max(n, 1),), dtype)
     index = tack.empty((max(n, 1),), dtype)
     count = 0
@@ -212,6 +264,20 @@ def merge_points(data, tolerance=0.0, fields=None):
         merged = PolylineTopology(topology.line_offsets,
                                   _renumber(topology.line_points, new_id, data.id_dtype),
                                   num_points=count, id_dtype=data.id_dtype)
+    elif topology.has_polyhedra:
+        # The polyhedra's faces matched again as a polyhedral topology's are, the
+        # shapes beside them renumbered. Face ids change (the shapes' faces come
+        # after the polyhedra's), so values on faces are not carried.
+        polyhedra, _ = _merged_polyhedra(SimpleNamespace(
+            num_faces=topology.num_polyhedral_faces, face_offsets=topology.face_offsets,
+            face_points=topology.face_points, cell_offsets=topology.cell_face_offsets,
+            cell_faces=topology.cell_faces, cell_face_sides=topology.cell_face_sides,
+            id_dtype=topology.id_dtype), new_id, count)
+        merged = UnstructuredTopology(
+            topology.types, topology.offsets,
+            _renumber(topology.connectivity, new_id, data.id_dtype), num_points=count,
+            polyhedra=(polyhedra.face_offsets, polyhedra.face_points, polyhedra.cell_offsets,
+                       polyhedra.cell_faces, polyhedra.cell_face_sides))
     else:
         merged = UnstructuredTopology(topology.types, topology.offsets,
                                       _renumber(topology.connectivity, new_id, data.id_dtype),

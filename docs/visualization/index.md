@@ -88,6 +88,7 @@ algorithm's full signature and its Viskores counterpart.
 | `vtkMeshQuality` | `cell_quality` | [Derive](derive.md) |
 | `vtkIntegrateAttributes` | `integrate` | [Derive](derive.md) |
 | `vtkCellDataToPointData`, `vtkPointDataToCellData` | `project` | [Derive](derive.md) |
+| `vtkArrayCalculator` | `tack_expr.evaluate` (the `tack-expr` package) | [Expressions](expressions.md) |
 | `vtkProbeFilter`, `vtkResampleWithDataSet`, `vtkResampleToImage` | `probe` | [Sample and trace](sample-and-trace.md) |
 | `vtkStreamTracer` | `streamlines`, `advect` | [Sample and trace](sample-and-trace.md) |
 | `vtkDescriptiveStatistics` | `statistics`, `entropy` | [Reduce](reduce.md) |

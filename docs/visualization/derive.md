@@ -90,9 +90,9 @@ its input's space, with a derived unit.
 | `log_values(data, field)` | the logarithm, in any base | `LogValues` |
 | `convert(data, unit, field)` | a field, or the geometry, in another unit | |
 
-`dot`, `cross` and `composite` need fields of one value type. VTK's
-`vtkArrayCalculator` has no counterpart: a formula of your own is a short
-kernel, as [write a mesh algorithm](write-a-mesh-algorithm.md) shows.
+`dot`, `cross` and `composite` need fields of one value type. A formula of
+your own, as VTK's `vtkArrayCalculator` writes one, is an expression of the
+`tack-expr` package: see [compute with expressions](expressions.md).
 
 ## Measure cells
 

@@ -2631,6 +2631,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#finite-differences-on-grids" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Finite differences on grids
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#other-fields-from-fields" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5040,6 +5051,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#finite-differences-on-grids" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Finite differences on grids
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#other-fields-from-fields" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5291,6 +5313,48 @@ gradient in space.</p>
 gradient, per point from a point gradient. See the reference for
 <a href="../../vis-guide/reference/algorithms/#tack.dataset.algorithms.gradients.gradients"><code>gradients</code></a>
 and <a href="../../vis-guide/reference/algorithms/#tack.dataset.algorithms.flow_quantities.flow_quantities"><code>flow_quantities</code></a>.</p>
+<h3 id="finite-differences-on-grids">Finite differences on grids<a class="headerlink" href="#finite-differences-on-grids" title="Permanent link">&para;</a></h3>
+<p>On an image, a rectilinear or a curvilinear grid, <code>finite_differences(data,
+field)</code> takes the gradient by differences along the grid's index axes instead,
+of the field and of the positions alike, turned to world axes by the grid's own
+differences. At <code>order=2</code> that is what VTK's <code>vtkGradientFilter</code> does on
+structured data, and it gives VTK's values. It is much cheaper than
+<code>gradients(at="points")</code>, about 15 times on 17.6 million points of a
+curvilinear grid, and the right method for data sampled on a grid; <code>gradients</code>
+stays the one for finite element data. <code>order=4</code> and <code>order=6</code> take wider
+stencils, of five and seven points, and the error on a smooth field falls as the
+spacing to that power, edges included. <code>derivative=2</code> gives the second
+derivatives, the Hessian, 9 values per component.</p>
+<!-- tack-check: finite-differences -->
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">tack</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">tack.dataset</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">td</span>
+
+<span class="n">tack</span><span class="o">.</span><span class="n">set_default_device</span><span class="p">(</span><span class="s2">&quot;cpu&quot;</span><span class="p">)</span>
+
+<span class="n">data</span> <span class="o">=</span> <span class="n">td</span><span class="o">.</span><span class="n">uniform_grid</span><span class="p">((</span><span class="mi">21</span><span class="p">,</span> <span class="mi">21</span><span class="p">,</span> <span class="mi">21</span><span class="p">),</span> <span class="n">origin</span><span class="o">=</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">),</span> <span class="n">spacing</span><span class="o">=</span><span class="p">(</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">),</span>
+                       <span class="n">dtype</span><span class="o">=</span><span class="n">tack</span><span class="o">.</span><span class="n">f64</span><span class="p">,</span> <span class="n">unit</span><span class="o">=</span><span class="s2">&quot;m&quot;</span><span class="p">)</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">positions</span><span class="p">()</span>
+<span class="n">data</span><span class="o">.</span><span class="n">fields</span><span class="p">[</span><span class="s2">&quot;T&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">td</span><span class="o">.</span><span class="n">Field</span><span class="p">(</span><span class="n">td</span><span class="o">.</span><span class="n">H1</span><span class="p">(</span><span class="n">data</span><span class="p">),</span> <span class="n">tack</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">x</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">])</span> <span class="o">*</span> <span class="n">x</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">]),</span> <span class="n">unit</span><span class="o">=</span><span class="s2">&quot;K&quot;</span><span class="p">)</span>
+
+<span class="n">grad_T</span> <span class="o">=</span> <span class="n">td</span><span class="o">.</span><span class="n">finite_differences</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="s2">&quot;T&quot;</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span>        <span class="c1"># one 3-vector per point</span>
+<span class="n">hessian</span> <span class="o">=</span> <span class="n">td</span><span class="o">.</span><span class="n">finite_differences</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="s2">&quot;T&quot;</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">derivative</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+
+<span class="n">expected</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">c_</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">x</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">])</span> <span class="o">*</span> <span class="n">x</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">],</span> <span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">x</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]),</span> <span class="mi">0</span> <span class="o">*</span> <span class="n">x</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]]</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">grad_T</span><span class="o">.</span><span class="n">values</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span> <span class="o">-</span> <span class="n">expected</span><span class="p">)</span><span class="o">.</span><span class="n">max</span><span class="p">()</span> <span class="o">&lt;</span> <span class="mf">1e-4</span><span class="p">,</span> <span class="n">grad_T</span><span class="o">.</span><span class="n">unit</span><span class="p">)</span>  <span class="c1"># True K/m</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">hessian</span><span class="o">.</span><span class="n">unit</span><span class="p">)</span>                                                         <span class="c1"># K/m**2</span>
+<span class="k">assert</span> <span class="n">np</span><span class="o">.</span><span class="n">allclose</span><span class="p">(</span><span class="n">hessian</span><span class="o">.</span><span class="n">values</span><span class="o">.</span><span class="n">numpy</span><span class="p">()[:,</span> <span class="mi">1</span><span class="p">],</span> <span class="n">np</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">x</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]),</span> <span class="n">atol</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">)</span>
+</code></pre></div>
+<p>The differences assume a grid whose spacing varies smoothly. On spacing that
+jumps from one cell to the next, orders 4 and 6 amplify the jumps; order 2 is
+the safe choice there. A grid of two dimensions gives gradients in its plane.
+Point data is differenced over the points and cell data over the cells'
+centres. Hidden points (for point data) and hidden cells (for cell data) hold
+no values: the stencils stop at them as at the grid's edges, one-sided beside
+them, and their own derivatives are NaN. The cells of an AMR box that a finer
+level covers hold values and are differenced like the rest. See the reference for
+<a href="../../vis-guide/reference/algorithms/#tack.dataset.algorithms.finite_differences.finite_differences"><code>finite_differences</code></a>.</p>
 <h3 id="other-fields-from-fields">Other fields from fields<a class="headerlink" href="#other-fields-from-fields" title="Permanent link">&para;</a></h3>
 <p>Smaller filters compute a field from fields pointwise. Each returns a field in
 its input's space, with a derived unit.</p>

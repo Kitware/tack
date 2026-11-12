@@ -4561,6 +4561,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#tack.dataset.algorithms.finite_differences.finite_differences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        finite_differences
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#tack.dataset.algorithms.flow_quantities.flow_quantities" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6794,6 +6805,17 @@
     <span class="md-ellipsis">
       
         gradients
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tack.dataset.algorithms.finite_differences.finite_differences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        finite_differences
       
     </span>
   </a>
@@ -12996,6 +13018,13 @@ point each kept point is (<code>cell_ids</code> does the same for cells).</p>
 <td>Gradient</td>
 </tr>
 <tr>
+<td><a href="#tack.dataset.algorithms.finite_differences.finite_differences"><code>finite_differences</code></a></td>
+<td>the gradient or second derivatives of a field on an image, a rectilinear or a curvilinear grid, by differences of order 2, 4 or 6</td>
+<td>dataset</td>
+<td>vtkGradientFilter (structured data)</td>
+<td>—</td>
+</tr>
+<tr>
 <td><a href="#tack.dataset.algorithms.flow_quantities.flow_quantities"><code>flow_quantities</code></a></td>
 <td>divergence, vorticity and Q-criterion from a velocity gradient</td>
 <td>dataset</td>
@@ -13290,6 +13319,235 @@ around each point.</p>
         <span class="n">rows</span> <span class="o">=</span> <span class="n">_scalar_gradients</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">Field</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">space</span><span class="p">,</span> <span class="n">part</span><span class="p">,</span> <span class="n">gradient</span><span class="o">=</span><span class="n">_gradient_row</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">gradient</span><span class="p">,</span> <span class="n">k</span><span class="p">)),</span> <span class="n">at</span><span class="p">)</span>
         <span class="k">if</span> <span class="n">n</span><span class="p">:</span>
             <span class="n">_place_rows</span><span class="p">(</span><span class="n">rows</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">out</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">Field</span><span class="p">(</span><span class="n">space</span><span class="p">,</span> <span class="n">out</span><span class="p">,</span> <span class="n">unit</span><span class="p">)</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="tack.dataset.algorithms.finite_differences.finite_differences" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">finite_differences</span>
+
+
+<a href="#tack.dataset.algorithms.finite_differences.finite_differences" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">finite_differences</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">derivative</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>The gradient (<code>derivative=1</code>) or the second derivatives (<code>derivative=2</code>) of
+<code>field</code> -- point or cell data, scalar or vector -- on a structured grid: an
+image, a rectilinear or a curvilinear grid. Each is taken by finite differences
+along the grid's index axes, of the field and of the positions alike, and
+turned to world axes by the inverse of the positions' derivatives, so one rule
+serves every kind of grid; cell data is differenced over the cells' centers.</p>
+<p><code>order</code> is the differences' order of accuracy: 2 (three points along each
+axis), 4 (five) or 6 (seven); on a smooth field the error falls as the
+spacing to that power. At order 2 the edges take the narrowest stencils, a
+first derivative from two points, as VTK's vtkGradientFilter does on images,
+rectilinear and curvilinear grids, so that the gradient is VTK's (and first
+order at the edges); orders 4 and 6 take one-sided stencils of their own order
+there. An axis shorter than a stencil takes every point it has. Mixed second
+derivatives take the derivative along one axis of the derivatives along the
+other.</p>
+<p>Hidden points (<code>Ghosts.HIDDENPOINT</code>, for point data) and hidden cells
+(<code>HIDDENCELL</code>, for cell data) hold no values: they bound the stencils as the
+grid's edges do, so a point beside one takes a one-sided stencil and a point
+between two along an axis has no derivative along it, as in VTK; their own
+derivatives are NaN (VTK writes 0). Other marks hide nothing: ghost layers
+widen the stencils at a piece's boundary, and the cells of an AMR box that a
+finer level covers (<code>REFINEDCELL</code>) hold values and are differenced like the
+rest.</p>
+<p>The gradient of a scalar is a 3-vector per point (or cell); of a vector of
+<code>k</code> components <code>3k</code> values, <code>d(u_i)/d(x_j)</code> at <code>3 * i + j</code>, the layout
+of <code>gradients</code>, so <code>flow_quantities</code> takes it. The second derivatives are
+<code>9</code> values per component, <code>d2(u_i)/(d(x_j) d(x_k))</code> at <code>9 * i + 3 * j +
+k</code>: the Hessian, symmetric. On a curvilinear grid they include the grid's
+curvature (the chain rule's second term), so they are those of the field in
+the world, not along the grid's lines.</p>
+<p>A grid of two dimensions (or one) gives derivatives in its plane (along its
+line). Where the positions' derivatives are singular the derivatives are zero,
+as VTK leaves them. This differs from <code>gradients(at="points")</code>, which
+averages each cell's derivative of the field's interpolant at the point: that
+is right for finite element data, these for data sampled on a grid.</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>packages/tack-vis/src/tack/dataset/algorithms/finite_differences.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">336</span>
+<span class="normal">337</span>
+<span class="normal">338</span>
+<span class="normal">339</span>
+<span class="normal">340</span>
+<span class="normal">341</span>
+<span class="normal">342</span>
+<span class="normal">343</span>
+<span class="normal">344</span>
+<span class="normal">345</span>
+<span class="normal">346</span>
+<span class="normal">347</span>
+<span class="normal">348</span>
+<span class="normal">349</span>
+<span class="normal">350</span>
+<span class="normal">351</span>
+<span class="normal">352</span>
+<span class="normal">353</span>
+<span class="normal">354</span>
+<span class="normal">355</span>
+<span class="normal">356</span>
+<span class="normal">357</span>
+<span class="normal">358</span>
+<span class="normal">359</span>
+<span class="normal">360</span>
+<span class="normal">361</span>
+<span class="normal">362</span>
+<span class="normal">363</span>
+<span class="normal">364</span>
+<span class="normal">365</span>
+<span class="normal">366</span>
+<span class="normal">367</span>
+<span class="normal">368</span>
+<span class="normal">369</span>
+<span class="normal">370</span>
+<span class="normal">371</span>
+<span class="normal">372</span>
+<span class="normal">373</span>
+<span class="normal">374</span>
+<span class="normal">375</span>
+<span class="normal">376</span>
+<span class="normal">377</span>
+<span class="normal">378</span>
+<span class="normal">379</span>
+<span class="normal">380</span>
+<span class="normal">381</span>
+<span class="normal">382</span>
+<span class="normal">383</span>
+<span class="normal">384</span>
+<span class="normal">385</span>
+<span class="normal">386</span>
+<span class="normal">387</span>
+<span class="normal">388</span>
+<span class="normal">389</span>
+<span class="normal">390</span>
+<span class="normal">391</span>
+<span class="normal">392</span>
+<span class="normal">393</span>
+<span class="normal">394</span>
+<span class="normal">395</span>
+<span class="normal">396</span>
+<span class="normal">397</span>
+<span class="normal">398</span>
+<span class="normal">399</span>
+<span class="normal">400</span>
+<span class="normal">401</span>
+<span class="normal">402</span>
+<span class="normal">403</span>
+<span class="normal">404</span>
+<span class="normal">405</span>
+<span class="normal">406</span>
+<span class="normal">407</span>
+<span class="normal">408</span>
+<span class="normal">409</span>
+<span class="normal">410</span>
+<span class="normal">411</span>
+<span class="normal">412</span>
+<span class="normal">413</span>
+<span class="normal">414</span>
+<span class="normal">415</span>
+<span class="normal">416</span>
+<span class="normal">417</span>
+<span class="normal">418</span>
+<span class="normal">419</span>
+<span class="normal">420</span>
+<span class="normal">421</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">finite_differences</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">derivative</span><span class="o">=</span><span class="mi">1</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;The gradient (``derivative=1``) or the second derivatives (``derivative=2``) of</span>
+<span class="sd">    ``field`` -- point or cell data, scalar or vector -- on a structured grid: an</span>
+<span class="sd">    image, a rectilinear or a curvilinear grid. Each is taken by finite differences</span>
+<span class="sd">    along the grid&#39;s index axes, of the field and of the positions alike, and</span>
+<span class="sd">    turned to world axes by the inverse of the positions&#39; derivatives, so one rule</span>
+<span class="sd">    serves every kind of grid; cell data is differenced over the cells&#39; centers.</span>
+
+<span class="sd">    ``order`` is the differences&#39; order of accuracy: 2 (three points along each</span>
+<span class="sd">    axis), 4 (five) or 6 (seven); on a smooth field the error falls as the</span>
+<span class="sd">    spacing to that power. At order 2 the edges take the narrowest stencils, a</span>
+<span class="sd">    first derivative from two points, as VTK&#39;s vtkGradientFilter does on images,</span>
+<span class="sd">    rectilinear and curvilinear grids, so that the gradient is VTK&#39;s (and first</span>
+<span class="sd">    order at the edges); orders 4 and 6 take one-sided stencils of their own order</span>
+<span class="sd">    there. An axis shorter than a stencil takes every point it has. Mixed second</span>
+<span class="sd">    derivatives take the derivative along one axis of the derivatives along the</span>
+<span class="sd">    other.</span>
+
+<span class="sd">    Hidden points (``Ghosts.HIDDENPOINT``, for point data) and hidden cells</span>
+<span class="sd">    (``HIDDENCELL``, for cell data) hold no values: they bound the stencils as the</span>
+<span class="sd">    grid&#39;s edges do, so a point beside one takes a one-sided stencil and a point</span>
+<span class="sd">    between two along an axis has no derivative along it, as in VTK; their own</span>
+<span class="sd">    derivatives are NaN (VTK writes 0). Other marks hide nothing: ghost layers</span>
+<span class="sd">    widen the stencils at a piece&#39;s boundary, and the cells of an AMR box that a</span>
+<span class="sd">    finer level covers (``REFINEDCELL``) hold values and are differenced like the</span>
+<span class="sd">    rest.</span>
+
+<span class="sd">    The gradient of a scalar is a 3-vector per point (or cell); of a vector of</span>
+<span class="sd">    ``k`` components ``3k`` values, ``d(u_i)/d(x_j)`` at ``3 * i + j``, the layout</span>
+<span class="sd">    of ``gradients``, so ``flow_quantities`` takes it. The second derivatives are</span>
+<span class="sd">    ``9`` values per component, ``d2(u_i)/(d(x_j) d(x_k))`` at ``9 * i + 3 * j +</span>
+<span class="sd">    k``: the Hessian, symmetric. On a curvilinear grid they include the grid&#39;s</span>
+<span class="sd">    curvature (the chain rule&#39;s second term), so they are those of the field in</span>
+<span class="sd">    the world, not along the grid&#39;s lines.</span>
+
+<span class="sd">    A grid of two dimensions (or one) gives derivatives in its plane (along its</span>
+<span class="sd">    line). Where the positions&#39; derivatives are singular the derivatives are zero,</span>
+<span class="sd">    as VTK leaves them. This differs from ``gradients(at=&quot;points&quot;)``, which</span>
+<span class="sd">    averages each cell&#39;s derivative of the field&#39;s interpolant at the point: that</span>
+<span class="sd">    is right for finite element data, these for data sampled on a grid.&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">order</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">_ORDERS</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;finite_differences&#39; order is 2, 4 or 6, not </span><span class="si">{</span><span class="n">order</span><span class="si">!r}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">derivative</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;finite_differences&#39; derivative is 1 or 2, not </span><span class="si">{</span><span class="n">derivative</span><span class="si">!r}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">topology</span><span class="p">,</span> <span class="n">StructuredTopology</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="s2">&quot;finite_differences takes a structured grid (an image, a rectilinear &quot;</span>
+                        <span class="sa">f</span><span class="s2">&quot;or a curvilinear grid), not </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">topology</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">field</span> <span class="o">=</span> <span class="n">_with_basis</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">_field</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">))</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">space</span><span class="p">,</span> <span class="p">(</span><span class="n">H1</span><span class="p">,</span> <span class="n">Constant</span><span class="p">)):</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;finite_differences of a field on </span><span class="si">{</span><span class="n">field</span><span class="o">.</span><span class="n">space</span><span class="si">!r}</span><span class="s2">: point &quot;</span>
+                                  <span class="s2">&quot;data or cell data only&quot;</span><span class="p">)</span>
+    <span class="n">sizes</span><span class="p">,</span> <span class="n">positions</span><span class="p">,</span> <span class="n">space</span> <span class="o">=</span> <span class="n">_grid</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">)</span>
+    <span class="n">width</span> <span class="o">=</span> <span class="n">width_of</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">values</span><span class="p">)</span> <span class="ow">or</span> <span class="mi">1</span>
+    <span class="n">n</span> <span class="o">=</span> <span class="n">size_of</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">values</span><span class="p">)</span>
+    <span class="n">per</span> <span class="o">=</span> <span class="mi">3</span> <span class="k">if</span> <span class="n">derivative</span> <span class="o">==</span> <span class="mi">1</span> <span class="k">else</span> <span class="mi">9</span>
+    <span class="n">dtype</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">dtype</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">n</span><span class="p">,),</span> <span class="n">tack</span><span class="o">.</span><span class="n">vec</span><span class="p">(</span><span class="n">per</span> <span class="o">*</span> <span class="n">width</span><span class="p">,</span> <span class="n">dtype</span><span class="p">))</span>
+    <span class="n">unit</span> <span class="o">=</span> <span class="n">units</span><span class="o">.</span><span class="n">derived</span><span class="p">(</span><span class="n">units</span><span class="o">.</span><span class="n">delta</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">unit</span><span class="p">),</span> <span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">unit</span><span class="p">,</span> <span class="o">-</span><span class="n">derivative</span><span class="p">))</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">n</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">Field</span><span class="p">(</span><span class="n">space</span><span class="p">,</span> <span class="n">out</span><span class="p">,</span> <span class="n">unit</span><span class="p">)</span>
+    <span class="n">values</span> <span class="o">=</span> <span class="n">materialize</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">values</span><span class="p">)</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">values</span><span class="p">,</span> <span class="n">SoaArray</span><span class="p">):</span>
+        <span class="c1"># Each component its own array: read it at stride 1.</span>
+        <span class="n">reads</span> <span class="o">=</span> <span class="p">[(</span><span class="n">c</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">values</span><span class="o">.</span><span class="n">components</span><span class="p">]</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">flat</span> <span class="o">=</span> <span class="n">values</span><span class="o">.</span><span class="n">_scalar_view</span><span class="p">()</span> <span class="k">if</span> <span class="n">width_of</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">values</span><span class="p">)</span> <span class="k">else</span> <span class="n">values</span>
+        <span class="n">reads</span> <span class="o">=</span> <span class="p">[(</span><span class="n">flat</span><span class="p">,</span> <span class="n">width</span><span class="p">,</span> <span class="n">comp</span><span class="p">)</span> <span class="k">for</span> <span class="n">comp</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">width</span><span class="p">)]</span>
+    <span class="k">if</span> <span class="n">arrays</span><span class="o">.</span><span class="n">dtype_of</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">values</span><span class="p">)</span> <span class="o">!=</span> <span class="n">dtype</span><span class="p">:</span>
+        <span class="n">reads</span> <span class="o">=</span> <span class="p">[(</span><span class="n">v</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">dtype</span><span class="p">),</span> <span class="n">vs</span><span class="p">,</span> <span class="n">vo</span><span class="p">)</span> <span class="k">for</span> <span class="n">v</span><span class="p">,</span> <span class="n">vs</span><span class="p">,</span> <span class="n">vo</span> <span class="ow">in</span> <span class="n">reads</span><span class="p">]</span>
+    <span class="n">marks</span><span class="p">,</span> <span class="n">bit</span><span class="p">,</span> <span class="n">masked</span> <span class="o">=</span> <span class="n">_hidden</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">)</span>
+    <span class="n">starts</span><span class="p">,</span> <span class="n">lengths</span><span class="p">,</span> <span class="n">weights</span><span class="p">,</span> <span class="n">cap</span><span class="p">,</span> <span class="n">span</span> <span class="o">=</span> <span class="n">_table</span><span class="p">(</span><span class="n">order</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">dtype</span><span class="p">)</span>
+    <span class="n">nx</span><span class="p">,</span> <span class="n">ny</span><span class="p">,</span> <span class="n">nz</span> <span class="o">=</span> <span class="n">sizes</span>
+    <span class="n">target</span> <span class="o">=</span> <span class="n">out</span><span class="o">.</span><span class="n">_scalar_view</span><span class="p">()</span>
+    <span class="n">nan</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="s2">&quot;nan&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">derivative</span> <span class="o">==</span> <span class="mi">2</span><span class="p">:</span>
+        <span class="n">starts2</span><span class="p">,</span> <span class="n">lengths2</span><span class="p">,</span> <span class="n">weights2</span><span class="p">,</span> <span class="n">cap2</span><span class="p">,</span> <span class="n">span2</span> <span class="o">=</span> <span class="n">_table</span><span class="p">(</span><span class="n">order</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="n">dtype</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">comp</span><span class="p">,</span> <span class="p">(</span><span class="n">flat</span><span class="p">,</span> <span class="n">vs</span><span class="p">,</span> <span class="n">vo</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">reads</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">derivative</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="n">_gradient</span><span class="p">(</span><span class="n">flat</span><span class="p">,</span> <span class="n">vs</span><span class="p">,</span> <span class="n">vo</span><span class="p">,</span> <span class="n">width</span><span class="p">,</span> <span class="n">comp</span><span class="p">,</span> <span class="n">positions</span><span class="p">,</span> <span class="n">marks</span><span class="p">,</span> <span class="n">bit</span><span class="p">,</span> <span class="n">masked</span><span class="p">,</span> <span class="n">nan</span><span class="p">,</span> <span class="n">nx</span><span class="p">,</span> <span class="n">ny</span><span class="p">,</span>
+                      <span class="n">nz</span><span class="p">,</span> <span class="n">cap</span><span class="p">,</span> <span class="n">starts</span><span class="p">,</span> <span class="n">lengths</span><span class="p">,</span> <span class="n">weights</span><span class="p">,</span> <span class="n">span</span><span class="p">,</span> <span class="n">n</span><span class="p">,</span> <span class="n">target</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">_hessian</span><span class="p">(</span><span class="n">flat</span><span class="p">,</span> <span class="n">vs</span><span class="p">,</span> <span class="n">vo</span><span class="p">,</span> <span class="n">width</span><span class="p">,</span> <span class="n">comp</span><span class="p">,</span> <span class="n">positions</span><span class="p">,</span> <span class="n">marks</span><span class="p">,</span> <span class="n">bit</span><span class="p">,</span> <span class="n">masked</span><span class="p">,</span> <span class="n">nan</span><span class="p">,</span> <span class="n">nx</span><span class="p">,</span> <span class="n">ny</span><span class="p">,</span>
+                     <span class="n">nz</span><span class="p">,</span> <span class="n">cap</span><span class="p">,</span> <span class="n">starts</span><span class="p">,</span> <span class="n">lengths</span><span class="p">,</span> <span class="n">weights</span><span class="p">,</span> <span class="n">span</span><span class="p">,</span> <span class="n">cap2</span><span class="p">,</span> <span class="n">starts2</span><span class="p">,</span> <span class="n">lengths2</span><span class="p">,</span>
+                     <span class="n">weights2</span><span class="p">,</span> <span class="n">span2</span><span class="p">,</span> <span class="n">n</span><span class="p">,</span> <span class="n">target</span><span class="p">)</span>
     <span class="k">return</span> <span class="n">Field</span><span class="p">(</span><span class="n">space</span><span class="p">,</span> <span class="n">out</span><span class="p">,</span> <span class="n">unit</span><span class="p">)</span>
 </code></pre></div></td></tr></table></div>
             </details>

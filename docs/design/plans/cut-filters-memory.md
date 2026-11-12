@@ -69,12 +69,29 @@ At clip's peak (5M tetrahedra, Tack's arrays by where they were allocated):
 | 3 | the clip function's values at the points | input |
 | **292** | | |
 
-The merge's 230 MiB is the extra. It comes from one choice: a cell that clip
-keeps whole writes a record for each of its corners (`keys[record] = [p, p]`
-in `_clip_emit`), so every kept corner of every kept cell is sorted, not just
-the new points where the clip crosses an edge. Here that is about ten
-million records, one per connectivity entry, almost all of them points the
-input already has.
+The 5M hexahedra, measured the same way (Tack's live arrays, by a count in
+`_allocate` at the peak; the allocator's measure above, 739 MiB, also holds
+blocks the allocator has not handed back):
+
+| MiB | what | kind |
+|---|---|---|
+| 77 | output connectivity | output |
+| 10 | output cells' sources | output |
+| 13 | output cell types and offsets | output |
+| 155 | the records' keys | merge |
+| 77 | the records' slots | merge |
+| 77 | the sort's order (`bucket_order`) | merge |
+| 165 | the sort's runs (`run_offsets`) | merge |
+| **574** | | |
+
+The merge's 230 MiB (474 on the hexahedra) is the extra. It comes from one
+choice: every corner a cell keeps writes a record (`keys[record] = [p, p]` in
+`_clip_emit`) -- a cell kept whole for each of its corners, a cut cell for
+each input point its pieces use, and a centroid for each of its members that
+is an input point -- so every kept corner is sorted, not just the new points
+where the clip crosses an edge. Here that is about ten million records, one
+per connectivity entry, almost all of them points the input already has (20
+million on the hexahedra, eight a kept cell).
 
 The count and scan steps hold about 210 MiB of their own (five counts and
 five starts per input cell), but they are released before the merge, so today
@@ -88,9 +105,23 @@ crossings, and counts per batch of cells, not per cell.
 
 ### D1. A count of Tack's own allocations
 
-Each backend's `allocate_array` adds the bytes it hands out to a count for its
-device, each release takes them away, and a peak is kept
-(`runtime/memory_stats`, private). The allocator statistics the benchmark
+Every array Tack makes adds its bytes to a count for its device, its release
+takes them away, and a peak is kept (`runtime/memory_stats`, private). The
+count is taken where every backend's `allocate_array` is called, in
+`_allocate` and `_empty_for_mpi`, so the CPU, Metal, CUDA, HIP, Level Zero
+and Warp are counted alike, and released by a finalizer on the buffer. What
+it counts is the memory Tack's arrays hold:
+
+- memory from outside (`wrap_ptr`, `array_from_ptr`, a DLPack or NumPy
+  import without a copy) never passes through `_allocate`, so is not
+  counted;
+- a view shares its array's buffer, so is counted once, with the buffer;
+- a block a backend's cache (HIP's, Metal's pool) hands to a new array is
+  counted while the array holds it, and not while it sits in the cache: the
+  cache's size is the backend's own matter, and `release_memory` empties it.
+
+`reset_peak(device)` sets the peak to what is live, for a test to measure
+one call. The allocator statistics the benchmark
 reads see the CPU only, and GPU pools (CUDA's, HIP's buffer cache, Metal's
 pool) hide what is live from the driver; this count sees every device the
 same way. A test fixture reads it, so a test per cut filter can hold its peak
@@ -103,18 +134,32 @@ itself.
 
 ### D2. Clip numbers its kept points through a point map
 
-A cell kept whole writes its corners' input point ids, as they are, and marks
-those points used in a map of one entry per input point. Records are made
-only for crossings, points on an edge the clip cuts, and only those are
-sorted. The output's points are then numbered as today's merge numbers them:
-each used input point in id order, followed by the crossings on its edges
-that start at it (today's sort of `(low, high)` keys puts `(p, p)` just
-before `(p, q)`). So each input point's number is a scan of the used points
-and of the crossings per low point, one pass over the connectivity replaces
-each input id by its number, and the output is the same bits as today.
+Every use of an input point writes the point's id, as it is, and marks the
+point used in a map of one entry per input point: the corners of a cell kept
+whole, the input points a cut cell's pieces use (`entry < 8`), and a
+centroid's members that are input points. Records are made only for
+crossings, points on an edge the clip cuts, and only those are sorted. The
+output's points are then numbered as today's merge numbers them: each used
+input point in id order, followed by the crossings on its edges that start
+at it (today's sort of `(low, high)` keys puts `(p, p)` just before
+`(p, q)`). So each input point's number is a scan of the used points and of
+the crossings per low point, and one pass replaces each input id by its
+number, in the connectivity and in the centroids' members alike. The
+connectivity's centroid placeholders (`-(centroid + 1)`, resolved after the
+merge by `_centroid_entries`) are negative and an input id is not, so the
+pass leaves them as they are. The output is the same bits as today.
 
 On the tetrahedra the merge's 230 MiB falls to the map (4 MiB) and the
-crossings' records, which scale with the cut, not with the kept volume.
+crossings' records, which scale with the cut, not with the kept volume; on
+the hexahedra 474 MiB falls to the map (20 MiB) and the crossings'.
+
+**Polyhedra, in a step of their own after.** `_clip_polyhedra.py` has the
+same pattern: `_face_keys` writes `(a, a)` for each kept corner of each face
+it clips. The map serves it the same way, with the same numbering, so it is
+in this plan, as a pull request after D2's. A mixed mesh changes only with
+it: `clip_mixed` keeps its whole shapes through `_keep_cells` (not
+`_clip_emit`), whose points are already named once a point (`_own_keys`),
+and clips the cut ones as polyhedra.
 
 *Recommended.*
 
@@ -133,7 +178,9 @@ Cells are written in id order, so the output is the same bits as today. On
 the CPU a batch is one thread's, walking its cells in order. On a GPU a batch
 is a workgroup: its threads count their cells into shared memory, a workgroup
 scan gives each thread its offset within the batch, and the batch's start is
-added; without that, 5M cells would give a GPU only 20 thousand threads. The
+added; without that, 5M cells would give a GPU only 20 thousand threads. A
+device without workgroups (`supports_workgroups` false: the CPU, and Warp
+on its CPU) takes the CPU's form, a batch a thread. The
 batches' count, scan and starts are a private helper of `tack.dataset`
 (`_batched.py`), so that other count-then-write filters can take it up when
 a measurement says they should.
@@ -148,7 +195,7 @@ weight, source and level (40 bytes), and sorts them. Records that carry only
 their edge key (8 bytes), with each unique point's position and weight
 computed once after the sort from the edge's two points and the level, bring
 contour on tetrahedra to about VTK's peak. Taken after D2 and D3, and after
-#401 and #389 merge, since both change `contour.py`.
+#401 merges, since it changes `contour.py` (#389, which also did, is in).
 
 *Recommended*, last.
 
@@ -171,8 +218,9 @@ same bits as before.
 
 ## Validation
 
-- Every output before and after each step, equal, on the CPU, Metal, CUDA and
-  HIP, over the existing clip and contour tests and the PyVista datasets.
+- Every output before and after each step, equal, on the CPU, Metal, CUDA,
+  HIP and Level Zero, and on Warp where its CI job runs, over the existing
+  clip and contour tests and the PyVista datasets.
 - Memory by D1's count on each device, and by `memory.py` on the CPU, which
   gets a clip pair (VTK's `vtkTableBasedClipDataSet` against `td.clip`).
 - A test per changed filter holding its peak, by D1, to a multiple of its
@@ -185,6 +233,7 @@ Each step is its own pull request, linking this plan:
 1. D1, the allocation count, with the clip pair in `memory.py` and the memory
    tests' fixture.
 2. D2, clip's point map.
-3. D3, clip's batches, CPU and GPU.
-4. D4, contour's records, after #389 and #401 merge.
-5. The table above again, by D1 on each device, recorded here; status: done.
+3. D2 for polyhedra, `_clip_polyhedra.py`'s point map.
+4. D3, clip's batches, CPU and GPU.
+5. D4, contour's records, after #401 merges (#389 is in).
+6. The table above again, by D1 on each device, recorded here; status: done.

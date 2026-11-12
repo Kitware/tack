@@ -9216,9 +9216,7 @@ them where the pieces had no ghost cells).</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/algorithms/extract_surface.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">326</span>
-<span class="normal">327</span>
-<span class="normal">328</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">328</span>
 <span class="normal">329</span>
 <span class="normal">330</span>
 <span class="normal">331</span>
@@ -9318,7 +9316,20 @@ them where the pieces had no ghost cells).</p>
 <span class="normal">425</span>
 <span class="normal">426</span>
 <span class="normal">427</span>
-<span class="normal">428</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">428</span>
+<span class="normal">429</span>
+<span class="normal">430</span>
+<span class="normal">431</span>
+<span class="normal">432</span>
+<span class="normal">433</span>
+<span class="normal">434</span>
+<span class="normal">435</span>
+<span class="normal">436</span>
+<span class="normal">437</span>
+<span class="normal">438</span>
+<span class="normal">439</span>
+<span class="normal">440</span>
+<span class="normal">441</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">extract_surface</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">faces</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;The ``faces`` -- a face ``Set`` (as ``boundary_faces`` returns), a set&#39;s name</span>
 <span class="sd">    in ``data.sets``, or face ids (a field or an array); by default the boundary</span>
@@ -9379,8 +9390,15 @@ them where the pieces had no ghost cells).</p>
         <span class="n">fresh</span> <span class="o">=</span> <span class="n">_fresh_boundary</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">fields</span><span class="p">)</span>
         <span class="k">if</span> <span class="n">fresh</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
             <span class="k">return</span> <span class="n">fresh</span>
+        <span class="n">kept</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">topology</span><span class="o">.</span><span class="n">_boundary</span>
+        <span class="k">if</span> <span class="n">kept</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">kept</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;faces&quot;</span> <span class="ow">and</span> <span class="ow">not</span> <span class="p">(</span>
+                <span class="n">data</span><span class="o">.</span><span class="n">topology</span><span class="o">.</span><span class="n">dimension</span> <span class="o">==</span> <span class="mi">3</span> <span class="ow">and</span> <span class="n">_has_order_two</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">fields</span><span class="p">)):</span>
+            <span class="k">return</span> <span class="n">_on_boundary</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">fields</span><span class="p">)</span>
         <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.algorithms.boundary_faces</span><span class="w"> </span><span class="kn">import</span> <span class="n">boundary_faces</span>
         <span class="n">faces</span> <span class="o">=</span> <span class="n">boundary_faces</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+        <span class="n">boundary</span> <span class="o">=</span> <span class="kc">True</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">boundary</span> <span class="o">=</span> <span class="kc">False</span>
     <span class="n">ids</span> <span class="o">=</span> <span class="n">_face_ids</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">faces</span><span class="p">)</span>
     <span class="n">topology</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">topology</span>
     <span class="k">if</span> <span class="ow">not</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">topology</span><span class="p">,</span> <span class="s2">&quot;reference_cells&quot;</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">topology</span><span class="o">.</span><span class="n">mixed</span><span class="p">:</span>
@@ -9419,8 +9437,12 @@ them where the pieces had no ghost cells).</p>
         <span class="k">return</span> <span class="n">_on_used_points</span><span class="p">(</span><span class="n">out</span><span class="p">)</span>
     <span class="n">count</span><span class="p">,</span> <span class="n">points</span> <span class="o">=</span> <span class="n">_used_points</span><span class="p">(</span><span class="n">connectivity</span><span class="p">,</span> <span class="n">data</span><span class="o">.</span><span class="n">num_points</span><span class="p">,</span> <span class="n">idt</span><span class="p">)</span>
     <span class="n">surface</span> <span class="o">=</span> <span class="n">UnstructuredTopology</span><span class="p">(</span><span class="n">types</span><span class="p">,</span> <span class="n">offsets</span><span class="p">,</span> <span class="n">connectivity</span><span class="p">,</span> <span class="n">num_points</span><span class="o">=</span><span class="n">count</span><span class="p">)</span>
-    <span class="k">return</span> <span class="n">carry</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">surface</span><span class="p">,</span> <span class="n">points</span><span class="o">=</span><span class="n">Take</span><span class="p">(</span><span class="n">points</span><span class="p">),</span> <span class="n">cells</span><span class="o">=</span><span class="n">Pieces</span><span class="p">(</span><span class="n">cells</span><span class="p">),</span>
-                 <span class="n">faces_to_cells</span><span class="o">=</span><span class="n">Take</span><span class="p">(</span><span class="n">ids</span><span class="p">),</span> <span class="n">fields</span><span class="o">=</span><span class="n">fields</span><span class="p">)</span>
+    <span class="n">maps</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;points&quot;</span><span class="p">:</span> <span class="n">Take</span><span class="p">(</span><span class="n">points</span><span class="p">),</span> <span class="s2">&quot;cells&quot;</span><span class="p">:</span> <span class="n">Pieces</span><span class="p">(</span><span class="n">cells</span><span class="p">),</span> <span class="s2">&quot;faces_to_cells&quot;</span><span class="p">:</span> <span class="n">Take</span><span class="p">(</span><span class="n">ids</span><span class="p">)}</span>
+    <span class="k">if</span> <span class="n">boundary</span><span class="p">:</span>
+        <span class="c1"># The boundary is the topology&#39;s own: kept with it, as the fresh one is.</span>
+        <span class="n">data</span><span class="o">.</span><span class="n">topology</span><span class="o">.</span><span class="n">_boundary</span> <span class="o">=</span> <span class="p">(</span><span class="s2">&quot;faces&quot;</span><span class="p">,</span> <span class="n">surface</span><span class="p">,</span> <span class="n">maps</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">_on_boundary</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">fields</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">carry</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">surface</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="n">fields</span><span class="p">,</span> <span class="o">**</span><span class="n">maps</span><span class="p">)</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>

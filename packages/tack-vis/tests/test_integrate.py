@@ -307,3 +307,59 @@ def test_integrate_over_pieces_takes_names(backend):
         td.integrate(data, "x").values["x"])
     with pytest.raises(TypeError, match="partition"):
         td.integrate(pieces, {"g": td.Field(td.Constant(data), tack.array(x))})
+
+
+@pytest.mark.parametrize("mixed", [False, True])
+def test_point_and_cell_data_integrate_as_the_cells_quadratures_sum(mixed):
+    """Point data (order 1) and cell data integrate as weighted sums of their values --
+    each point's shape function's integral, each cell's measure, made once for every
+    field -- and give what each cell's own quadrature summed gives: on a distorted
+    mesh of hexahedra, with polyhedra beside them, and with ghost cells left out."""
+    import importlib
+
+    from test_mixed_cells import _located
+
+    from tack.dataset.ghosts import Ghosts
+
+    module = importlib.import_module("tack.dataset.algorithms.integrate")
+
+    shaped, polyhedral, _, _, _ = _located(distorted=True)
+    data = polyhedral if mixed else shaped
+    marks = np.zeros(data.num_cells, np.uint8)
+    marks[::7] = Ghosts.DUPLICATECELL
+    data.ghosts = td.Ghosts(cells=tack.array(marks), points=None)
+    x = data.positions()
+    data.fields["v"] = td.Field(td.H1(data), tack.array(np.c_[x[:, 0] ** 2, np.cos(x[:, 1]),
+                                                             x[:, 2]], tack.vec3(tack.f64)))
+    got = td.integrate(data)
+    owned = marks == 0
+    measures = module._top_cells(data, tack.arrays.materialize(
+        td.cell_geometry(data).measure.values))
+    for name in ("f", "c", "v"):
+        field = data.fields[name]
+        per_cell = (module._mixed_cell_values(data, field, measures) if mixed
+                    else module._cell_values(data, field)
+                    if name != "c" else None)
+        if per_cell is None:                       # cell data: value times measure
+            expected = (field.values.numpy() * measures.numpy())[owned].sum()
+        else:
+            expected = np.asarray(per_cell.numpy(), np.float64)[owned].sum(axis=0)
+        np.testing.assert_allclose(got.values[name], expected, rtol=1e-12)
+    assert got.measure == pytest.approx(measures.numpy()[owned].sum(), rel=1e-12)
+
+
+def test_values_left_out_add_nothing_even_when_not_finite():
+    """A hidden cell's value, or a point's that only hidden cells use, weighs 0, and a
+    NaN or an infinity there must not turn the sum NaN (value times 0 is NaN; Berk's
+    review of #439). Two unit hexahedra, the second hidden."""
+    data = td.uniform_grid((3, 2, 2))
+    marks = np.array([0, td.Ghosts.HIDDENCELL], np.uint8)
+    data.ghosts = td.Ghosts(cells=tack.array(marks, tack.u8))
+    data.fields["c"] = td.Field(td.Constant(data), tack.array(np.array([1.0, np.nan])))
+    x = data.positions()
+    u = np.where(x[:, 0] > 1.5, np.inf, 2.0)       # the far points are the hidden cell's
+    data.fields["u"] = td.Field(td.H1(data), tack.array(u))
+    out = td.integrate(data)
+    assert out.measure == pytest.approx(1.0)
+    assert out.values["c"] == pytest.approx(1.0)
+    assert out.values["u"] == pytest.approx(2.0)

@@ -25,7 +25,11 @@ from tack.lang import ir
 from tack.lang.atomic_support import check_atomic_support
 from tack.lang.ir_traversal import child_fields, walk_ir
 from tack.lang.types import ScalarType, f32, f64, i8, i16, i32, i64, u8, u16, u32, u64
-from tack.lang.workgroup_participation import WORKGROUP_SIZE, check_workgroup_participation
+from tack.lang.workgroup_participation import (
+    WORKGROUP_SIZE,
+    check_workgroup_participation,
+    requires_full_workgroups,
+)
 from tack.lang.workgroup_support import workgroup_features
 
 _MSL_TYPE_MAP = {
@@ -156,9 +160,8 @@ class MSLCodeGen(CFamilyCodeGen):
         func = self.ir_func
         check_atomic_support(func, backend_name='metal')
         features = workgroup_features(func)
-        # Collectives are barriers and block reductions, which the features name;
-        # only a kernel with one needs the participation check's walks.
-        if any(f == 'barrier' or f.startswith('block_') for f in features):
+        # Only a kernel with a collective needs the participation check's walks.
+        if requires_full_workgroups(func, features):
             check_workgroup_participation(func)
         self._needs_local_tid = bool(features)
 

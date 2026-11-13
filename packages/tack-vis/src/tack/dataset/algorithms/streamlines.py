@@ -80,7 +80,8 @@ def streamlines(data, field, seeds, step_size, steps, integrator="rk4", locator=
     or below it, so a path stops where the flow does instead of wandering
     through near-still fluid.
 
-    Over a ``PartitionedDataSet`` (``field`` by name), paths cross from piece to
+    Over a ``PartitionedDataSet`` (``field`` by name, or an object whose
+    ``on(piece)`` gives each piece's field, as a field expression does), paths cross from piece to
     piece, each piece holding the stretches it traced."""
     # A step as a time ("0.5 s") is in the spatial unit over the velocity's; as
     # a length ("1 mm"), in the spatial unit.

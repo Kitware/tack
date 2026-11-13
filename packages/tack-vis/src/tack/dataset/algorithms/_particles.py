@@ -45,7 +45,7 @@ from tack.dataset.algorithms._advection import (
 )
 from tack.dataset.algorithms._common import _stand_in, _time_unit
 from tack.dataset.algorithms._extract import _vertices
-from tack.dataset.dataset import DataSet, Field, is_field_key
+from tack.dataset.dataset import DataSet, Field
 from tack.dataset.ghosts import Ghosts, visible
 from tack.dataset.locator import cached_locator
 from tack.dataset.partitioned import PartitionedDataSet, common_origin, fields_of
@@ -215,30 +215,32 @@ def streamlines_pieces(data, field, seeds, step_size, steps, integrator="rk4", u
 def _rounds(data, field, seeds, step_size, steps, integrator, record, unit="time",
             neighbors=False, adaptive=None):
     """The rounds: ``(blocks, pieces, finished, traced, nothing, time_unit)``, the
-    particles each piece finished with, with ``record`` each piece's stretches
+    particles each piece finished with (the velocity resolved once a piece,
+    ``fields_of``), with ``record`` each piece's stretches
     ``(seed, segment, positions, times)``, the piece of nothing standing in for a
     rank without pieces (``_stand_in``, else ``None``) and the particles' unit of
     time."""
     check_arguments(steps, integrator, step_size, unit=unit, **(adaptive or {}))
-    if not is_field_key(field):
-        raise TypeError("advection of a PartitionedDataSet takes a field's name")
+    resolved = []
 
     def check():                             # what only a rank with pieces can see
-        fields_of(data, field, "advection")
-        for piece in data:
+        resolved.extend(fields_of(data, field, "advection"))
+        for piece, own in zip(data, resolved):
             with piece.device:
-                check_piece(piece, field)
+                check_piece(piece, own)
 
     origin = common_origin(data, "advection over pieces", check=check)
-    pieces = []
-    for piece in data:                       # each piece's work on its own device
-        with piece.device:
-            pieces.append(visible(piece, field)[0])
+    pieces, fields = [], []
+    for piece, own in zip(data, resolved):
+        with piece.device:                   # each piece's work on its own device
+            piece, own = visible(piece, own)
+        pieces.append(piece)
+        fields.append(own)
     # A rank with no pieces takes part through a piece of nothing: its block holds
     # no point, and sends its seeds to the pieces that do.
     nothing = _stand_in(data, origin)
     if nothing is not None:
-        pieces = [nothing]
+        pieces, fields = [nothing], [None]   # no particle ever stays on it
     blocks = tc.Blocks([piece.device for piece in pieces], data.world)
     locators = {}
     for g, piece in zip(blocks.local, pieces):
@@ -247,7 +249,7 @@ def _rounds(data, field, seeds, step_size, steps, integrator, record, unit="time
                 locators[g] = cached_locator(piece)
     boxes = _boxes(blocks, pieces, locators)
     pending = _seeded(blocks, seeds, origin)
-    time_unit = _time_unit(data, field)
+    time_unit = _time_unit(data, field, resolved)
     finished = {g: [] for g in blocks.local}
     traced = {g: [] for g in blocks.local}
     for _ in range(int(steps) + 2):
@@ -263,7 +265,8 @@ def _rounds(data, field, seeds, step_size, steps, integrator, record, unit="time
                         break
         for g in blocks.local:
             finished[g].append(outside[g])
-            pending[g], done = _advance(pieces[g - blocks.local.start], field,
+            pending[g], done = _advance(pieces[g - blocks.local.start],
+                                        fields[g - blocks.local.start],
                                         arrived[g], step_size, steps, integrator, record,
                                         traced[g], unit, neighbors,
                                         adaptive or {})

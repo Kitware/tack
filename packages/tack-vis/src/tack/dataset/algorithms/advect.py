@@ -46,7 +46,8 @@ def advect(data, field, seeds, step_size, steps, integrator="rk4", locator=None,
     velocity, or outside -- stays as it is. A ``seed`` point field on it comes
     along.
 
-    Over a ``PartitionedDataSet`` (``field`` by name), particles cross from
+    Over a ``PartitionedDataSet`` (``field`` by name, or an object whose
+    ``on(piece)`` gives each piece's field, as a field expression does), particles cross from
     piece to piece, in rounds: each goes to the lowest piece one of whose own
     cells (not a ghost) holds it, steps until it leaves that piece, and is
     handed on, until none is in flight on any rank.

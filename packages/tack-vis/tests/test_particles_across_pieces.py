@@ -317,3 +317,30 @@ def particles_across(world):
                         piece.fields["segment"].values.numpy().tolist()):
             lines.setdefault(s, []).append(k)
     return particles, {s: sorted(v) for s, v in lines.items()}
+
+
+class _Velocity:
+    """A field argument read on each piece (``on``), as a field expression is."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def on(self, piece):
+        self.calls += 1
+        return piece.fields["v"]
+
+
+def test_a_velocity_read_on_each_piece():
+    pieces = td.split(helix(), (2, 2, 2), ghost_layers=1)
+    velocity = _Velocity()
+    got = by_seed(td.advect(pieces, velocity, SEEDS, 0.02, 200))
+    want = by_seed(td.advect(pieces, "v", SEEDS, 0.02, 200))
+    for seed, (x, steps, status, time) in want.items():
+        np.testing.assert_array_equal(got[seed][0], x)
+        assert got[seed][1:] == (steps, status, time)
+    assert velocity.calls == len(pieces)
+    lines = td.streamlines(pieces, _Velocity(), SEEDS[:4], 0.02, 200)
+    named = td.streamlines(pieces, "v", SEEDS[:4], 0.02, 200)
+    assert [p.num_points for p in lines] == [p.num_points for p in named]
+    with pytest.raises(TypeError, match="partition"):
+        td.advect(pieces, pieces[0].fields["v"], SEEDS, 0.02, 10)

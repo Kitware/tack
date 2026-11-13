@@ -145,6 +145,9 @@ CASES = {
     "advect/seeds on rank 0": (
         flowing, lambda d: _paths(td.advect(d, "v", SEEDS if _rank() == 0
                                             else np.zeros((0, 3)), 0.1, 40)), _total),
+    "advect/a velocity read on each piece": (
+        flowing, lambda d: _paths(td.advect(d, _OnEachPiece("v"), SEEDS if _rank() == 0
+                                            else np.zeros((0, 3)), 0.1, 40)), _total),
     "ghost_points": (cloud, lambda d: _cells(td.ghost_points(d, radius=0.5)), _total),
     "voxel_downsample": (cloud, lambda d: _cells(td.voxel_downsample(d, 1.0)), _total),
     "outliers": (cloud, lambda d: sum(int(p.fields["outlier"].values.numpy().sum())
@@ -156,6 +159,16 @@ CASES = {
                                                    .fields["fraction"].values.numpy().sum()),
                                              6), _same_everywhere),
 }
+
+
+class _OnEachPiece:
+    """A field argument read on each piece, as a field expression is."""
+
+    def __init__(self, name):
+        self.name = name
+
+    def on(self, piece):
+        return piece.fields[self.name]
 
 
 def _rank():

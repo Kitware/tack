@@ -1405,7 +1405,8 @@ counts those too), and a particle that stopped outside, at zero velocity
 or after the new limit stays. Two calls of 20 and then 40 steps give 40
 steps' particles exactly; a `seed` field comes along.
 
-**Over pieces.** Given a `PartitionedDataSet` (and the field's name),
+**Over pieces.** Given a `PartitionedDataSet` (and the field's name, or an
+object whose `on(piece)` gives each piece's field, as a field expression does),
 `advect` and `streamlines` let particles cross from piece to piece, in
 rounds: each particle in flight goes to the lowest piece one of whose own
 cells (not a ghost) holds it, found from the pieces' boxes and their

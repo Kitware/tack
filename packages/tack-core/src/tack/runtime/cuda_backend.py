@@ -859,11 +859,38 @@ def _cubin_arch(major: int, minor: int) -> bytes | None:
     return f"sm_{arch}".encode() if arch in archs else None
 
 
+# What the driver answers when it cannot use a CUBIN for the device: made for
+# another architecture, or by an NVRTC newer than the driver understands.
+_REFUSED_IMAGE = frozenset(
+    code for code in (getattr(driver.CUresult, name, None) for name in (
+        "CUDA_ERROR_NO_BINARY_FOR_GPU", "CUDA_ERROR_INVALID_IMAGE",
+        "CUDA_ERROR_UNSUPPORTED_PTX_VERSION", "CUDA_ERROR_INVALID_SOURCE"))
+    if code is not None)
+
+
+class _RefusedImage(RuntimeError):
+    """The driver refused a CUBIN (``_REFUSED_IMAGE``)."""
+
+
+def _load_module(image: bytes):
+    """The module of a PTX or CUBIN image, in the current context. A CUBIN the
+    driver cannot use raises `_RefusedImage`."""
+    err, module = driver.cuModuleLoadData(image)
+    if err in _REFUSED_IMAGE and not _is_ptx(image):
+        raise _RefusedImage(f"CUDA driver error: {err}")
+    _check(err)
+    return module
+
+
+def _is_ptx(image: bytes) -> bool:
+    """Whether ``image`` is PTX (text) rather than a CUBIN (an ELF file)."""
+    return not image.startswith(b"\x7fELF")
+
+
 def _load_kernel(image: bytes, kernel_name: str, param_types, param_is_array,
                  param_is_texture) -> "CompiledCUDAKernel":
     """A kernel from its PTX or CUBIN, loaded into the current context."""
-    err, module = driver.cuModuleLoadData(image)
-    _check(err)
+    module = _load_module(image)
     err, func = driver.cuModuleGetFunction(module, kernel_name.encode())
     _check(err)
     compiled = CompiledCUDAKernel(module, func, kernel_name, param_types,
@@ -1288,11 +1315,26 @@ class CUDABackend(GPUBackend):
         """Compile Tack IR → CUDA C → PTX → CUfunction."""
         kernel_name = kernel_entry_name(ir_func.name)
         cuda_source = generate_cuda_source(ir_func)
-        image = _compile_ptx(cuda_source, kernel_name, self._arch())
         param_types = [p.type_annotation for p in ir_func.params]
         param_is_array = [p._is_array for p in ir_func.params]
         param_is_texture = [p._is_texture for p in ir_func.params]
-        return _load_kernel(image, kernel_name, param_types, param_is_array, param_is_texture)
+        return self._compiled(cuda_source, kernel_name, lambda image: _load_kernel(
+            image, kernel_name, param_types, param_is_array, param_is_texture))
+
+    def _compiled(self, source: str, name: str, load):
+        """``load`` of ``source`` compiled for this device: its CUBIN, or PTX where
+        NVRTC does not know the device. If the driver refuses the CUBIN (a driver
+        older than the NVRTC that made it), PTX, and PTX from then on: the driver
+        compiles that for itself."""
+        arch = self._arch()
+        if arch is None:
+            return load(_compile_ptx(source, name, None))
+        try:
+            return load(_compile_ptx(source, name, arch))
+        except _RefusedImage:
+            self._arch_value = None
+            self._target = None         # the disk cache's target says PTX now
+            return load(_compile_ptx(source, name, None))
 
     def _capability(self):
         """The device's compute capability, ``(major, minor)``."""
@@ -1306,10 +1348,15 @@ class CUDABackend(GPUBackend):
         _check(err)
         return major, minor
 
+    _arch_value = ...
+
     def _arch(self):
         """The architecture NVRTC compiles this device's code for (CUBIN), or None for
-        PTX, which the driver compiles at load."""
-        return _cubin_arch(*self._capability())
+        PTX, which the driver compiles at load. Found once; None from then on if
+        the driver refused a CUBIN (`_compiled`)."""
+        if self._arch_value is ...:
+            self._arch_value = _cubin_arch(*self._capability())
+        return self._arch_value
 
     # ── The disk cache: the device's code (CUBIN), or PTX ─────────────
     # Where NVRTC knows the device's architecture it makes the device's code,
@@ -1414,9 +1461,7 @@ class CUDABackend(GPUBackend):
             "max": "reduce_max_f32",
         }
         src = _REDUCE_CUDA[op]
-        image = _compile_ptx(src, func_names[op], self._arch())
-        err, module = driver.cuModuleLoadData(image)
-        _check(err)
+        module = self._compiled(src, func_names[op], _load_module)
         err, func = driver.cuModuleGetFunction(module, func_names[op].encode())
         _check(err)
         return func, module

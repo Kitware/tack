@@ -222,8 +222,11 @@ def test_verification_does_not_mutate_ir_or_metadata():
 def test_corrupt_pass_stops_before_codegen_and_caching(stage, module, pass_name, monkeypatch):
     import importlib
 
+    import tack.lang.ir_verify as verifier
     from tack.runtime.dispatch import get_backend
 
+    # Every stage verified, as the suite sets it, so the pass is named.
+    monkeypatch.setattr(verifier, 'verify_all', True)
     tack.set_default_device("cpu")
     backend = get_backend()
 
@@ -261,6 +264,7 @@ def test_corrupt_pass_stops_before_codegen_and_caching(stage, module, pass_name,
 def test_verifier_runs_only_when_templates_and_variants_are_new(monkeypatch, no_disk_cache):
     import tack.lang.ir_verify as verifier
 
+    monkeypatch.setattr(verifier, 'verify_all', True)   # every stage, as the suite sets it
     tack.set_default_device("cpu")
 
     @tack.kernel
@@ -392,3 +396,18 @@ def test_a_second_top_level_loop_is_rejected():
                        match='line 5, column 5 is outside the parallel loop') as error:
         two_loops(a, b)
     assert str(error.value).count("Kernel 'two_loops'") == 1
+
+
+@pytest.mark.parametrize('every_stage', [False, True])
+def test_a_scalar_left_by_packing_is_refused_in_every_mode(every_stage, monkeypatch):
+    """``packed``'s own check is the one the final ``typed`` check does not
+    repeat, so it runs on every compile, not only with every stage verified."""
+    import tack.lang.ir_verify as verifier
+
+    monkeypatch.setattr(verifier, 'verify_all', every_stage)
+    with pytest.raises(IRVerificationError,
+                       match=r"after packed at function\.params\[1\].*survived GPU packing"):
+        verifier.verify_packed(function())     # `count` is still a scalar
+    packed = function()
+    packed.params[1]._is_array = True
+    verifier.verify_packed(packed)

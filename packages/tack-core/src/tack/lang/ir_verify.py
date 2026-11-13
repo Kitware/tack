@@ -12,6 +12,7 @@ The pipeline checks every lowered template and every variant's final IR
 ``packed``'s). The stages between (``verify_stage``) run in debug mode or
 with ``TACK_VERIFY_ALL`` set, as the test suite sets it: they name the pass
 that broke an invariant, and on a cold compile they were a sixth of the time.
+``packed``'s own check, on the parameters alone, runs always (``verify_packed``).
 """
 
 from tack.lang import ir
@@ -30,6 +31,24 @@ def verify_stage(function: ir.IRFunction, stage: str):
     only in debug mode or with ``verify_all`` set."""
     if verify_all or dispatch._debug:
         verify_ir(function, stage)
+
+
+def verify_packed(function: ir.IRFunction):
+    """The ``packed`` stage, after GPU scalar packing. Its own check, that every
+    parameter left is an array, is the one the final ``typed`` check does not
+    repeat, and only reads the parameters, so it runs on every compile; the
+    whole stage's walk only in debug mode or with ``verify_all``. A scalar
+    parameter left by a broken packing would otherwise reach the device
+    compiler."""
+    if verify_all or dispatch._debug:
+        verify_ir(function, 'packed')
+        return
+    for k, param in enumerate(function.params):
+        if not param._is_array:
+            raise IRVerificationError(
+                f"Kernel '{getattr(function, 'name', '<unnamed>')}': invalid IR after "
+                f"packed at function.params[{k}] (IRParam): scalar parameter survived "
+                f"GPU packing")
 EXPRS = {
     ir.IRIfExp, ir.IRBinOp, ir.IRUnaryOp, ir.IRCompare, ir.IRBoolOp,
     ir.IRArrayLoad, ir.IRConstant, ir.IRName, ir.IRAttribute, ir.IRCall,

@@ -405,7 +405,7 @@ describes each pass in detail.
 | Backend | Build steps | Code generator | Native compilation |
 |---------|-------------|----------------|--------------------|
 | CPU | `annotate_types` → `verify_ir('typed')` | `generate_llvm_ir` (`codegen/llvm_gen.py`) | `llvm.parse_assembly` and `verify()`, O3 pipeline, MCJIT, `get_function_address` |
-| Metal | `clone_ir` → `pack_scalars` → `verify_stage('packed')` → `annotate_types` → `verify_ir('typed')` | `generate_msl_source` | `newLibraryWithSource_options_error_` (fast math off), then a compute pipeline |
+| Metal | `clone_ir` → `pack_scalars` → `verify_packed` → `annotate_types` → `verify_ir('typed')` | `generate_msl_source` | `newLibraryWithSource_options_error_` (fast math off), then a compute pipeline |
 | CUDA | same as Metal | `generate_cuda_source` | NVRTC → PTX → `cuModuleLoadData` |
 | HIP | same as Metal | `generate_hip_source` | hipRTC → code object |
 | Level Zero | same as Metal | `generate_opencl_source` | `oclocInvoke` → SPIR-V → `zeModuleCreate` |
@@ -498,7 +498,10 @@ called through `verify_stage`, which runs them only in debug mode
 (`tack.set_debug(True)`) or with `TACK_VERIFY_ALL` set (read at import, or
 `tack.lang.ir_verify.verify_all`). Those name the pass that broke the
 invariant rather than finding it at `typed`. The root `conftest.py` sets
-`TACK_VERIFY_ALL`, so the test suite checks every boundary. On AhmedML's
+`TACK_VERIFY_ALL`, so the test suite checks every boundary. `packed`'s own
+check, that no scalar parameter is left, reads only the parameters and runs
+on every compile (`verify_packed`): `typed` does not repeat it, and a broken
+packing would otherwise reach the device compiler. On AhmedML's
 analysis sweep (244 kernels, 337 variants, cold, CPU) the five full checks a
 variant took 2.6 s of 15.5; with two, 1.1 s (#322).
 

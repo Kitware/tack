@@ -59,7 +59,9 @@ The pipeline verifies the IR at these boundaries. Outside debug mode only
 `lowered` and `typed` run (`typed` repeats every earlier stage's checks but
 `packed`'s); the others go through `verify_stage`, which runs them in debug
 mode or with `TACK_VERIFY_ALL` set, as the test suite sets it, so a failure
-names the pass that broke the invariant:
+names the pass that broke the invariant. `packed` goes through
+`verify_packed`, whose own check (no scalar parameter left) reads only the
+parameters and runs on every compile:
 
 | Stage | Checks added to structural and loop checks |
 |-------|--------------------------------------------|

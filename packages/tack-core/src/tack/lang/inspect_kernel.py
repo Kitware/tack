@@ -15,7 +15,7 @@ from tack.lang.ir_optimize import optimize_ir
 from tack.lang.ir_resolve import resolve_ir
 from tack.lang.ir_traversal import clone_ir
 from tack.lang.ir_type_annotate import annotate_types
-from tack.lang.ir_verify import verify_ir, verify_stage
+from tack.lang.ir_verify import verify_ir, verify_packed, verify_stage
 from tack.lang.type_inference import check_dispatch_types, infer_param_types
 from tack.lang.workgroup_participation import (
     check_workgroup_launch,
@@ -183,7 +183,7 @@ def _generate_source(kernel, args, optimize=False):
     if backend_name in ("MetalBackend", "CUDABackend", "HIPBackend", "LevelZeroBackend"):
         from tack.lang.ir_pack_scalars import pack_scalars
         pack_scalars(ir_func, effective_args)
-        verify_stage(ir_func, 'packed')
+        verify_packed(ir_func)
         # Re-annotate after packing
         annotate_types(ir_func)
         verify_ir(ir_func, 'typed')

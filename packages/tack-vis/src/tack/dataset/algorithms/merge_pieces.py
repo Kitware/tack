@@ -11,11 +11,11 @@ from tack import arrays
 from tack import communication as tc
 from tack.arrays import CartesianProduct, UniformCoordinates
 from tack.dataset.algorithms._common import _csr_rows, _tolerance
-from tack.dataset.dataset import DataSet, Field
+from tack.dataset.dataset import DataSet, Field, is_field_key
 from tack.dataset.ghosts import Ghosts
 from tack.dataset.global_ids import GlobalIds
 from tack.dataset.partitioned import PartitionedDataSet, common_origin, field_units
-from tack.dataset.spaces import H1, Constant, Values
+from tack.dataset.spaces import H1, L2, Constant, Values
 from tack.dataset.topology import StructuredTopology, UnstructuredTopology
 
 __all__ = ["merge_pieces"]
@@ -39,26 +39,32 @@ def merge_pieces(data, root=0, fields=None, device=None, tolerance=0.0):
     shapes come along with their faces, matched again by their points, so a
     face two pieces' polyhedra share is one face.
 
+    Fields of higher order come along at their order: an ``H1`` field above
+    order 1, an ``L2`` field and a curved (``H1``) geometry travel as each owned
+    cell's nodes and are placed through the merged mesh's own numbering, so a
+    node two pieces hold is one value, as a point is. Every piece must hold a
+    field in the same space (its family, order and basis).
+
     Across MPI ranks every rank passes its pieces and the result is on the
     ``root`` rank (``None`` elsewhere), on ``device`` (by default the device
     of the root rank's first piece). A root with no pieces gets the merge made
     on the first rank that has some, moved to it (on its default device)."""
     if not isinstance(data, PartitionedDataSet):
         raise TypeError(f"merge_pieces takes a PartitionedDataSet, not {type(data).__name__}")
-    from tack.dataset.algorithms.ghost_cells import _carried, _kind
+    _kind = _merge_kind
 
     pieces = list(data)
     names = []
     # On every rank, in the origin's gather: the fields, and their one unit each.
     _, agreed_units = common_origin(
-        data, "merge_pieces", check=lambda: names.extend(_carried(pieces, fields,
-                                                                  "merge_pieces")),
+        data, "merge_pieces", check=lambda: names.extend(_chosen(pieces, fields)),
         units_of=lambda: field_units("merge_pieces", pieces, names))
     tolerance = _tolerance(data, tolerance, "merge_pieces")
     blocks = tc.Blocks([piece.device for piece in pieces], data.world)
     world = blocks.world
     if not 0 <= root < world.size:
         raise ValueError(f"root is a rank, 0 to {world.size - 1}, not {root}")
+    _same_spaces(blocks, pieces, names)
     firsts = blocks.all_gather({g: g == blocks.local.start for g in blocks.local})
     starts = [g for g, first in enumerate(firsts) if first]
     if not starts:
@@ -135,7 +141,12 @@ def _described(data):
     for name, field in data.fields.items():
         space = type(field.space).__name__
         on = getattr(field.space, "on", None)
-        fields.append((name, space, on, field.unit, put(f"field {len(fields)}", field.values)))
+        spec = _spec(field.space, _putter(put, f"orders {len(fields)}"))
+        fields.append((name, space, on, field.unit, put(f"field {len(fields)}", field.values),
+                       spec))
+    if _merge_kind(data.geometry) == "nodes":
+        geometry = ("curved", _spec(data.geometry.space, None),
+                    put("\0geometry", data.geometry.values))
     ghosts = data.ghosts
     marks = (None if ghosts is None or ghosts.cells is None else put("\0cell marks", ghosts.cells),
              None if ghosts is None or ghosts.points is None
@@ -162,6 +173,10 @@ def _rebuilt(description, received):
                                     dtype=dtype)
     elif geometry[0] == "rectilinear":
         values = CartesianProduct(*(received[name] for name in geometry[1:]), dtype=dtype)
+    elif geometry[0] == "curved":
+        from tack.dataset.carry import _point_values
+
+        values = _point_values(received[geometry[2]], topology.num_points)
     else:
         values = received[geometry[1]]
     cell_marks, point_marks = (received[m] if m is not None else None for m in marks)
@@ -171,11 +186,40 @@ def _rebuilt(description, received):
                   if cell_marks is not None or point_marks is not None else None,
                   global_ids=GlobalIds(cells=cell_ids, points=point_ids)
                   if cell_ids is not None or point_ids is not None else None, **frame)
-    spaces = {"H1": lambda on: H1(out), "Constant": lambda on: Constant(out),
-              "Values": lambda on: Values(out, on)}
-    for name, space, on, unit, key in fields:
-        out.fields[name] = Field(spaces[space](on), received[key], unit)
+    if geometry[0] == "curved":
+        out.geometry = Field(H1(out, **geometry[1]), received[geometry[2]])
+    for name, space, on, unit, key, spec in fields:
+        if space == "H1":
+            made = H1(out, **(spec or {}))
+        elif space == "L2":
+            made = L2(out, **{k: (received[v[1]] if isinstance(v, tuple) else v)
+                              for k, v in spec.items()})
+        elif space == "Constant":
+            made = Constant(out)
+        else:
+            made = Values(out, on)
+        out.fields[name] = Field(made, received[key], unit)
     return out
+
+
+def _putter(put, name):
+    """``put`` under ``name``, for ``_spec``."""
+    return lambda values: put(name, values)
+
+
+def _spec(space, put):
+    """What remakes a field's space on the merged dataset: ``None`` for those made
+    from the topology alone, an ``H1`` space's parameters (but an element-to-DOF
+    table, which numbers another mesh's cells), an ``L2`` space's (an order per
+    cell, an array, sent through ``put`` as ``("array", name)``)."""
+    if isinstance(space, H1) and space.order > 1:
+        return {k: v for k, v in space.params.items() if k != "dofs"}
+    if isinstance(space, L2):
+        spec = {"basis": space.basis or "gauss_lobatto",
+                "layout": space.params.get("layout", "auto")}
+        spec["order"] = ("array", put(space.cell_keys())) if space.varies else space.order
+        return spec
+    return None
 
 
 def _box(blocks, pieces):
@@ -296,7 +340,7 @@ def _merged_structured(blocks, pieces, names, kind_of, target, device, tiled):
         else:
             geometry = _grown_geometry(first, rectilinear, box_lower, topology,
                                        np.array(first.topology.offset, np.int64), device)
-        return _assembled(topology, geometry, first, names, kind_of, parts)
+        return _assembled(topology, geometry, first, names, kind_of, parts, incoming[target])
 
 
 def _merged_unstructured(blocks, pieces, names, kind_of, target, device, tolerance=0.0):
@@ -381,7 +425,7 @@ def _merged_unstructured(blocks, pieces, names, kind_of, target, device, toleran
                                             id_dtype=first.topology.id_dtype)
         parts = _placed(messages, np_, nc)
         return _assembled(topology, parts["points"].pop("\0positions"), first, names,
-                          kind_of, parts)
+                          kind_of, parts, messages)
 
 
 def _owned_rings(topology, cells, point_ids, device):
@@ -423,17 +467,29 @@ def _merged_rings(messages, order, types, offsets, connectivity, num_points, id_
 
 def _add_values(message, piece, names, kind_of, points, cells, device, explicit):
     """The values of a piece's chosen points and cells, into ``message``."""
-    from tack.dataset.carry import _take
+    from tack.dataset.carry import _point_values, _take
 
     point_ids = tack.array(np.asarray(points, np.int64), tack.i64, device=device)
     cell_ids = tack.array(np.asarray(cells, np.int64), tack.i64, device=device)
     for name in names:
         field = piece.fields[name]
         kind = kind_of(field)
+        if kind in ("nodes", "blocks"):
+            _add_nodes(message, name, field, cells, device)
+            if kind == "nodes":
+                # Points no owned cell uses keep their values.
+                message[f"points.{name}"] = _take(
+                    _point_values(field.values, piece.num_points), point_ids)
+            elif field.space.varies:
+                message[f"cells.\0order {name}"] = _take(field.space.cell_keys(), cell_ids)
+            continue
         message[f"{kind}.{name}"] = _take(field.values, point_ids if kind == "points"
                                           else cell_ids)
     if explicit:
-        message["points.\0positions"] = _take(piece.geometry.values, point_ids)
+        message["points.\0positions"] = _take(
+            _point_values(piece.geometry.values, piece.num_points), point_ids)
+    if kind_of(piece.geometry) == "nodes":
+        _add_nodes(message, "\0geometry", piece.geometry, cells, device)
     marks = piece.ghosts
     message["cells.\0marks"] = _take(
         tack.zeros((piece.num_cells,), tack.u8, device=device)
@@ -468,7 +524,7 @@ def _placed(messages, np_, nc):
     return out
 
 
-def _assembled(topology, geometry, like, names, kind_of, parts):
+def _assembled(topology, geometry, like, names, kind_of, parts, messages=()):
     marks_cells = parts["cells"].pop("\0marks").numpy() & ~np.uint8(Ghosts.DUPLICATECELL)
     marks_points = parts["points"].pop("\0marks").numpy() & ~np.uint8(Ghosts.DUPLICATEPOINT)
     ghosts = None
@@ -476,10 +532,27 @@ def _assembled(topology, geometry, like, names, kind_of, parts):
         ghosts = Ghosts(cells=marks_cells if marks_cells.any() else None,
                         points=marks_points if marks_points.any() else None)
     out = DataSet(topology, geometry, dtype=like.dtype, ghosts=ghosts, **like._frame())
+    messages = list(messages.values()) if isinstance(messages, dict) else list(messages)
+    if kind_of(like.geometry) == "nodes":
+        space = H1(out, **_spec(like.geometry.space, None))
+        out.geometry = Field(space, _nodes_placed(space, like.geometry.values, messages,
+                                                  "\0geometry", out.geometry.values))
     for name in names:
         field = like.fields[name]
         space = field.space
-        if kind_of(field) == "points":
+        kind = kind_of(field)
+        if kind == "nodes":
+            made = H1(out, **_spec(space, None))
+            out.fields[name] = Field(made, _nodes_placed(made, field.values, messages, name,
+                                                         parts["points"][name]), field.unit)
+        elif kind == "blocks":
+            spec = _spec(space, lambda values: None)
+            if space.varies:
+                spec["order"] = parts["cells"].pop(f"\0order {name}").numpy()
+            made = L2(out, **spec)
+            out.fields[name] = Field(made, _nodes_placed(made, field.values, messages, name),
+                                     field.unit)
+        elif kind == "points":
             out.fields[name] = Field(H1(out) if isinstance(space, H1) else Values(out, "points"),
                                      parts["points"][name], field.unit)
         else:
@@ -489,4 +562,145 @@ def _assembled(topology, geometry, like, names, kind_of, parts):
     point_ids, cell_ids = parts["points"].get("\0ids"), parts["cells"].get("\0ids")
     if point_ids is not None or cell_ids is not None:
         out.global_ids = GlobalIds(cells=cell_ids, points=point_ids)
+    return out
+
+
+# ── Fields of higher order: each owned cell's nodes ──────────────────
+
+def _merge_kind(field):
+    """How a field travels: ``"points"`` or ``"cells"`` (a value each), ``"nodes"``
+    (an ``H1`` field above order 1: each cell's nodes, and its points' values),
+    ``"blocks"`` (an ``L2`` field: each cell's values), or ``None``."""
+    from tack.dataset.algorithms.ghost_cells import _kind
+
+    space = field.space
+    if isinstance(space, H1) and space.order > 1:
+        return "nodes"
+    if isinstance(space, L2):
+        return "blocks"
+    return _kind(field)
+
+
+def _chosen(pieces, fields):
+    """The names of the fields merged, checked on every piece."""
+    if not pieces:
+        return []
+    for i, piece in enumerate(pieces):
+        if _merge_kind(piece.geometry) not in ("points", "nodes"):
+            raise NotImplementedError(
+                f"merge_pieces takes an H1 geometry, one position a point; partition "
+                f"{i}'s is {piece.geometry.space!r}")
+    names = list(pieces[0].fields) if fields is None else \
+        ([fields] if is_field_key(fields) else list(fields))
+    for i, piece in enumerate(pieces):
+        for name in names:
+            if name not in piece.fields:
+                raise KeyError(f"partition {i} has no field {name!r}")
+            if _merge_kind(piece.fields[name]) is None:
+                raise TypeError(f"merge_pieces carries point, cell, H1 and L2 fields; "
+                                f"{name!r} is in {piece.fields[name].space!r} (choose others "
+                                "with fields=)")
+    return names
+
+
+def _space_key(space):
+    """What must agree between pieces for a field (or the geometry) to merge."""
+    if isinstance(space, H1):
+        return ("H1", space.order, repr(_spec(space, None)))
+    if isinstance(space, L2):
+        return ("L2", "per cell" if space.varies else space.order, space.basis)
+    return (type(space).__name__, getattr(space, "on", None))
+
+
+def _same_spaces(blocks, pieces, names):
+    """Every piece's fields (and geometry) in one space, on every rank alike."""
+    keys = blocks.all_gather({g: (_space_key(p.geometry.space),
+                                  tuple(_space_key(p.fields[n].space) for n in names))
+                              for g, p in zip(blocks.local, pieces)})
+    if not keys:
+        return
+    for g, (geometry, spaces) in enumerate(keys):
+        if geometry != keys[0][0]:
+            raise ValueError(f"merge_pieces merges pieces of one geometry: partition {g}'s "
+                             f"is {geometry}, partition 0's {keys[0][0]}")
+        for name, mine, first in zip(names, spaces, keys[0][1]):
+            if mine != first:
+                raise ValueError(f"merge_pieces merges a field in one space: {name!r} is "
+                                 f"{mine} on partition {g}, {first} on partition 0")
+
+
+@tack.kernel
+def _set_sizes(cells, per_cell, out):
+    for c in cells:
+        out[cells.entity_id(c)] = per_cell
+
+
+def _ramp(sizes):
+    """``0 .. sizes[k] - 1`` for each ``k``, end to end (host)."""
+    total = int(sizes.sum())
+    starts = np.repeat(np.cumsum(sizes) - sizes, sizes)
+    return np.arange(total, dtype=np.int64) - starts
+
+
+def _value_places(space, values):
+    """Where each cell's nodes are in ``space``'s values, ``(sizes, starts, places)``
+    on the host: cell ``c``'s node ``n`` (lexicographic, as ``carry`` lists an
+    ``H1`` space's; an ``L2`` cell's in its order) at ``places[starts[c] + n]``."""
+    from tack.dataset.carry import _node_entries
+
+    topology = space.topology
+    n = topology.num_cells
+    if isinstance(space, L2):
+        offsets = np.asarray(arrays.to_host(space.offsets), np.int64).reshape(-1)
+        sizes = np.diff(offsets[:n + 1])
+        if space.layout == "cells":
+            # Value k of cell c at k * cells + c; listed cell by cell.
+            cell = np.repeat(np.arange(n, dtype=np.int64), sizes)
+            return sizes, offsets[:n], _ramp(sizes) * n + cell
+        return sizes, offsets[:n], np.arange(int(offsets[n]) if n else 0, dtype=np.int64)
+    index, entry, groups, _ = _node_entries(space, values)
+    sizes = tack.zeros((max(n, 1),), tack.i64)
+    for group, _, per_cell in groups:
+        _set_sizes(group.view(), per_cell, sizes)
+    return (sizes.numpy()[:n].astype(np.int64), entry.numpy()[:n].astype(np.int64),
+            index.numpy().astype(np.int64))
+
+
+def _add_nodes(message, name, field, cells, device):
+    """An owned cell's nodes of ``field``, each cell's in its order: values and
+    counts, into ``message``."""
+    from tack.dataset.carry import _take
+
+    sizes, starts, places = _value_places(field.space, arrays.materialize(field.values))
+    cells = np.asarray(cells, np.int64)
+    mine = sizes[cells]
+    chosen = places[np.repeat(starts[cells], mine) + _ramp(mine)] if len(cells) else \
+        np.zeros(0, np.int64)
+    message[f"\0nodes {name}"] = _take(field.values,
+                                       tack.array(chosen, tack.i64, device=device))
+    message[f"\0sizes {name}"] = tack.array(mine, tack.i64, device=device)
+
+
+def _nodes_placed(space, like, messages, name, points=None):
+    """The values of a field in ``space`` (on the merged mesh) from every message's
+    cells' nodes, ``points`` (its values at the points, for an ``H1`` field) first."""
+    from tack.communication._kernels import scatter
+    from tack.dataset.carry import _copy_prefix, _like
+
+    out = _like(like, space.size)
+    if points is not None:
+        _copy_prefix(points, out)
+    sizes, starts, places = _value_places(space, out)
+    for m in messages:
+        key = f"\0nodes {name}"
+        if key not in m or not m["cell_at"].size:
+            continue
+        cells = m["cell_at"].numpy().astype(np.int64)
+        came = m[f"\0sizes {name}"].numpy().astype(np.int64)
+        if not np.array_equal(came, sizes[cells]):
+            raise ValueError(f"merge_pieces: the cells' nodes of {name!r} do not match the "
+                             "merged mesh's")
+        at = places[np.repeat(starts[cells], came) + _ramp(came)]
+        scatter(m[key].to_device(out.device), tack.array(at, tack.i64, device=out.device),
+                out)
     return out

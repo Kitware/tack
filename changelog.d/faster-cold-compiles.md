@@ -21,7 +21,9 @@
   (its operands' bounds checks in debug mode, its literals' ranges and
   types). The other arm's source is still validated, but its
   device functions are not inlined, the workgroup primitives and atomics in
-  it are not required, and a name bound only there is unbound. Half of the
+  it are not required, a name bound only there is unbound (the error names
+  the condition), and a variable assigned in both arms has the arm taken's
+  type rather than the join of the two. Half of the
   streamlines kernel's IR on AhmedML was such arms: its cold compile went
   from 1.9 s to 1.3 s, and the analysis sweep's from 11.8 s to 10.8 s.
 - Generating GPU source is faster, the source unchanged: renaming a kernel's

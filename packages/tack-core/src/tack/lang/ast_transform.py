@@ -248,11 +248,23 @@ class KernelTransformer(
             # Constants decide it: the arm they pick, in place, and the other
             # never lowered (constant_conditions). The condition stays, in an
             # `if` with empty arms, so it is evaluated and typed as before.
+            self._note_decided_away(node, node.orelse if decided else node.body)
             return [ir.IRIf(condition=condition, then_body=[], else_body=[]),
                     *self._visit_body(node.body if decided else node.orelse)]
         then_body = self._visit_body(node.body)
         else_body = self._visit_body(node.orelse)
         return ir.IRIf(condition=condition, then_body=then_body, else_body=else_body)
+
+    def _note_decided_away(self, node: ast.If, stmts: list):
+        """Record the names ``stmts``, an arm not lowered, assign, for the error a
+        read of one gives (``_check_names_bound``)."""
+        condition = None
+        for stmt in stmts:
+            for sub in ast.walk(stmt):
+                if isinstance(sub, ast.Name) and isinstance(sub.ctx, ast.Store):
+                    if condition is None:
+                        condition = ast.unparse(node.test)
+                    self._decided_away.setdefault(sub.id, (condition, node.lineno))
 
     def visit_IfExp(self, node: ast.IfExp) -> ir.IRIfExp:
         condition, before = self._visit_expression(node.test)

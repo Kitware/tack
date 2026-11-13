@@ -442,8 +442,9 @@ operand ranges. Equal signedness chooses the wider type. Mixed signedness
 chooses a signed type with sufficient width: i8 with u16 gives i32, and
 i16 with u32 gives i64. Mixing any signed type with u64 is rejected with
 an explicit-cast diagnostic. This applies to arithmetic, comparisons,
-conditional arms, and joining assignments to one local variable.
-An explicit cast can express intentional wrapping before promotion. True
+conditional arms, and joining assignments to one local variable (the
+assignments that are lowered: an arm that constants decide against is not;
+see "Branches that constants decide"). An explicit cast can express intentional wrapping before promotion. True
 division and integer power have the distinct result-type rules below.
 
 Integer-to-integer casts and integer array stores reduce the mathematical
@@ -605,7 +606,7 @@ function's literal results bound to the caller's names, such as a
 parametric center returned as a vector of literals. A conditional
 expression counts only when its condition reads nothing but constants. A
 local with more than one assignment has one type, the join of its
-assignments: when another assignment makes it f64, every literal assigned
+assignments (those lowered, not an arm that constants decide against): when another assignment makes it f64, every literal assigned
 to it converts exactly. A local every one of whose assignments is a weak
 expression -- a device function returning literals from several
 branches, say -- takes the kernel's float precision, as a float scalar
@@ -1132,7 +1133,12 @@ still checks the load's bounds), and a literal outside 64 bits or a mix of
 validated (unsupported syntax is reported), but its device functions are
 not inlined, and the workgroup primitives and atomics in it are not required
 of the backend, as in C++'s `if constexpr`. A variable bound only in the
-arm not taken is unbound. Floating-point conditions are decided as the
+arm not taken is unbound, and the error names the condition. The arm not
+taken has no part in the types either: a variable assigned in both arms has
+the type the arm taken gives it, not the join of the two that a branch
+decided as the kernel runs gives (`x = tack.i32(...)` in the arm taken and
+`x = tack.i64(...)` in the other make `x` an `i32`), so a kernel specialized
+on a class constant can type a variable differently per specialization. Floating-point conditions are decided as the
 kernel runs, since a literal's f32 value can compare differently from
 Python's. A large kernel specialized by its classes' constants (the
 streamlines kernel on AhmedML's mesh) had half its IR in such arms.

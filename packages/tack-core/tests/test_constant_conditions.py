@@ -146,8 +146,49 @@ def bound_in_the_arm_not_taken(out):
 
 
 def test_a_name_bound_only_in_the_arm_not_taken_is_unbound():
-    with pytest.raises(Exception, match="x"):
+    """The error says why: the condition that decided it, and where."""
+    with pytest.raises(NameError, match=r"name 'x' .* assigned only in the arm of "
+                                        r"`if 1 == 2` \(line \d+\) that constants decide against"):
         bound_in_the_arm_not_taken(tack.zeros((2,), tack.i32))
+
+
+@tack.kernel
+def joined_in_a_statement(out):
+    for i in range(out.shape[0]):
+        if 1 == 1:
+            x = tack.i32(2147483647)
+        else:
+            x = tack.i64(0)
+        out[i] = x + 1
+
+
+@tack.kernel
+def joined_in_an_expression(out):
+    for i in range(out.shape[0]):
+        x = tack.i32(2147483647) if 1 == 1 else tack.i64(0)
+        out[i] = x + 1
+
+
+@tack.kernel
+def joined_at_run_time(flag, out):
+    for i in range(out.shape[0]):
+        if flag == 1:
+            x = tack.i32(2147483647)
+        else:
+            x = tack.i64(0)
+        out[i] = x + 1
+
+
+@pytest.mark.parametrize("kernel", [joined_in_a_statement, joined_in_an_expression])
+def test_a_decided_branch_takes_the_types_of_the_arm_taken(kernel):
+    """As in C++'s `if constexpr`, the arm not taken has no part in the types:
+    `x` is the arm taken's i32, so `x + 1` wraps. A branch decided as the
+    kernel runs joins its arms' types: `x` is i64 there."""
+    out = tack.zeros((1,), tack.i64)
+    kernel(out)
+    assert out.numpy()[0] == -2147483648
+    joined_at_run_time(1, out)
+    assert out.numpy()[0] == 2147483648
 
 
 @tack.kernel

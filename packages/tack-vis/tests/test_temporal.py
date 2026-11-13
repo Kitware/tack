@@ -481,6 +481,61 @@ def test_pathlines_build_each_meshs_locator_once(monkeypatch):
         paths[copy] = out.world_positions()
     np.testing.assert_array_equal(paths[True], paths[False])
 
+@pytest.mark.parametrize("integrator", ["rk4", "euler"])
+def test_advection_on_one_mesh_runs_the_kernel_and_gives_the_hosts_paths(monkeypatch,
+                                                                          integrator):
+    """Steps on one mesh -- the same topology, or a new one of the same arrays, as
+    a reader gives -- go through the advection kernel with the velocity blended in
+    time; the host's integration, which probes both steps, gives the same paths:
+    substeps, a particle leaving the mesh (stopped where it was), one released
+    within an interval, and a velocity that stops for a moment (t = 1) without
+    stopping the particles."""
+    from tack.dataset import temporal
+
+    def flow(x, t):
+        v = 0.2 * _swirl(x, t)
+        v[:, 0] += 0.5
+        return v * (t - 1.0) ** 2             # zero everywhere at t = 1
+
+    def steps():
+        # Every step a new grid (a new topology of the same arrays), but the
+        # tetrahedra at t = 0.5: another mesh, so the intervals to it and from it
+        # go on the host, and the two after the stop at t = 1 on the device.
+        for t in (0.0, 0.5, 1.0, 1.5, 2.0):
+            grid = _flow(t, flow)
+            if t == 0.5:
+                grid = td.tetrahedralize(grid)
+                grid.time, grid.time_unit = t, "s"
+            yield grid
+
+    seeds = [[7.0, 5.0, 1.0], [5.0, 3.5, 1.0], [9.8, 5.0, 1.0], [2.0, 2.0, 1.0]]
+    runs = {}
+    for where in ("device", "host"):
+        if where == "host":
+            monkeypatch.setattr(temporal.Advection, "_advance_on_device",
+                                temporal.Advection._advance_on_host)
+        ran = []
+        real = temporal.Advection._advance_on_device
+        monkeypatch.setattr(temporal.Advection, "_advance_on_device",
+                            lambda self, *a, ran=ran, real=real: (ran.append(1),
+                                                                  real(self, *a)))
+        advection = td.Advection("v", seeds, integrator=integrator, step_size=0.1)
+        advection.inject([[3.0, 7.0, 1.0]], time=0.75)
+        for step in steps():
+            out = advection.update(step)
+        assert len(ran) == 2              # the intervals ending at 1.5 and 2.0
+        runs[where] = out
+        monkeypatch.undo()
+    device, host = runs["device"], runs["host"]
+    np.testing.assert_allclose(device.world_positions(), host.world_positions(), atol=2e-5)
+    for name in ("status", "seed", "release", "time"):
+        np.testing.assert_array_equal(device.fields[name].values.numpy(),
+                                      host.fields[name].values.numpy())
+    status = device.fields["status"].values.numpy()
+    assert status[2] & td.ParticleStatus.SPATIAL_BOUNDS                 # left at x = 10
+    assert (status[[0, 1, 3, 4]] == 17).all()                           # still moving
+
+
 def test_advection_over_pieces_is_the_wholes():
     def rotation(x, t):
         v = np.zeros_like(x)
@@ -496,6 +551,125 @@ def test_advection_over_pieces_is_the_wholes():
         b = pieces.update(td.split(step, (2, 2, 1)))
     assert isinstance(b, td.PartitionedDataSet)
     np.testing.assert_allclose(b[0].world_positions(), a.world_positions(), atol=1e-5)
+
+
+@pytest.mark.parametrize("integrator", ["rk4", "euler"])
+@pytest.mark.parametrize("ghosts", [False, True])
+def test_advection_over_pieces_on_one_mesh_runs_each_pieces_kernel(monkeypatch, integrator,
+                                                                    ghosts):
+    """Pieces on one mesh -- split afresh each step, with ghost cells or without --
+    go through each piece's kernel, a step leaving its piece through the host;
+    the host's integration alone gives the same paths: particles crossing
+    pieces, one leaving the mesh (stopped where it was), one released within an
+    interval."""
+    from tack.dataset import temporal
+
+    def flow(x, t):
+        v = 0.4 * _swirl(x, t)
+        v[:, 0] += 0.5
+        return v * (1.0 + t)
+
+    def steps():
+        for t in (0.0, 0.5, 1.0, 1.5):
+            pieces = td.PartitionedDataSet(td.split(_flow(t, flow), (2, 2, 1)))
+            yield td.ghost_cells(pieces) if ghosts else pieces
+
+    seeds = [[7.0, 5.0, 1.0], [5.0, 3.5, 1.0], [9.6, 5.0, 1.0], [2.0, 2.0, 1.0],
+             [4.0, 6.0, 1.0]]
+    runs = {}
+    for where in ("pieces", "host"):
+        if where == "host":
+            monkeypatch.setattr(temporal, "_one_mesh", lambda before, now: False)
+        calls = {"pieces": 0, "substeps": 0}
+        for name, key in (("_advance_pieces", "pieces"), ("_substep", "substeps")):
+            real = getattr(temporal.Advection, name)
+            monkeypatch.setattr(temporal.Advection, name,
+                                lambda self, *a, real=real, key=key, calls=calls:
+                                (calls.__setitem__(key, calls[key] + 1), real(self, *a))[1])
+        advection = td.Advection("v", seeds, integrator=integrator, step_size=0.1)
+        advection.inject([[3.0, 7.0, 1.0]], time=0.75)
+        for step in steps():
+            out = advection.update(step)
+        runs[where] = (out[0], calls)
+        monkeypatch.undo()
+    (pieces, on_pieces), (host, on_host) = runs["pieces"], runs["host"]
+    assert on_pieces["pieces"] == 3 and on_host["pieces"] == 0
+    # Steps leaving a piece went to the host, far fewer than its every substep.
+    assert 0 < on_pieces["substeps"] < on_host["substeps"] // 2
+    np.testing.assert_allclose(pieces.world_positions(), host.world_positions(), atol=2e-5)
+    for name in ("status", "seed", "release", "time"):
+        np.testing.assert_array_equal(pieces.fields[name].values.numpy(),
+                                      host.fields[name].values.numpy())
+    status = pieces.fields["status"].values.numpy()
+    assert status[2] & td.ParticleStatus.SPATIAL_BOUNDS                 # left at x = 10
+    assert (status[[0, 1, 3, 4, 5]] == 17).all()                        # still moving
+    assert len(np.unique(np.floor(pieces.world_positions()[:, :2] / 5.0), axis=0)) > 1
+
+
+def test_advection_takes_steps_with_hidden_cells_to_the_host(monkeypatch):
+    """The kernel would search hidden cells, which a probe passes over: a step
+    with any goes on the host."""
+    from tack.dataset import temporal
+
+    ran = []
+    monkeypatch.setattr(temporal.Advection, "_advance_on_device",
+                        lambda self, *a: ran.append(1))
+    advection = td.Advection("v", seeds=[[1.0, 5.0, 1.0]])
+    for t in (0.0, 1.0):
+        step = _flow(t, _along_x(lambda t: 1.0))
+        marks = np.zeros(step.num_cells, np.uint8)
+        marks[-1] = td.Ghosts.HIDDENCELL
+        step.ghosts = td.Ghosts(cells=marks)
+        particles = advection.update(step)
+    assert not ran
+    np.testing.assert_allclose(particles.world_positions()[0, 0], 2.0, rtol=1e-6)
+
+
+def _uniform_x(t, speed, where="points", ghost_speed=None):
+    """Two pieces of a 5 x 5 x 5 grid at ``t`` with a velocity ``speed`` along x on
+    its ``where`` ("points" or "cells"); with ``ghost_speed``, a layer of ghost
+    cells whose copies of a cell velocity say that instead of the owner's."""
+    grid = td.uniform_grid((5, 5, 5), spacing=(1.0, 1.0, 1.0), unit="m")
+    grid.time, grid.time_unit = t, "s"
+    n = grid.num_points if where == "points" else grid.num_cells
+    space = td.H1(grid) if where == "points" else td.Values(grid, "cells")
+    v = np.tile(np.float32([speed, 0.0, 0.0]), (n, 1))
+    grid.fields["v"] = td.Field(space, tack.array(v, tack.vec3()), "m/s")
+    pieces = td.PartitionedDataSet(td.split(grid, (2, 1, 1)))
+    if ghost_speed is None:
+        return pieces
+    out = []
+    for piece in td.ghost_cells(pieces):
+        v = piece.fields["v"].values.numpy().reshape(-1, 3).copy()
+        v[(piece.ghosts.cells.numpy() & td.Ghosts.DUPLICATECELL) != 0, 0] = ghost_speed
+        piece.fields["v"] = td.Field(piece.fields["v"].space, tack.array(v, tack.vec3()),
+                                     "m/s")
+        out.append(piece)
+    return td.PartitionedDataSet(out)
+
+
+@pytest.mark.parametrize("case", ["cells then points", "ghosts that differ"])
+def test_advection_over_pieces_gives_the_hosts_path(monkeypatch, case):
+    """Over pieces on one mesh, a velocity on the cells one step and on the points
+    the next, and ghost cells whose copies of the velocity differ from their
+    owners' (the host's probe reads the owner): the kernel path gives the host's
+    path, x = 1.8 + 0.4."""
+    from tack.dataset import temporal
+
+    def step(t):
+        if case == "cells then points":
+            return _uniform_x(t, 1.0, "cells" if t == 0.0 else "points")
+        return _uniform_x(t, 1.0, "cells", ghost_speed=3.0)
+
+    ran = []
+    real = temporal.Advection._advance_pieces
+    monkeypatch.setattr(temporal.Advection, "_advance_pieces",
+                        lambda self, *a: (ran.append(1), real(self, *a))[1])
+    advection = td.Advection("v", seeds=[[1.8, 2.0, 2.0]])
+    for t in (0.0, 0.4):
+        particles = advection.update(step(t))
+    assert ran == [1]
+    np.testing.assert_allclose(particles[0].world_positions()[0, 0], 2.2, rtol=1e-6)
 
 
 def test_advection_on_a_device_without_f64():
@@ -515,12 +689,14 @@ def _swirl(x, t):
     return v
 
 
-def advect_across(world, uneven=False):
-    """This rank's particles (its own seeds) advected through steps whose pieces are
-    shared out over ``world``'s ranks, and the same seeds through the whole steps.
+def advect_across(world, uneven=False, cuts=(2, 2, 1), ghosts=False):
+    """This rank's particles (its own seeds) advected through steps whose pieces
+    (``split``'s, by ``cuts``; with ``ghosts``, a layer of ghost cells) are shared
+    out over ``world``'s ranks, and the same seeds through the whole steps.
     ``uneven``: every seed on rank 0, one leaving the mesh, and a release on the
     last rank alone, so ranks have no particles, stop at other substeps and
-    release at other steps, while the probes are collective."""
+    release at other steps, while the probes are collective. Fewer pieces than
+    ranks leave a rank with none."""
     seeds = np.array([[7.0, 5.0, 1.0], [5.0, 3.5, 1.0], [4.0, 6.0, 1.0],
                       [6.0, 6.5, 1.0]])
     if uneven:
@@ -535,8 +711,9 @@ def advect_across(world, uneven=False):
             advection.inject([[5.0, 5.0, 1.0]], time=0.25)
     for t in (0.0, 0.5, 1.0):
         step = _flow(t, _swirl)
-        pieces = list(td.split(step, (2, 2, 1)))[world.rank::world.size]
-        got = shared.update(td.PartitionedDataSet(pieces, world=world))
+        pieces = td.PartitionedDataSet(list(td.split(step, cuts))[world.rank::world.size],
+                                       world=world)
+        got = shared.update(td.ghost_cells(pieces) if ghosts else pieces)
         want = whole.update(step)
     return got[0], want
 

@@ -625,6 +625,53 @@ def test_advection_takes_steps_with_hidden_cells_to_the_host(monkeypatch):
     np.testing.assert_allclose(particles.world_positions()[0, 0], 2.0, rtol=1e-6)
 
 
+def _uniform_x(t, speed, where="points", ghost_speed=None):
+    """Two pieces of a 5 x 5 x 5 grid at ``t`` with a velocity ``speed`` along x on
+    its ``where`` ("points" or "cells"); with ``ghost_speed``, a layer of ghost
+    cells whose copies of a cell velocity say that instead of the owner's."""
+    grid = td.uniform_grid((5, 5, 5), spacing=(1.0, 1.0, 1.0), unit="m")
+    grid.time, grid.time_unit = t, "s"
+    n = grid.num_points if where == "points" else grid.num_cells
+    space = td.H1(grid) if where == "points" else td.Values(grid, "cells")
+    v = np.tile(np.float32([speed, 0.0, 0.0]), (n, 1))
+    grid.fields["v"] = td.Field(space, tack.array(v, tack.vec3()), "m/s")
+    pieces = td.PartitionedDataSet(td.split(grid, (2, 1, 1)))
+    if ghost_speed is None:
+        return pieces
+    out = []
+    for piece in td.ghost_cells(pieces):
+        v = piece.fields["v"].values.numpy().reshape(-1, 3).copy()
+        v[(piece.ghosts.cells.numpy() & td.Ghosts.DUPLICATECELL) != 0, 0] = ghost_speed
+        piece.fields["v"] = td.Field(piece.fields["v"].space, tack.array(v, tack.vec3()),
+                                     "m/s")
+        out.append(piece)
+    return td.PartitionedDataSet(out)
+
+
+@pytest.mark.parametrize("case", ["cells then points", "ghosts that differ"])
+def test_advection_over_pieces_gives_the_hosts_path(monkeypatch, case):
+    """Over pieces on one mesh, a velocity on the cells one step and on the points
+    the next, and ghost cells whose copies of the velocity differ from their
+    owners' (the host's probe reads the owner): the kernel path gives the host's
+    path, x = 1.8 + 0.4."""
+    from tack.dataset import temporal
+
+    def step(t):
+        if case == "cells then points":
+            return _uniform_x(t, 1.0, "cells" if t == 0.0 else "points")
+        return _uniform_x(t, 1.0, "cells", ghost_speed=3.0)
+
+    ran = []
+    real = temporal.Advection._advance_pieces
+    monkeypatch.setattr(temporal.Advection, "_advance_pieces",
+                        lambda self, *a: (ran.append(1), real(self, *a))[1])
+    advection = td.Advection("v", seeds=[[1.8, 2.0, 2.0]])
+    for t in (0.0, 0.4):
+        particles = advection.update(step(t))
+    assert ran == [1]
+    np.testing.assert_allclose(particles[0].world_positions()[0, 0], 2.2, rtol=1e-6)
+
+
 def test_advection_on_a_device_without_f64():
     from test_dataset_devices import _NoF64CPU
 

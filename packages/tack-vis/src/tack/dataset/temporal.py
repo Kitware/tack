@@ -449,10 +449,31 @@ def _velocities(data, field, x, *others):
 _BEFORE = "__tack_before__"
 
 
+def _alike(a, b):
+    """Whether fields ``a`` and ``b`` of two steps on one mesh hold their values
+    alike -- spaces of one class and parameters (an array parameter, the same
+    array) that store their values -- so that ``b``'s space holds ``a``'s values.
+    The velocity may be on the cells one step and on the points the next."""
+    from tack.dataset.spaces import _is_array
+
+    s, t = a.space, b.space
+    if type(s) is not type(t) or s.evaluated or s.params.keys() != t.params.keys():
+        return False
+    for name, x in s.params.items():
+        y = t.params[name]
+        if not (x is y or (not (_is_array(x) or _is_array(y)) and x == y)):
+            return False
+    return True
+
+
 def _with_before(before, now, field):
     """``now`` with ``before``'s velocity beside its own (``_BEFORE``), both steps
-    on one mesh, so that one probe gives both; piece by piece over pieces."""
+    on one mesh, so that one probe gives both; piece by piece over pieces. ``None``
+    where any piece's two velocities are not ``_alike`` (collective)."""
     if isinstance(now, PartitionedDataSet):
+        if not all(now.world._allgather(all(_alike(b.fields[field], n.fields[field])
+                                            for b, n in zip(before, now)))):
+            return None
         return PartitionedDataSet([_with_before(b, n, field) for b, n in zip(before, now)],
                                   world=now.world)
     velocity, earlier = now.fields[field], before.fields[field]
@@ -626,13 +647,15 @@ class Advection:
         else:
             self._advance_on_device(before, now, t0, t1)
 
-    def _carry(self, before, now, x, time, status, t0, t1, scale):
+    def _carry(self, before, now, x, time, status, t0, t1, scale, piece=False):
         """The advection kernel on one mesh (``now``'s, ``before`` the previous
         step's velocity on it): particles at world points ``x`` carried from their
         ``time``s towards ``t1``, with the velocity blended in time. Returns their
         points relative to ``now``'s origin, their times and the kernel's status,
         ``SPATIAL_BOUNDS`` (4) where a step would have left the mesh, the particle
-        where that step began."""
+        where that step began. A ``piece``'s ghost cells are outside it: their
+        owner's velocity, which a ghost's copy may not match, decides a step
+        reaching one."""
         from tack.dataset.algorithms._advection import _AT_END, _run
 
         n = len(x)
@@ -642,7 +665,7 @@ class Advection:
             xs, times, _, out, *_ = _run(
                 now, self.field, x, limit * scale, 1 << 30, self.integrator, None, False,
                 resume=((time - t0) * scale, np.zeros(n, np.int32), status),
-                before=before, until=(t1 - t0) * scale)
+                before=before, until=(t1 - t0) * scale, handoff=piece)
         out = out.numpy().astype(np.int32)
         ended = (out & int(_AT_END)) != 0
         times = np.where(ended, t1, t0 + times.numpy().astype(np.float64) / scale)
@@ -694,7 +717,9 @@ class Advection:
                     locators[g] = cached_locator(piece)
         boxes, holds = _boxes(blocks, pieces, locators), _holder(blocks, pieces, locators)
         home = blocks.local.start                   # this rank's particles' block
-        velocity = self._blended(None, _with_before(before, now, self.field), t0, t1)
+        both = _with_before(before, now, self.field)
+        velocity = self._blended(before, now, t0, t1) if both is None else \
+            self._blended(None, both, t0, t1)
         origin = np.asarray(origin, np.float64)
         like = {"x0": tack.u64, "x1": tack.u64, "x2": tack.u64, "time": tack.u64,
                 "status": tack.i32}
@@ -723,7 +748,7 @@ class Advection:
                     continue
                 xs, times, status = self._carry(
                     kept, piece, x + origin, values["time"].numpy().view(np.float64),
-                    values["status"].numpy(), t0, t1, scale)
+                    values["status"].numpy(), t0, t1, scale, piece=True)
                 device = blocks.device(g)
                 answers[g] = {**_bits(xs, device),
                               "time": tack.array(times.view(np.uint64), tack.u64,

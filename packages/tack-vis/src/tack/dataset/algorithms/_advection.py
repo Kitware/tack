@@ -261,6 +261,11 @@ def _advect(mesh, velocity, h, max_steps, method, by_length, eps, xs, times, ste
             # (by_id).
             best, best_type, best_pc, best_tet = mesh.find_from(p, last)
             found = 1 if best < mesh.ncells else 0
+            # In time over pieces, a ghost cell is outside the piece: its owner's
+            # velocity, which the ghost's copy may not match, decides the step.
+            if found == 1 and until == 1 and handoff == 1:
+                if (ghosts[best] & 1) != 0:
+                    found = 0
             if found == 1:
                 last = best
             v = p - p
@@ -749,7 +754,8 @@ def _run(data, field, seeds, step_size, steps, integrator, locator, record, resu
     ``field`` is the velocity at time 0, ``data``'s being at ``until``, linear
     between; each particle goes from its time (``resume``) to ``until`` at most,
     pausing there (``_AT_END``), and stops where it was when a step would leave
-    the mesh.
+    the mesh -- with ``handoff``, a piece's own cells, a ghost cell counting as
+    outside.
 
     Returns ``(xs, times, steps, status, (trace, trace_times), lengths, capacity,
     (step, travelled))``."""

@@ -162,3 +162,105 @@ def test_refusals():
     data.fields["s"] = td.Field(td.Values(data, "points"), tack.array(np.zeros(2)))
     with pytest.raises(TypeError, match="3-vector"):
         td.glyphs(data, "s")
+
+
+# ── Glyphs of higher-order data (#420) ──────────────────────────────
+
+@tack.func
+def _flow(x):
+    return [x[1], -x[0], 0.5 + x[2] * x[2]]
+
+
+def _flow_at(x):
+    return np.stack([x[:, 1], -x[:, 0], 0.5 + x[:, 2] ** 2], axis=1)
+
+
+@tack.func
+def _bend(x):
+    return [x[0] + 0.1 * x[1] * x[1], x[1] + 0.12 * x[0] * x[0], x[2] + 0.05 * x[0] * x[1]]
+
+
+def _cube(curved):
+    grid = td.uniform_grid((4, 4, 4), spacing=(1 / 3, 1 / 3, 1 / 3), dtype=tack.f64)
+    data = td.extract_cells(grid, np.arange(grid.num_cells))
+    data = td.DataSet(data.topology, data.geometry)
+    if curved:
+        data.geometry = td.interpolate(data, _bend, td.H1(data, order=2),
+                                       dtype=tack.vec3(tack.f64))
+    return data
+
+
+def _bases_and_tips(arrows, res):
+    per = 3 * res + 2
+    x = arrows.world_positions().reshape(-1, per, 3)
+    return x[:, 3 * res + 1], x[:, 3 * res]
+
+
+@pytest.mark.parametrize("curved", [False, True])
+def test_glyphs_of_a_high_order_field_at_the_points(curved):
+    """As many arrows as points, whatever the field's order: an H1 field of order 4 on
+    a geometry of order 2 gives each point's arrow from its position along its
+    value there, which interpolation put at the corner exactly."""
+    data = _cube(curved)
+    data.fields["v"] = td.interpolate(data, _flow, td.H1(data, order=4),
+                                      dtype=tack.vec3(tack.f64))
+    res = 6
+    arrows = td.glyphs(data, "v", scale=0.1, resolution=res)
+    bases, tips = _bases_and_tips(arrows, res)
+    assert len(bases) == data.num_points
+    np.testing.assert_allclose(bases, data.positions(), rtol=0, atol=1e-12)
+    np.testing.assert_allclose(tips, bases + 0.1 * _flow_at(bases), rtol=0, atol=1e-12)
+    assert arrows.fields["v"].space == td.H1(arrows)
+
+
+@pytest.mark.parametrize("curved", [False, True])
+def test_glyphs_of_a_dg_field_at_the_cells(curved):
+    """A DG field is glyphed at the cells' centres by default, one arrow a cell along
+    the cell's own value there; at="cells" does the same for any field, the
+    arrows carrying every field evaluated at the centre; the points refuse a DG
+    field, which has a value in each cell sharing one."""
+    data = _cube(curved)
+    data.fields["w"] = td.interpolate(data, _flow, td.L2(data, order=3),
+                                      dtype=tack.vec3(tack.f64))
+    data.fields["h"] = td.interpolate(data, _flow, td.H1(data, order=2),
+                                      dtype=tack.vec3(tack.f64))
+    data.fields["c"] = td.Field(td.Constant(data),
+                                tack.array(np.arange(data.num_cells, dtype=np.float64)))
+    res = 6
+    arrows = td.glyphs(data, "w", scale=0.1, resolution=res)
+    bases, tips = _bases_and_tips(arrows, res)
+    assert len(bases) == data.num_cells
+    centres = td.cell_centers(data).values.numpy() + np.asarray(data.origin)
+    np.testing.assert_allclose(bases, centres, rtol=0, atol=1e-12)
+    at_centres = td.values_at_centers(data, "w").values.numpy()
+    np.testing.assert_allclose(tips, bases + 0.1 * at_centres, rtol=0, atol=1e-12)
+    if not curved:
+        np.testing.assert_allclose(at_centres, _flow_at(centres), rtol=0, atol=1e-12)
+    per = 3 * res + 2
+    assert set(arrows.fields) == {"w", "h", "c"}
+    np.testing.assert_array_equal(arrows.fields["c"].values.numpy(),
+                                  np.repeat(np.arange(data.num_cells), per))
+    of_h = td.glyphs(data, "h", scale=0.1, resolution=res, at="cells")
+    np.testing.assert_allclose(_bases_and_tips(of_h, res)[0], centres, rtol=0, atol=1e-12)
+    by = td.glyphs(data, "h", scale=0.1, scale_by="c", resolution=res)
+    assert by.num_points == data.num_cells * per         # a cell field puts them at the cells
+    with pytest.raises(TypeError, match="value per cell"):
+        td.glyphs(data, "w", at="points")
+    with pytest.raises(ValueError, match="points or the cells"):
+        td.glyphs(data, "h", at="nodes")
+
+
+def test_glyphs_at_the_cells_of_pieces_count_each_cell_once():
+    """A centre is its cell's: the arrows of a ghost cell are ghosts, so the owned
+    arrows over the pieces are the whole's cells."""
+    whole = td.uniform_grid((7, 7, 7), spacing=(1 / 6, 1 / 6, 1 / 6), dtype=tack.f64)
+    res = 4
+    per = 3 * res + 2
+    owned = 0
+    for piece in td.split(whole, (2, 2, 1), ghost_layers=1):
+        piece.fields["w"] = td.interpolate(piece, _flow, td.L2(piece, order=2),
+                                           dtype=tack.vec3(tack.f64))
+        arrows = td.glyphs(piece, "w", scale=0.1, resolution=res)
+        marks = arrows.ghosts.points.numpy()
+        owned += int(((marks & td.Ghosts.DUPLICATEPOINT) == 0).sum()) // per
+    assert owned == whole.num_cells

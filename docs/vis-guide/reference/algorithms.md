@@ -149,7 +149,7 @@ vectors, made by Tack so its fields and marks come along.
 | Algorithm | Gives | Takes | VTK | Viskores |
 |---|---|---|---|---|
 | [`tubes`](#tack.dataset.algorithms.tubes.tubes) | lines as tubes of quads, with outward normals | lines | vtkTubeFilter | — |
-| [`glyphs`](#tack.dataset.algorithms.glyphs.glyphs) | an arrow at each point along a vector field | dataset | vtkGlyph3D | — |
+| [`glyphs`](#tack.dataset.algorithms.glyphs.glyphs) | an arrow along a vector field at each point, or at each cell's centre (a DG field's) | dataset | vtkGlyph3D | — |
 
 ::: tack.dataset.algorithms.tubes.tubes
     options: {show_root_full_path: false}

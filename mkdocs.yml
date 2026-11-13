@@ -247,6 +247,9 @@ nav:
       - Backend implementations: design/backend-implementations.md
       - Vendor workarounds: design/vendor-workarounds.md
       - Interoperability: design/interoperability.md
+      - Plans:
+          - design/plans/index.md
+          - Cut filters' memory: design/plans/cut-filters-memory.md
       - Contracts: contracts/index.md
       - Dataset API design: vis-guide/design/dataset-api.md
       - Polyhedra: vis-guide/design/polyhedra.md

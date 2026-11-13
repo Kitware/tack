@@ -118,6 +118,10 @@ the test that guards it, and when it can go.
 libraries and frameworks without copying: wrapping external pointers,
 DLPack, exported device memory, and VTK interop.
 
+**[Plans](plans/index.md).** Work with decisions in it, proposed and
+reviewed before the code: each plan's status, decisions and, once done, how it
+came out.
+
 The two design records of `tack.dataset` are kept with the
 [Visualization Guide](../visualization/index.md):
 

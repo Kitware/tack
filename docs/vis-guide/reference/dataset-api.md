@@ -852,8 +852,11 @@ cells out (`Ghosts.MASKED_CELLS`); reductions leave out every skipped bit
   `extract_geometry`, `mask`, `extract_surface`, `extract_edges`,
   `triangulate`, `tetrahedralize`) and the source of `probe`, `advect` and
   `streamlines` leave them out, as if they were not there. Faces or edges
-  chosen by id, and a reused `CellLocator`, are refused on data with hidden
-  cells. Outputs on the same cells keep their values there, marked.
+  chosen by id are refused on data with hidden cells. The cell search leaves
+  hidden and refined cells out itself (`CellLocator.find(points,
+  hidden=data.ghosts.cells)`), so `probe` and advection keep the dataset's
+  locator, and take one given. Outputs on the same cells keep their values
+  there, marked.
 - **`remove_ghosts(data)`** takes out the duplicate and hidden cells and the
   points no remaining cell uses, as VTK's `vtkRemoveGhosts`: the last step
   before rendering, writing one file, or code that does not know ghost
@@ -1276,7 +1279,16 @@ each field's mean over it, as cell data, by `samples` probes a side per voxel
 `HIDDENCELL`. It takes what `probe` takes (datasets, pieces, AMR hierarchies,
 octrees); with one sample it is the probe at the voxel centres.
 
-`CellLocator(data, density=1.0, levels=2)` bins the cells' bounding boxes on a
+`CellLocator(data, density=1.0, levels=None)` of an image (`UniformCoordinates`)
+or a rectilinear grid (`CartesianProduct`, its axes increasing) builds nothing:
+a point's candidate cells come from its index coordinates, or a binary search
+of each axis, as VTK's `vtkImageData::FindCell` and Viskores'
+`CellLocatorUniformGrid` and `CellLocatorRectilinearGrid` find them, and each is
+tested and ranked as a binned locator's candidates are, so the cells and
+coordinates are the same bit for bit (`locator.structured` says which). At 1M
+points a warm `find` took 17 ms on 64^3 and 256^3 images, against 34 and 113 ms
+through the bins, which also took 0.4 to 1 s to build (CPU, M1 Max). Of any
+other dataset, or given `levels`, it bins the cells' bounding boxes on a
 two-level grid over the dataset, as Viskores' `CellLocatorTwoLevel` does: a
 coarse uniform grid of about 32 cells a bin, each bin split into a uniform
 grid of leaves sized by its count, about 8 cells a leaf. A point is searched

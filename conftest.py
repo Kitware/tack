@@ -41,6 +41,16 @@ Options
     are disjoint and together the whole. For CI's long jobs, which run each
     share serially on its own machine. ``tools/test_durations.py`` refreshes
     the table.
+--select=FILE
+    Run only the test files FILE lists, one a line (``all`` alone keeps every
+    one), before ``--shard`` deals them, so the shares divide the selection.
+    A run that selects nothing passes rather than failing as pytest's "no
+    tests collected". CI writes FILE from the test map
+    (``tools/testmap.py select``) for a pull request's changes. Write it as
+    one argument, ``--select=FILE``: pytest reads its arguments before this
+    file defines the option, so ``--select FILE`` makes FILE look like a test
+    path, and one outside the repository moves the rootdir away from this
+    conftest.
 
 A test that names one of these runs once per matching backend, so which
 backends exist is a property of the machine and never of the test file.
@@ -118,6 +128,8 @@ def pytest_addoption(parser):
                      help="the narrowest id type tack.dataset topologies take")
     parser.addoption("--shard", default=None, metavar="K/N",
                      help="run the K-th (from 1) of N shares of the test files")
+    parser.addoption("--select", default=None, metavar="FILE",
+                     help="run only the test files FILE lists, one a line ('all': every one)")
 
 
 def _shard(value):
@@ -127,7 +139,20 @@ def _shard(value):
     return k, n
 
 
+def _selection(path):
+    """The test files a ``--select`` file lists, or None for every one."""
+    with open(path) as f:
+        lines = [line.strip() for line in f if line.strip()]
+    return None if lines == ["all"] else set(lines)
+
+
 def pytest_collection_modifyitems(config, items):
+    if config.getoption("--select") is not None:
+        chosen = _selection(config.getoption("--select"))
+        if chosen is not None:
+            keep = [item.nodeid.split("::")[0] in chosen for item in items]
+            config.hook.pytest_deselected(items=[i for i, k in zip(items, keep) if not k])
+            items[:] = [i for i, k in zip(items, keep) if k]
     value = config.getoption("--shard")
     if value is None:
         return
@@ -160,6 +185,12 @@ def _durations():
             return json.load(f)
     except FileNotFoundError:
         return {}
+
+
+def pytest_sessionfinish(session, exitstatus):
+    # A selection, or a share of one, may hold no test of this run.
+    if session.config.getoption("--select") is not None and exitstatus == pytest.ExitCode.NO_TESTS_COLLECTED:
+        session.exitstatus = pytest.ExitCode.OK
 
 
 def pytest_configure(config):

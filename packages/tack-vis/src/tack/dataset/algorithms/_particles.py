@@ -40,6 +40,8 @@ from tack.dataset.algorithms._advection import (
     TERMINATE,
     ZERO_VELOCITY,
     _run,
+    check_arguments,
+    check_piece,
 )
 from tack.dataset.algorithms._common import _stand_in, _time_unit
 from tack.dataset.algorithms._extract import _vertices
@@ -217,16 +219,21 @@ def _rounds(data, field, seeds, step_size, steps, integrator, record, unit="time
     ``(seed, segment, positions, times)``, the piece of nothing standing in for a
     rank without pieces (``_stand_in``, else ``None``) and the particles' unit of
     time."""
-    if int(steps) < 1:
-        raise ValueError(f"steps must be at least 1, not {steps!r}")
+    check_arguments(steps, integrator, step_size, unit=unit, **(adaptive or {}))
     if not is_field_key(field):
         raise TypeError("advection of a PartitionedDataSet takes a field's name")
-    fields_of(data, field, "advection")
+
+    def check():                             # what only a rank with pieces can see
+        fields_of(data, field, "advection")
+        for piece in data:
+            with piece.device:
+                check_piece(piece, field)
+
+    origin = common_origin(data, "advection over pieces", check=check)
     pieces = []
     for piece in data:                       # each piece's work on its own device
         with piece.device:
             pieces.append(visible(piece, field)[0])
-    origin = common_origin(data, "advection over pieces")
     # A rank with no pieces takes part through a piece of nothing: its block holds
     # no point, and sends its seeds to the pieces that do.
     nothing = _stand_in(data, origin)
@@ -276,6 +283,25 @@ def _boxes(blocks, pieces, locators):
             for g, piece in zip(blocks.local, pieces)}
 
 
+def _holder(blocks, pieces, locators):
+    """``Routing``'s ``holds`` over this rank's pieces: how well one of a piece's own
+    cells (not a ghost) holds each point, 0 for none."""
+    def holds(g, x):
+        piece = pieces[g - blocks.local.start]
+        with piece.device:
+            cells, held = locators[g]._find_holding(x.astype(piece.dtype.numpy_dtype))
+        cells = arrays.to_host(cells).astype(np.int64)
+        owned = cells >= 0
+        marks = None if piece.ghosts is None else piece.ghosts.cells
+        if marks is not None:
+            owned &= (marks.numpy()[np.maximum(cells, 0)] & Ghosts.SKIPPED_CELLS) == 0
+        # Holding the point ranks ahead of coming within the tolerance, as one
+        # dataset's locator ranks its cells.
+        return np.where(owned, 1 + held.numpy(), 0)
+
+    return holds
+
+
 def _seeded(blocks, seeds, origin):
     """This rank's seeds, numbered after the ranks before it, on its first block:
     host seeds are world positions, taken relative to the pieces' ``origin``; a
@@ -301,19 +327,7 @@ def _route(blocks, pieces, locators, boxes, pending):
     particles each piece takes, those no piece takes, left with the piece they
     were on, and per piece ``(seed, x, time)`` for each particle that goes on
     from further along its push out (``_Particles``' ``beyond_*``)."""
-    def holds(g, x):
-        piece = pieces[g - blocks.local.start]
-        with piece.device:
-            cells, held = locators[g]._find_holding(x.astype(piece.dtype.numpy_dtype))
-        cells = arrays.to_host(cells).astype(np.int64)
-        owned = cells >= 0
-        marks = None if piece.ghosts is None else piece.ghosts.cells
-        if marks is not None:
-            owned &= (marks.numpy()[np.maximum(cells, 0)] & Ghosts.SKIPPED_CELLS) == 0
-        # Holding the point ranks ahead of coming within the tolerance, as one
-        # dataset's locator ranks its cells.
-        return np.where(owned, 1 + held.numpy(), 0)
-
+    holds = _holder(blocks, pieces, locators)
     routing = tc.Routing(blocks, {g: pending[g].x for g in blocks.local}, boxes, holds)
     # A particle no piece holds, pushed out of the piece it was on, may be in a
     # sliver between pieces whose shared faces are not one surface (a

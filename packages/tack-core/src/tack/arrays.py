@@ -188,15 +188,26 @@ class _Implicit:
         return type(self).__name__
 
 
+def _integer(value, what):
+    """``value`` as an ``int`` where an index, a count or a size is meant: a Python or
+    NumPy integer. Anything else is refused rather than truncated: a float there
+    is a mistake (arguments in the wrong order, a size computed in floats), which
+    ``int()`` would hide."""
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
+        raise TypeError(f"{what} is an integer, not {value!r}")
+    return int(value)
+
+
 def _metadata(array, size, width, dtype):
     from tack.runtime.dispatch import same_device
 
     # An implicit array lives where the arrays it holds do, so they must
     # share one device's memory (what `materialize` and kernels read).
     same_device(type(array).__name__, vars(array).values())
-    array._size, array._width, array._dtype = int(size), width, dtype
+    size = _integer(size, f"{type(array).__name__}'s size")
+    array._size, array._width, array._dtype = size, width, dtype
     # The length again, as an attribute a kernel receives, for `len(a)`.
-    array.length = int(size)
+    array.length = size
 
 
 @tack.device_class
@@ -225,9 +236,14 @@ def _operand(values, device=None):
     if isinstance(values, _DeviceArray):
         return _Explicit(values)
     host = np.asarray(values)
-    dtype = tack.i64 if host.dtype.kind in "iu" and host.size and \
-        np.abs(host).max() > 2**31 - 1 else (tack.i32 if host.dtype.kind in "iu"
-                                              else tack.get_default_float())
+    if host.dtype.kind in "iu":
+        # From the least and greatest values: abs() of the i64 minimum wraps, and
+        # a u64 value past 2**63 needs u64, not i64.
+        from tack.lang.types import integer_type_for_range
+
+        dtype = integer_type_for_range(host.min(), host.max()) if host.size else tack.i32
+    else:
+        dtype = tack.get_default_float()
     return _Explicit(_store(host, dtype, device))
 
 
@@ -282,18 +298,43 @@ class CountingArray(_Implicit):
     def __init__(self, size, start=0, step=1, dtype=None):
         self.start = start
         self.step = step
+        size = _integer(size, "CountingArray's size")
         integral = all(isinstance(v, (int, np.integer)) for v in (start, step))
         if dtype is None and integral:
-            reach = max(abs(start), abs(start + step * max(int(size) - 1, 0)))
-            dtype = tack.i64 if reach > 2**31 - 1 else tack.i32
+            from tack.lang.types import integer_type_for_range
+
+            dtype = integer_type_for_range(start, start + step * max(size - 1, 0))
         _metadata(self, size, None, dtype or tack.get_default_float())
+        if self.dtype == tack.u64 and type(self) is CountingArray:
+            self.__class__ = _UnsignedCounting
 
     @tack.func
     def get(self, k):
         return self.start + self.step * k
 
     def numpy(self):
-        return (self.start + self.step * np.arange(self.size)).astype(self.dtype.numpy_dtype)
+        dtype = np.dtype(self.dtype.numpy_dtype)
+        if dtype.kind not in "iu":
+            return (self.start + self.step * np.arange(self.size)).astype(dtype)
+        # In the type itself, wrapping as a kernel's integers do: a start past what
+        # NumPy's default integer holds (2**63 as u64) overflowed converting.
+        bits = 8 * dtype.itemsize
+        def held(v):
+            v = int(v) % (1 << bits)
+            return np.array(v - (1 << bits) if dtype.kind == "i" and v >> (bits - 1) else v,
+                            dtype)
+        with np.errstate(over="ignore"):
+            return np.arange(self.size, dtype=dtype) * held(self.step) + held(self.start)
+
+
+@tack.device_class
+class _UnsignedCounting(CountingArray):
+    """A ``CountingArray`` of u64 values, computed in u64: a start past 2**63 beside
+    a signed index would mix signed and unsigned."""
+
+    @tack.func
+    def get(self, k):
+        return tack.u64(self.start) + tack.u64(self.step) * tack.u64(k)
 
 
 # ── Grid points ─────────────────────────────────────────────────────
@@ -376,7 +417,7 @@ class UniformCoordinates(_Implicit):
     def __init__(self, dims, origin=(0.0, 0.0, 0.0), spacing=(1.0, 1.0, 1.0), direction=None,
                  dtype=None, device=None):
         dtype = tack.get_default_float() if dtype is None else dtype
-        dims = tuple(int(d) for d in dims)
+        dims = tuple(_integer(d, "an image's size") for d in dims)
         if not 1 <= len(dims) <= 3:
             raise ValueError(f"an image has one to three sizes, not {dims!r}")
         dims += (1,) * (3 - len(dims))
@@ -437,10 +478,17 @@ class UniformCoordinates(_Implicit):
 @tack.device_class
 class Permutation(_Implicit):
     """``base[ids[k]]``: ``base``'s values in the order ``ids`` (integers, explicit or
-    not) gives, as VTK's indexed array."""
+    not) gives, as VTK's indexed array. Ids of any other kind are refused: with the
+    arguments reversed, floats were used as ids and read past the end (#376)."""
 
     def __init__(self, ids, base):
         self.ids, self.base = _operands(ids, base)
+        kind = dtype_of(self.ids).numpy_dtype.kind
+        if kind not in "iu" or width_of(self.ids):
+            what = (f"vectors of {width_of(self.ids)}" if width_of(self.ids)
+                    else f"{dtype_of(self.ids).name} values")
+            raise TypeError(f"Permutation(ids, base) takes integer ids first, then the "
+                            f"array they index; these ids are {what}")
         _metadata(self, size_of(self.ids), width_of(self.base), dtype_of(self.base))
 
     @tack.func
@@ -495,7 +543,8 @@ class Strided(_Implicit):
         if width_of(values):
             raise TypeError("Strided reads a scalar field; ExtractComponent reads a vector's")
         self.values = values
-        self.stride, self.offset = int(stride), int(offset)
+        self.stride = _integer(stride, "Strided's stride")
+        self.offset = _integer(offset, "Strided's offset")
         count = -(-(size_of(values) - self.offset) // self.stride) if size is None else size
         _metadata(self, count, None, dtype_of(values))
 
@@ -514,7 +563,7 @@ class View(_Implicit):
 
     def __init__(self, base, start, size):
         self.base = _operand(base)
-        self.start = int(start)
+        self.start = _integer(start, "View's start")
         _metadata(self, size, width_of(self.base), dtype_of(self.base))
 
     @tack.func
@@ -534,10 +583,11 @@ class ExtractComponent(_Implicit):
 
     def __init__(self, base, component):
         self.base = _operand(base)
+        component = _integer(component, "ExtractComponent's component")
         if not width_of(self.base) or not 0 <= component < width_of(self.base):
             raise ValueError(f"component {component} of an array of width "
                              f"{width_of(self.base)}")
-        self.COMPONENT = int(component)
+        self.COMPONENT = component
         _metadata(self, size_of(self.base), None, dtype_of(self.base))
 
     @tack.func

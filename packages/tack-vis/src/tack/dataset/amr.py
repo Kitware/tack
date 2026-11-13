@@ -176,15 +176,19 @@ class AMRDataSet:
     # -- checks ----------------------------------------------------------
 
     def _dimension(self, given):
-        mine = {len(piece.topology.point_dims) for pieces in given for piece in pieces
-                if isinstance(piece.topology, StructuredTopology)}
-        for level, pieces in enumerate(given):
-            for k, piece in enumerate(pieces):
-                if not isinstance(piece, DataSet) or \
-                        not isinstance(piece.topology, StructuredTopology):
-                    raise TypeError(f"box {k} of level {level} is not a dataset of a "
-                                    f"StructuredTopology")
-        every = set().union(*self.world._allgather(sorted(mine)))
+        from tack.dataset.partitioned import agree
+
+        def mine():                         # refused on every rank, not only this one
+            for level, pieces in enumerate(given):
+                for k, piece in enumerate(pieces):
+                    if not isinstance(piece, DataSet) or \
+                            not isinstance(piece.topology, StructuredTopology):
+                        raise TypeError(f"box {k} of level {level} is not a dataset of a "
+                                        f"StructuredTopology")
+            return sorted({len(piece.topology.point_dims) for pieces in given
+                           for piece in pieces})
+
+        every = set().union(*agree(self.world, mine))
         if len(every) > 1:
             raise ValueError(f"an AMRDataSet's boxes are of one dimension, not "
                              f"{sorted(every)}")
@@ -227,21 +231,24 @@ class AMRDataSet:
 
     def _check(self, given):
         from tack.dataset import units
+        from tack.dataset.partitioned import agree
 
-        spatial = self.world._allgather(sorted({piece.unit or "" for pieces in given
-                                                for piece in pieces}))
+        def mine():                         # refused on every rank, not only this one
+            for level, pieces in enumerate(given):
+                for k, piece in enumerate(pieces):
+                    marks = piece.ghosts
+                    if marks is not None and marks.cells is not None and \
+                            (marks.cells.numpy() & Ghosts.DUPLICATECELL).any():
+                        raise ValueError(f"box {k} of level {level} has ghost cells "
+                                         "(DUPLICATECELL): give the boxes without them")
+            return sorted({piece.unit or "" for pieces in given for piece in pieces})
+
+        spatial = agree(self.world, mine)
         units.common("an AMRDataSet's boxes' geometry",
                      [unit or None for part in spatial for unit in part])
         _one_time("an AMRDataSet's boxes", [t for part in self.world._allgather(
             sorted({(piece.time, piece.time_unit) for pieces in given for piece in pieces},
                    key=repr)) for t in part])
-        for level, pieces in enumerate(given):
-            for k, piece in enumerate(pieces):
-                marks = piece.ghosts
-                if marks is not None and marks.cells is not None and \
-                        (marks.cells.numpy() & Ghosts.DUPLICATECELL).any():
-                    raise ValueError(f"box {k} of level {level} has ghost cells "
-                                     "(DUPLICATECELL): give the boxes without them")
         for level, boxes in enumerate(self._boxes):
             first = _overlap(boxes)
             if first is not None:

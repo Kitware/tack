@@ -40,7 +40,16 @@ needs_vtk = pytest.mark.skipif(
 
 @pytest.fixture(autouse=True)
 def cpu():
+    """The CPU the default for each test, and the default it found put back after:
+    the device tests set a GPU (``_init_device``), which, left, made the next test
+    on their xdist worker -- of another module, CPU datasets -- allocate there
+    ("arrays on two devices" in test_mixed_cells, by the schedule)."""
+    from tack.runtime import dispatch
+
+    was = dispatch._current_backend
     tack.set_default_device("cpu")
+    yield
+    dispatch._current_backend = was
 
 
 # ── A stand-in for VTK's module ──────────────────────────────────────
@@ -486,3 +495,55 @@ def test_a_hidden_point_hides_its_cells_as_in_vtk():
     hidden = np.asarray(data.ghosts.cells.numpy()) & td.Ghosts.HIDDENCELL
     assert np.count_nonzero(hidden) == 8                       # the point's cells
     assert data.ghosts.points.numpy()[62] & td.Ghosts.HIDDENPOINT
+
+
+@pytest.mark.parametrize("dtype", [np.int8, np.uint8, np.int32, np.int64, np.float32,
+                                   np.float64])
+@pytest.mark.parametrize("width", [None, 1, 3, 9])
+def test_the_host_gather_is_numpys_take(dtype, width):
+    """``_host_take`` (the merge's gather of VTK's point data and connectivity) gives
+    NumPy's rows, into new memory of another type or into memory it is given."""
+    from tack.interop.vtk import _host_take
+
+    rng = np.random.default_rng(0)
+    shape = (1000,) if width is None else (1000, width)
+    values = (rng.integers(-100, 100, shape)).astype(dtype)
+    rows = rng.integers(0, 1000, 2500).astype(np.int32)
+    np.testing.assert_array_equal(_host_take(values, rows), values[rows])
+    out = np.empty((2500, *shape[1:]), np.int64)
+    assert _host_take(values, rows, out=out) is out
+    np.testing.assert_array_equal(out, values[rows].astype(np.int64))
+    assert _host_take(values, rows[:0]).shape == (0, *shape[1:])
+
+
+def test_a_merged_reads_point_fields_are_its_own_and_writable():
+    """``vtk_to_dataset(merge_points=True)`` takes over the point data the merge made
+    rather than copying it again: the fields are the merged points' values,
+    writable, and writing them leaves the caller's grid as it was."""
+    pytest.importorskip("vtkmodules.vtkCommonDataModel")
+    from vtkmodules.vtkCommonCore import vtkFloatArray, vtkPoints
+    from vtkmodules.vtkCommonDataModel import vtkCellArray, vtkUnstructuredGrid
+
+    from tack.interop.vtk import vtk_to_dataset
+
+    # Two hexahedra, each with its own copy of the four points they share.
+    cube = np.array([[i & 1, (i >> 1) & 1, (i >> 2) & 1] for i in range(8)], np.float32)
+    x = np.r_[cube, cube + np.array([1, 0, 0], np.float32)]
+    order = [0, 1, 3, 2, 4, 5, 7, 6]
+    grid = vtkUnstructuredGrid()
+    grid.points = vtkPoints(data=vtkFloatArray(x))
+    grid.cells = (12, vtkCellArray(offsets=np.array([0, 8, 16]),
+                                   connectivity=np.array(order + [8 + k for k in order])))
+    grid.point_data["T"] = vtkFloatArray(x[:, 0] * 10)
+    grid.point_data["V"] = vtkFloatArray(x)
+    data = vtk_to_dataset(grid, merge_points=True)
+    import gc
+
+    gc.collect()                  # the merged grid is gone; its arrays live on in the fields
+    assert data.num_points == 12
+    t = data.fields["T"].values
+    np.testing.assert_array_equal(t.numpy(), data.positions()[:, 0] * 10)
+    np.testing.assert_array_equal(data.fields["V"].values.numpy(), data.positions())
+    tack.copyto(t, np.full(12, -1.0, np.float32))
+    np.testing.assert_array_equal(data.fields["T"].values.numpy(), -1.0)
+    np.testing.assert_array_equal(np.asarray(grid.point_data["T"]), x[:, 0] * 10)

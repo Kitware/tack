@@ -138,6 +138,9 @@ def test_field_filters_add_arrays_to_a_copy_of_their_input():
     # The input's own arrays are the same arrays, not copies.
     assert (np.asarray(out.point_data["RTData"]).ctypes.data
             == np.asarray(image.point_data["RTData"]).ctypes.data)
+    differences = ta.FiniteDifferences(field="RTData", order=4, name="d")(image)
+    np.testing.assert_array_equal(differences.point_data["d"], td.finite_differences(
+        vtk_to_dataset(image, dtype=None), "RTData", order=4).values.numpy())
     elevation = ta.Elevation(high_point=(0.0, 0.0, 8.0))(image)
     assert "elevation" in elevation.point_data.keys()
     quality = ta.CellQuality()(ta.Tetrahedralize()(image))
@@ -776,8 +779,11 @@ def _cloud_pieces():
 
 
 def _tack(vtk_data):
-    """The Tack dataset (or pieces) a wrapper sees."""
-    return vtk_to_dataset(vtk_data, dtype=None)
+    """The Tack dataset (or pieces) a wrapper sees: a grid with polyhedra read with
+    every cell a polyhedron (``algorithms._converted``)."""
+    faces = vtk_data.GetPolyhedronFaces() if hasattr(vtk_data, "GetPolyhedronFaces") else None
+    polyhedral = "all" if faces is not None and faces.GetNumberOfCells() else None
+    return vtk_to_dataset(vtk_data, dtype=None, polyhedral=polyhedral)
 
 
 def _with(data, fields):

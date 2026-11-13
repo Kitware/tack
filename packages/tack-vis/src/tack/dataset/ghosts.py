@@ -221,22 +221,14 @@ def _kept(flags, slots, ids):
             ids[slots[i]] = i
 
 
-@on_inputs_device
-def owned_values(data, field):
-    """The values of ``field`` (a ``Field`` of ``data``, or its name; an evaluated one's
-    stored values) that ``data`` owns: all of
-    them when it has no marks for where they live, else those of cells and
-    points not marked a duplicate or hidden, materialized. Fields on faces or
-    edges, and order-2 fields, have no marks of their own yet; on a dataset
-    with ghost marks they are refused rather than counted twice."""
-    from tack.dataset.carry import _take
-    from tack.dataset.dataset import is_field_key
+def refuse_lost(data, space):
+    """``(on_points, on_cells)`` for values in ``space``, or ``NotImplementedError``
+    where ``data`` lost the ghost marks of where they live (a filter's output from
+    data with marks): reduced, its shared cells or points would count once per
+    piece. What `owned_values` checks, for a reduction that sums on the device
+    without it (``integrate``'s measure)."""
     from tack.dataset.spaces import H1, L2, Constant, Values
 
-    if is_field_key(field):
-        field = data.fields[field]
-    field = field.space.stored(field, data)
-    space = field.space
     on_points = (isinstance(space, H1) and space.order == 1) or (
         isinstance(space, Values) and space.on == "points")
     on_cells = isinstance(space, (Constant, L2)) or (
@@ -253,6 +245,26 @@ def owned_values(data, field):
             f"its shared {kind} would count once per piece. "
             "td.generate_global_ids(pieces) of the outputs marks them by matching "
             "(or reduce the input instead, or set the output's ghosts)")
+    return on_points, on_cells
+
+
+@on_inputs_device
+def owned_values(data, field):
+    """The values of ``field`` (a ``Field`` of ``data``, or its name; an evaluated one's
+    stored values) that ``data`` owns: all of
+    them when it has no marks for where they live, else those of cells and
+    points not marked a duplicate or hidden, materialized. Fields on faces or
+    edges, and order-2 fields, have no marks of their own yet; on a dataset
+    with ghost marks they are refused rather than counted twice."""
+    from tack.dataset.carry import _take
+    from tack.dataset.dataset import is_field_key
+    from tack.dataset.spaces import L2
+
+    if is_field_key(field):
+        field = data.fields[field]
+    field = field.space.stored(field, data)
+    space = field.space
+    on_points, on_cells = refuse_lost(data, space)
     values = materialize(field.values)
     ghosts = data.ghosts
     if ghosts is None or (ghosts.cells is None and ghosts.points is None):
@@ -527,6 +539,20 @@ def carry_marks(source, out, points=None, cells=None, faces_to_cells=None,
 # ── Hidden cells ────────────────────────────────────────────────────
 
 @tack.kernel
+def _hide_by_cell_points(cells, point_marks, cell_marks):
+    # As `_hide_by_points`, over cells of any number of points (a mixed
+    # topology's polyhedra).
+    for c in cells:
+        hidden = 0
+        for j in range(cells.num_points(c)):
+            if (point_marks[cells.point_id(c, j)] & 2) != 0:
+                hidden = 1
+        if hidden == 1:
+            e = cells.entity_id(c)
+            cell_marks[e] = cell_marks[e] | 32
+
+
+@tack.kernel
 def _hide_by_points(cells, point_marks, cell_marks):
     # HIDDENCELL on each cell with a HIDDENPOINT corner.
     for c in cells:
@@ -559,14 +585,15 @@ def hidden_by_points(topology, ghosts):
         tack.copyto(marks, ghosts.cells)
     else:
         marks.fill(0)
-    if not getattr(topology, "reference_cells", True):
+    if not getattr(topology, "reference_cells", True) and not topology.mixed:
         offsets, members = _rows(topology)
         if topology.num_cells:
             _hide_rows_by_points(offsets, members, ghosts.points, marks)
     else:
         for group in topology.groups():
             if group.count:
-                _hide_by_points(group.view(), ghosts.points, marks)
+                hide = _hide_by_points if group.shape.REFERENCE else _hide_by_cell_points
+                hide(group.view(), ghosts.points, marks)
     return Ghosts(cells=marks, points=ghosts.points)
 
 

@@ -1385,13 +1385,14 @@ def subdivides(data, field):
 
 
 def subdivided_contour(data, field, value, levels, nlevels, subdivision, cut, tolerance=None,
-                       exact=True):
+                       exact=True, fields=None):
     """``cut`` (contour with its other arguments bound) of the cells whose ``field``
     may hold one of ``levels``, cut into ``subdivision`` lattice steps (by default
     the largest order of the field and geometry, or with ``tolerance`` the fewest
-    whose estimated error is within it): only those cells are refined, and every
-    field carried evaluated at their lattice points; with ``exact``, at the field's
-    roots along the sub-edges where it crosses (``_crossings``)."""
+    whose estimated error is within it): only those cells are refined, and the
+    fields ``fields`` selects (``None`` every one) and ``field`` evaluated at their
+    lattice points; with ``exact``, at the field's roots along the sub-edges where
+    it crosses (``_crossings``)."""
     if subdivision is not None and tolerance is not None:
         raise ValueError("give subdivision or tolerance, not both")
     flags = tack.empty((data.num_cells,), tack.i32)
@@ -1406,7 +1407,7 @@ def subdivided_contour(data, field, value, levels, nlevels, subdivision, cut, to
     if level < 1:
         raise ValueError(f"subdivision is at least 1, not {level}")
     name = next((n for n, f in data.fields.items() if f is field), "__cut__")
-    carried = dict(data.fields)
+    carried = {k: data.fields[k] for k in selected(data, fields)}
     carried[name] = field
     refined, _ = _refined(data, flags, level, carried, cut=(name, levels) if exact else None)
     out = cut(refined, name)

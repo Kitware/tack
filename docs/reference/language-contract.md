@@ -1124,7 +1124,11 @@ alone (literals, `tack.constant`s and a device class's constants, combined
 with comparisons, `not`, `&`, `|`, `^`, `and` and `or`; an `and` with a
 false operand or an `or` with a true one, whatever the others are) is
 resolved when the kernel is lowered: the arm it selects is lowered in its
-place, and the other is not lowered at all. That arm's source is still
+place, and the other is not lowered at all. The condition itself is still
+evaluated and typed as any condition is: an operand before the one that
+decides it is still evaluated (in debug mode, `data[i + 1] > 0 and False`
+still checks the load's bounds), and a literal outside 64 bits or a mix of
+`u64` and a signed type is still refused. The other arm's source is still
 validated (unsupported syntax is reported), but its device functions are
 not inlined, and the workgroup primitives and atomics in it are not required
 of the backend, as in C++'s `if constexpr`. A variable bound only in the

@@ -9,15 +9,20 @@ kernels, a quarter of the IR sat in branches that could never run (half of
 the streamlines kernel's), which every later pass and the code generator
 walked, and only LLVM removed. Lowering takes the arm such a condition
 picks and never lowers the other (`KernelTransformer.visit_If`,
-`visit_IfExp`).
+`visit_IfExp`). The condition itself stays, in an ``if`` with empty arms
+before the arm: it is evaluated as the kernel runs, as it was, so an
+operand's bounds check still runs in debug mode (``data[i + 1] > 0 and
+False``), and typed, so a literal past 64 bits or a mix of ``u64`` and
+``i64`` is still refused.
 
 Only integer and Boolean values are decided, with the operations whose
 meaning does not depend on a width: comparisons, ``not``, ``&``, ``|``,
 ``^``, ``and``, ``or``. Floating-point conditions are left to run, since a
 literal's f32 value may compare differently from Python's double. An
 ``and`` with any operand false is false and an ``or`` with any operand true
-is true, whatever the others are: lowered operands have no effects (an
-inlined call's effects come before the condition).
+is true, whatever the others are, since the condition is still evaluated
+in full where the kernel would have (an inlined call's effects come before
+it).
 """
 
 from tack.lang import ir

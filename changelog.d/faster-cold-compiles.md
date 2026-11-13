@@ -17,7 +17,9 @@
   constants decide (a device class's constants, `tack.constant`s,
   literals; comparisons, `not`, `&`, `|`, `^`, `and`, `or`) is resolved
   while lowering: only the arm it selects is lowered, as C++'s
-  `if constexpr`. The other arm's source is still validated, but its
+  `if constexpr`. The condition is still evaluated and typed as before
+  (its operands' bounds checks in debug mode, its literals' ranges and
+  types). The other arm's source is still validated, but its
   device functions are not inlined, the workgroup primitives and atomics in
   it are not required, and a name bound only there is unbound. Half of the
   streamlines kernel's IR on AhmedML was such arms: its cold compile went

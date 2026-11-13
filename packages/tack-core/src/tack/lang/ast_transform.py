@@ -246,8 +246,10 @@ class KernelTransformer(
         decided = constant_truth(condition)
         if decided is not None:
             # Constants decide it: the arm they pick, in place, and the other
-            # never lowered (constant_conditions).
-            return self._visit_body(node.body if decided else node.orelse)
+            # never lowered (constant_conditions). The condition stays, in an
+            # `if` with empty arms, so it is evaluated and typed as before.
+            return [ir.IRIf(condition=condition, then_body=[], else_body=[]),
+                    *self._visit_body(node.body if decided else node.orelse)]
         then_body = self._visit_body(node.body)
         else_body = self._visit_body(node.orelse)
         return ir.IRIf(condition=condition, then_body=then_body, else_body=else_body)
@@ -257,6 +259,7 @@ class KernelTransformer(
         decided = constant_truth(condition)
         if decided is not None:
             self._pre_stmts.extend(before)
+            self._pre_stmts.append(ir.IRIf(condition=condition, then_body=[], else_body=[]))
             value, stmts = self._visit_expression(node.body if decided else node.orelse)
             self._pre_stmts.extend(stmts)
             return value

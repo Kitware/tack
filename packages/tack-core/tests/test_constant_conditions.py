@@ -14,10 +14,18 @@ pytestmark = pytest.mark.quick      # the inner-loop set; see CLAUDE.md, Tests
 NOT_A_CONSTANT = 0.5                # a module float: a kernel reading it fails to lower
 
 
+def _depth(line):
+    return len(line) - len(line.lstrip())
+
+
 def _branches(kernel, *args):
-    """The branches left in the kernel's IR for these arguments."""
-    text = tack.inspect(kernel, *args, mode="ir")
-    return [line for line in text.splitlines() if "If (" in line or "IfExp(" in line]
+    """The branches left in the kernel's IR for these arguments: those with an
+    arm. A decided condition stays as an ``If`` with empty arms, so that it is
+    still evaluated and typed."""
+    lines = tack.inspect(kernel, *args, mode="ir").splitlines()
+    return [line for k, line in enumerate(lines)
+            if "IfExp(" in line or (line.lstrip().startswith("If (") and k + 1 < len(lines)
+                                    and _depth(lines[k + 1]) > _depth(line))]
 
 
 @tack.device_class
@@ -140,3 +148,55 @@ def bound_in_the_arm_not_taken(out):
 def test_a_name_bound_only_in_the_arm_not_taken_is_unbound():
     with pytest.raises(Exception, match="x"):
         bound_in_the_arm_not_taken(tack.zeros((2,), tack.i32))
+
+
+@tack.kernel
+def checked_before_false(data, out):
+    for i in range(out.shape[0]):
+        if data[i + 1] > 0 and False:
+            out[i] = 1
+        else:
+            out[i] = 2
+
+
+@tack.kernel
+def checked_before_true(data, out):
+    for i in range(out.shape[0]):
+        out[i] = 1 if data[i + 1] > 0 or True else 2
+
+
+@pytest.mark.parametrize("kernel", [checked_before_false, checked_before_true])
+def test_operands_before_the_deciding_constant_are_still_evaluated(kernel):
+    """`data[i + 1] > 0 and False` is false whatever the load gives, but the load
+    still runs, and in debug mode its bounds check still raises."""
+    data = tack.array(np.array([1.0], np.float32))
+    out = tack.zeros((1,), tack.i32)
+    tack.set_debug(True)
+    try:
+        with pytest.raises(IndexError, match=r"data\[i \+ 1\]"):
+            kernel(data, out)
+    finally:
+        tack.set_debug(False)
+    assert _branches(kernel, data, out) == []
+
+
+@tack.kernel
+def literal_past_64_bits(out):
+    for i in range(out.shape[0]):
+        if 18446744073709551616 > 0:
+            out[i] = 1
+
+
+@tack.kernel
+def u64_against_i64(out):
+    for i in range(out.shape[0]):
+        out[i] = 1 if tack.u64(18446744073709551615) > tack.i64(-1) else 2
+
+
+@pytest.mark.parametrize("kernel, message", [
+    (literal_past_64_bits, "outside Tack's 64-bit range"),
+    (u64_against_i64, "Cannot implicitly mix"),
+])
+def test_a_decided_condition_is_still_typed(kernel, message):
+    with pytest.raises(TypeError, match=message):
+        kernel(tack.zeros((1,), tack.i32))

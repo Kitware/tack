@@ -21,11 +21,18 @@ def _depth(line):
 def _branches(kernel, *args):
     """The branches left in the kernel's IR for these arguments: those with an
     arm. A decided condition stays as an ``If`` with empty arms, so that it is
-    still evaluated and typed."""
+    still evaluated and typed. Debug mode's bounds checks (an ``If`` around a
+    store, an ``IfExp`` around a load) are not the kernel's branches."""
     lines = tack.inspect(kernel, *args, mode="ir").splitlines()
-    return [line for k, line in enumerate(lines)
-            if "IfExp(" in line or (line.lstrip().startswith("If (") and k + 1 < len(lines)
-                                    and _depth(lines[k + 1]) > _depth(line))]
+
+    def branch(k, line):
+        if line.count("IfExp(") > line.count("IfExp((Bounds["):
+            return True
+        text = line.lstrip()
+        return (text.startswith("If (") and not text.startswith("If (Bounds[")
+                and k + 1 < len(lines) and _depth(lines[k + 1]) > _depth(line))
+
+    return [line for k, line in enumerate(lines) if branch(k, line)]
 
 
 @tack.device_class

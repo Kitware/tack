@@ -369,15 +369,12 @@ def rewrite_templates(kernel_ast, template_args, python_func=None):
     # Reserve source names in both the caller and template methods before
     # allocating synthetic parameters. Attribute expansion must not merge a
     # user's binding with an array/scalar reference in the rewritten AST.
-    sources = [funcdef]
+    used_names = {n.id if isinstance(n, ast.Name) else n.arg for n in ast.walk(funcdef)
+                  if isinstance(n, (ast.Name, ast.arg))}
     for _, obj in template_args.values():
         for _, node in template_tree(obj):
-            sources.extend(method._funcdef for method in
-                           template_func_methods(type(node)).values())
-    used_names = {n.id for source in sources for n in ast.walk(source)
-                  if isinstance(n, ast.Name)}
-    used_names.update(n.arg for source in sources for n in ast.walk(source)
-                      if isinstance(n, ast.arg))
+            for method in template_func_methods(type(node)).values():
+                used_names.update(method.source_names())
 
     # The source spelling of each held array's synthetic parameter, for
     # diagnostics; lowering keeps it on the IR (`IRFunction.held_arrays`).
@@ -449,9 +446,17 @@ def _prune_synthetic(kernel_def, resolved_funcs, synthetic):
     if not defs:
         return
 
-    def calls(funcdef):
-        return [n for n in ast.walk(funcdef) if isinstance(n, ast.Call)
-                and getattr(n.func, '_tack_template_call', False) and n.func.id in defs]
+    def scan(funcdef):
+        """The calls of resolved methods in ``funcdef``, and the synthetic names it
+        reads, from one walk."""
+        found, names = [], []
+        for n in ast.walk(funcdef):
+            if isinstance(n, ast.Call):
+                if getattr(n.func, '_tack_template_call', False) and n.func.id in defs:
+                    found.append(n)
+            elif isinstance(n, ast.Name) and n.id in synthetic:
+                names.append(n)
+        return found, names
 
     def passed(call):
         """``(position, name)`` of the synthetic names a call passes as they are."""
@@ -459,12 +464,11 @@ def _prune_synthetic(kernel_def, resolved_funcs, synthetic):
                 if isinstance(a, ast.Name) and a.id in synthetic]
 
     params = {name: [a.arg for a in d.args.args] for name, d in defs.items()}
-    sites = {name: calls(d) for name, d in defs.items()}
-    direct = {}
+    sites, direct = {}, {}
     for name, funcdef in defs.items():
+        sites[name], names = scan(funcdef)
         through = {id(call.args[k]) for call in sites[name] for k, _ in passed(call)}
-        direct[name] = {n.id for n in ast.walk(funcdef) if isinstance(n, ast.Name)
-                        and n.id in synthetic and id(n) not in through}
+        direct[name] = {n.id for n in names if id(n) not in through}
     need = {name: set(direct[name]) for name in defs}
     changed = True
     while changed:
@@ -483,9 +487,8 @@ def _prune_synthetic(kernel_def, resolved_funcs, synthetic):
         names = params[callee]
         return k >= len(names) or names[k] not in synthetic or names[k] in need[callee]
 
-    for funcdef in [kernel_def, *defs.values()]:
-        for call in calls(funcdef):
-            call.args = [a for k, a in enumerate(call.args) if keep(call.func.id, k)]
+    for call in [*scan(kernel_def)[0], *(c for found in sites.values() for c in found)]:
+        call.args = [a for k, a in enumerate(call.args) if keep(call.func.id, k)]
     for name, funcdef in defs.items():
         funcdef.args.args = [a for a in funcdef.args.args
                              if a.arg not in synthetic or a.arg in need[name]]

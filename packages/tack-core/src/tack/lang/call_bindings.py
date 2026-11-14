@@ -40,6 +40,13 @@ class CallBindings:
                            and isinstance(n.ctx, ast.Store))
         self.template_funcs = template_funcs or {}
 
+    def copy(self):
+        """These bindings with a set of locals of their own, for one inlined call."""
+        other = object.__new__(CallBindings)
+        other.__dict__.update(self.__dict__)
+        other.locals = set(self.locals)
+        return other
+
     def resolve(self, node):
         value = self._resolve(node)
         from tack.runtime.disk_cache import recorder

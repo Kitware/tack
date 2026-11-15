@@ -52,12 +52,15 @@ On `main` at `2d1325bd`:
   rewrite: `self.m(...)` (and `self.base.m(...)` through held templates),
   a device function held as an attribute (`self.kernel(r, h)`), the indexing
   protocol (`self[i]`, `self[i] = v` and `len(self)` become `__getitem__`,
-  `__setitem__` and `__len__`; `_Indexing`), and a template passed to a free
-  `@tack.func` (`helper(self)`, `_Specializer`).
+  `__setitem__` and `__len__`, and `self[i] += v` both of the first two;
+  `_Indexing`), and a template passed to a free `@tack.func` (`helper(self)`,
+  `_Specializer`).
 - **Free names resolve through `CallBindings`** (`lang/call_bindings.py`).
-  `_resolve` is a dictionary lookup in the function's globals and closure;
-  `resolve` also reports the answer to the disk cache's recorder when one is
-  active.
+  `resolve` looks a name up in the function's closure and globals and
+  reports the answer to the disk cache's recorder when one is active.
+  `_resolve` does the lookup, but for a module-qualified name
+  (`helpers.sample`) it finds the module through `resolve`, so the recorder
+  hears of it too.
 - **Dataset views** are classes made by `views.view_class(kind, shape,
   *mixins)` (tack-vis), once per `(kind, shape, mixins)`, after
   `_check_names` refuses two parts that define one name differently. So every
@@ -187,11 +190,15 @@ Values are printed by Tack, never through an attribute's `repr`.
      defining class of `m` on that object;
    - `self.f(...)` where `f` is a held device function, to that function;
    - `self[i]`, `self[i] = v` and `len(self)` (also on `self.a`), to
-     `__getitem__`, `__setitem__` and `__len__`, or "not defined" where the
-     template rewrite would emit its refusal;
-   - a free name called with `self` or `self.a` among its arguments, through
-     `CallBindings._resolve` (the lookup without the recorder), to that
-     `@tack.func`.
+     `__getitem__`, `__setitem__` and `__len__`, and `self[i] += v` to both
+     `__getitem__` and `__setitem__`, as `_Indexing` rewrites it; "not
+     defined" where the template rewrite would emit its refusal;
+   - a free name called with `self` or `self.a` among its arguments, plain
+     (`helper(self)`) or module-qualified (`helpers.sample(self)`), to that
+     `@tack.func`. The name is found by a new `CallBindings.lookup(node)`,
+     which applies `resolve`'s rules recursing through itself and reports to
+     no recorder; `resolve` keeps its recording, and the two share the step
+     that resolves one node, so they cannot come to differ.
 
 For an order-1 H1 field view on `main` (lines are each `def`'s):
 
@@ -263,8 +270,14 @@ In tack-core (`test_inspect_template.py`, quick tier):
 - Errors: a non-device-class object, a class, an unknown method, a member
   that is not a device function; a cycle and a name collision reported in
   the text.
-- The one-method query: each of D4's four kinds of call, a call in a
-  constant-decided branch, an unresolved alias, a free function not bound.
+- The one-method query: each of D4's four kinds of call, including
+  `self[i] += v` and `self.a[i] += v` (both protocol methods listed) and a
+  module-qualified free function; a call in a constant-decided branch, an
+  unresolved alias, a free function not bound.
+- No recording: a method query under an active disk-cache recorder, with a
+  plain and a module-qualified free call, leaves the recorder's notes as they
+  were; `lookup` and `resolve` answer alike for every name the test modules'
+  device functions call.
 - Bounded output for a long constant tuple and deep nesting.
 
 In tack-vis (`test_inspect_views.py`): a domain and a field view of

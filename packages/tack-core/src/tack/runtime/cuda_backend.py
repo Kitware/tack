@@ -28,7 +28,7 @@ import numpy as np
 
 from tack.codegen.reductions import array_reduction_source
 from tack.lang import ir
-from tack.lang.array import DeviceBuffer
+from tack.lang.array import DeviceBuffer, pointer_view_fields
 from tack.lang.parallel_dims import launch_geometry
 from tack.lang.types import ScalarType, f32, f64, i8, i16, i32, i64, u8, u16, u32, u64
 from tack.lang.workgroup_participation import WORKGROUP_SIZE
@@ -517,6 +517,9 @@ class CUDABuffer(DeviceBuffer):
                 base + dst, base + src, size, stream)))
         return True
 
+    def _view_fields(self, start, count):
+        return pointer_view_fields(self, start, count)
+
     @property
     def nbytes(self) -> int:
         return self._nbytes
@@ -708,6 +711,9 @@ class ExportableCUDABuffer(DeviceBuffer):
     def fill(self, value):
         arr = np.full(self._shape, value, dtype=self._numpy_dtype)
         self.from_numpy(arr)
+
+    def _view_fields(self, start, count):
+        return pointer_view_fields(self, start, count)
 
     @property
     def nbytes(self) -> int:

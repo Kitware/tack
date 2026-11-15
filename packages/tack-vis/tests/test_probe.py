@@ -703,3 +703,47 @@ def test_a_polyline_is_linear_along_its_segments(backend):
     np.testing.assert_array_equal(cells.numpy(), [0, 0, 0, 0, 1, -1])
     np.testing.assert_array_equal(tets.numpy()[[0, 1, 2, 4]], [0, 1, 2, 0])
 
+
+
+@tack.func
+def _order_two(x):
+    return 1.0 + x[0] * x[0] + 2.0 * x[1] * x[2]
+
+
+def test_a_mixed_mesh_reads_each_cell_through_its_own_shapes_view(backend):
+    """Probing a field above order 1 on hexahedra and wedges: each cell is read through
+    its own shape's view only. The first value was read from the view standing in
+    for tetrahedra (the hexahedra's) at a wedge's index in the wedges' group, past
+    the end of the hexahedra's (9 of them, read at 32), and discarded: an
+    out-of-bounds read the debug checks catch, and a bus error on a larger one."""
+    was = tack.runtime.dispatch.debug_enabled()
+    tack.set_debug(True)
+    try:
+        n = 3
+        points = np.array([(i, j, k) for k in range(n + 1) for j in range(n + 1)
+                           for i in range(n + 1)], np.float32) / n
+        pid = lambda i, j, k: i + (n + 1) * (j + (n + 1) * k)
+        cells = []
+        for k in range(n):
+            for j in range(n):
+                for i in range(n):
+                    h = [pid(i, j, k), pid(i + 1, j, k), pid(i + 1, j + 1, k), pid(i, j + 1, k),
+                         pid(i, j, k + 1), pid(i + 1, j, k + 1), pid(i + 1, j + 1, k + 1),
+                         pid(i, j + 1, k + 1)]
+                    if (i + j + k) % 3 == 0:
+                        cells.append((12, h))
+                    else:
+                        cells += [(13, [h[a] for a in (0, 1, 3, 4, 5, 7)]),
+                                  (13, [h[a] for a in (1, 2, 3, 5, 6, 7)])]
+        topology = td.UnstructuredTopology(
+            np.array([t for t, _ in cells], np.uint8),
+            np.concatenate([[0], np.cumsum([len(c) for _, c in cells])]),
+            np.concatenate([c for _, c in cells]), num_points=len(points))
+        data = td.DataSet(topology, points)
+        data.fields["u"] = td.interpolate(data, _order_two, td.H1(data, order=2))
+        where = np.random.default_rng(0).uniform(0.05, 0.95, (300, 3)).astype(np.float32)
+        probed = td.probe(data, where).fields["u"].values.numpy()
+    finally:
+        tack.set_debug(was)
+    np.testing.assert_allclose(probed, 1 + where[:, 0] ** 2 + 2 * where[:, 1] * where[:, 2],
+                               atol=2e-5)

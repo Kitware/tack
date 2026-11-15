@@ -124,6 +124,12 @@ class WarpBuffer(DeviceBuffer):
             return super().host_address
         return self.address
 
+    def _view_fields(self, start, count):
+        size = self._dtype.numpy_dtype.itemsize
+        array = _warp().array(ptr=self.address + start * size, dtype=self.array.dtype,
+                              shape=(count,), capacity=count * size, device=self.array.device)
+        return {"_shape": (count,), "array": array}
+
     @property
     def nbytes(self) -> int:
         return math.prod(self._shape) * self._dtype.numpy_dtype.itemsize

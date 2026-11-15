@@ -236,9 +236,14 @@ def _operand(values, device=None):
     if isinstance(values, _DeviceArray):
         return _Explicit(values)
     host = np.asarray(values)
-    dtype = tack.i64 if host.dtype.kind in "iu" and host.size and \
-        np.abs(host).max() > 2**31 - 1 else (tack.i32 if host.dtype.kind in "iu"
-                                              else tack.get_default_float())
+    if host.dtype.kind in "iu":
+        # From the least and greatest values: abs() of the i64 minimum wraps, and
+        # a u64 value past 2**63 needs u64, not i64.
+        from tack.lang.types import integer_type_for_range
+
+        dtype = integer_type_for_range(host.min(), host.max()) if host.size else tack.i32
+    else:
+        dtype = tack.get_default_float()
     return _Explicit(_store(host, dtype, device))
 
 
@@ -296,16 +301,40 @@ class CountingArray(_Implicit):
         size = _integer(size, "CountingArray's size")
         integral = all(isinstance(v, (int, np.integer)) for v in (start, step))
         if dtype is None and integral:
-            reach = max(abs(start), abs(start + step * max(size - 1, 0)))
-            dtype = tack.i64 if reach > 2**31 - 1 else tack.i32
+            from tack.lang.types import integer_type_for_range
+
+            dtype = integer_type_for_range(start, start + step * max(size - 1, 0))
         _metadata(self, size, None, dtype or tack.get_default_float())
+        if self.dtype == tack.u64 and type(self) is CountingArray:
+            self.__class__ = _UnsignedCounting
 
     @tack.func
     def get(self, k):
         return self.start + self.step * k
 
     def numpy(self):
-        return (self.start + self.step * np.arange(self.size)).astype(self.dtype.numpy_dtype)
+        dtype = np.dtype(self.dtype.numpy_dtype)
+        if dtype.kind not in "iu":
+            return (self.start + self.step * np.arange(self.size)).astype(dtype)
+        # In the type itself, wrapping as a kernel's integers do: a start past what
+        # NumPy's default integer holds (2**63 as u64) overflowed converting.
+        bits = 8 * dtype.itemsize
+        def held(v):
+            v = int(v) % (1 << bits)
+            return np.array(v - (1 << bits) if dtype.kind == "i" and v >> (bits - 1) else v,
+                            dtype)
+        with np.errstate(over="ignore"):
+            return np.arange(self.size, dtype=dtype) * held(self.step) + held(self.start)
+
+
+@tack.device_class
+class _UnsignedCounting(CountingArray):
+    """A ``CountingArray`` of u64 values, computed in u64: a start past 2**63 beside
+    a signed index would mix signed and unsigned."""
+
+    @tack.func
+    def get(self, k):
+        return tack.u64(self.start) + tack.u64(self.step) * tack.u64(k)
 
 
 # ── Grid points ─────────────────────────────────────────────────────

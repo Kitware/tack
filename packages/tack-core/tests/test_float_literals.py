@@ -357,3 +357,86 @@ def test_which_locals_are_replaced():
     assert _literal(ir.IRBinOp("*", ir.IRName("x"), ir.IRConstant(0.5)))[0] is False
     assert _literal(ir.IRCast(ir.IRConstant(0.5), tack.f64))[0] is False
 
+
+
+# ── Types through chains of copies (#427) ───────────────────────────
+
+@tack.func
+def _node(k):
+    z = 0.0
+    if k == 14:
+        z = 1.0 / 3.0                  # a local of literals alone: the kernel's float type
+    return tack.vec3(0.5, 0.0, z)
+
+
+@tack.func
+def _cubic(i, x):
+    y = 1.0 - x
+    b = y * y * y
+    if i == 1:
+        b = 3.0 * x * y * y
+    return b
+
+
+@tack.func
+def _sum_cubics(pc):
+    v = 0.0 * pc[0]
+    for m in range(2):
+        term = _cubic(m, pc[2])
+        v = v + term
+    return v
+
+
+@tack.kernel
+def _through_functions(out, which):
+    for n in range(1):
+        out[0] = _sum_cubics(_node(which[0]))
+
+
+def test_a_chain_of_inlined_copies_keeps_the_kernels_float_type(f64_backend):
+    """A local of literals alone is f64 in an f64 kernel, and so is everything copied
+    from it, however many inlined functions' temporaries it passes through. The
+    join of the locals' types gave up after eight rounds, passing a widened type
+    one copy a round, and this chain is ten copies long: the last ones stayed
+    f32, truncating f64 values through them (#427)."""
+    out = tack.empty((1,), tack.f64)
+    which = _array([14], tack.i32)
+    _through_functions(out, which)
+    third = 1.0 / 3.0
+    np.testing.assert_allclose(out.numpy()[0], (1 - third) ** 3 + 3 * third * (1 - third) ** 2,
+                               rtol=0, atol=4e-16)
+
+
+@tack.kernel
+def _long_chain(a, out):
+    for i in range(a.shape[0]):
+        x0 = 0.0
+        if a[i] > 0.0:
+            x0 = 0.1
+        x1 = x0
+        x2 = x1
+        x3 = x2
+        x4 = x3
+        x5 = x4
+        x6 = x5
+        x7 = x6
+        x8 = x7
+        x9 = x8
+        x10 = x9
+        x11 = x10
+        x12 = x11
+        x13 = x12
+        x14 = x13
+        x15 = x14
+        x16 = x15
+        x17 = x16
+        x18 = x17
+        x19 = x18
+        out[i] = x19
+
+
+def test_types_settle_through_a_long_chain(f64_backend):
+    """Twenty copies of an f64 local: every one is f64, so the store is 0.1's f64."""
+    out = tack.empty((1,), tack.f64)
+    _long_chain(_array([1.0], tack.f64), out)
+    assert out.numpy()[0] == 0.1

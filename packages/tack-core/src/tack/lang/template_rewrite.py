@@ -67,23 +67,27 @@ def _scan_constant_names(cls):
     return tuple(found)
 
 
-def _class_constants(cls, remember=True):
+def _class_constants(cls, inspecting=False):
     """A class's compile-time constants, by name, with their current values.
 
-    The names are found once per class and kept. ``remember=False`` (for
+    The names are found once per class and kept. ``inspecting`` (for
     `tack.inspect_template`) uses the kept names if there are any and
     otherwise finds them without keeping them, so asking changes nothing
-    lowering will see.
+    lowering will see, and reads each value from the classes' dictionaries
+    (`_static`), so no metaclass code runs; a value it cannot read so is
+    `UNREAD`.
     """
     names = _CONSTANT_NAMES.get(cls)
     if names is None:
         names = _scan_constant_names(cls)
-        if remember:
+        if not inspecting:
             _CONSTANT_NAMES[cls] = names
     constants = {}
     for name in names:
-        val = getattr(cls, name)
-        if isinstance(val, (int, float)):
+        val = _static(cls, name) if inspecting else getattr(cls, name)
+        if val is UNREAD:
+            constants[name] = UNREAD
+        elif isinstance(val, (int, float)):
             constants[name] = val
         elif _number_tuple(val):
             # A class tuple of numbers: one constant per entry, read as
@@ -156,10 +160,46 @@ def _is_template(value):
     return getattr(type(value), "_device_class", False) is True
 
 
-def template_children(obj) -> dict:
+def _is_template_static(value):
+    """`_is_template`, reading the mark ``device_class`` writes from the classes'
+    dictionaries, so no metaclass code runs (for `tack.inspect_template`)."""
+    for klass in type(value).__mro__:
+        if "_device_class" in vars(klass):
+            return vars(klass)["_device_class"] is True
+    return False
+
+
+def _static(cls, name, default=None):
+    """``cls.name`` as its classes' dictionaries hold it, running no code (for
+    `tack.inspect_template`): ``default`` where none holds it, `UNREAD` where
+    Python would run code for it -- the metaclass holds the name, or the value
+    is a descriptor. A metaclass's own ``__getattribute__`` is not run either
+    (`_meta_lookup` says when there is one)."""
+    for meta in type(cls).__mro__:
+        if meta is not type and meta is not object and name in vars(meta):
+            return UNREAD
+    for klass in cls.__mro__:
+        if name in vars(klass):
+            value = vars(klass)[name]
+            if any("__get__" in vars(k) for k in type(value).__mro__):
+                return UNREAD
+            return value
+    return default
+
+
+def _meta_lookup(cls):
+    """The metaclass of ``cls`` that defines its own ``__getattribute__``, or None:
+    lowering reads class attributes through it, which inspection does not run."""
+    for meta in type(cls).__mro__:
+        if meta is not type and meta is not object and "__getattribute__" in vars(meta):
+            return meta
+    return None
+
+
+def template_children(obj, is_template=_is_template) -> dict:
     """The templates an object holds as instance attributes, by name."""
     return {name: value for name, value in sorted(vars(obj).items())
-            if not name.startswith('_') and _is_template(value)}
+            if not name.startswith('_') and is_template(value)}
 
 
 def template_tree(obj, path=(), _seen=None) -> list:
@@ -170,15 +210,15 @@ def template_tree(obj, path=(), _seen=None) -> list:
     return _template_tree(obj, path, _seen)
 
 
-def _template_tree(obj, path, _seen):
+def _template_tree(obj, path, _seen, is_template=_is_template):
     seen = set() if _seen is None else _seen
     if id(obj) in seen:
         raise TypeError(f"a {type(obj).__name__} holds itself, through "
                         f"{'.'.join(path) or 'itself'}: a template is a tree")
     seen.add(id(obj))
     nodes = [(path, obj)]
-    for name, child in template_children(obj).items():
-        nodes.extend(_template_tree(child, (*path, name), seen))
+    for name, child in template_children(obj, is_template).items():
+        nodes.extend(_template_tree(child, (*path, name), seen, is_template))
     seen.discard(id(obj))
     return nodes
 
@@ -191,15 +231,15 @@ def _prefix(path):
 UNREAD = object()
 
 
-def _classify_own(obj, read=getattr, remember=True):
+def _classify_own(obj, read=getattr, inspecting=False):
     """One object's own constants, arrays and runtime scalars (not its children's).
 
     ``read(obj, name)`` gives an instance attribute's value: ``getattr`` when
     lowering, a reader that runs nothing when inspecting, which returns
     `UNREAD` for an attribute it will not read (one a class property hides);
-    such an attribute is left out. ``remember`` as for `_class_constants`.
+    such an attribute is left out. ``inspecting`` as for `_class_constants`.
     """
-    scalars = _class_constants(type(obj), remember)
+    scalars = _class_constants(type(obj), inspecting)
     arrays = {}
     runtime_scalars = {}
 
@@ -265,11 +305,13 @@ def classify_template_attrs(obj):
     return _memo("classes", obj, lambda: _classify_tree(obj))
 
 
-def _classify_tree(obj, read=getattr, remember=True):
+def _classify_tree(obj, read=getattr, inspecting=False):
     flat = ({}, {}, {})
-    for path, node in template_tree(obj):
+    tree = (_template_tree(obj, (), None, _is_template_static) if inspecting
+            else template_tree(obj))
+    for path, node in tree:
         prefix = _prefix(path)
-        for out, own in zip(flat, _classify_own(node, read, remember)):
+        for out, own in zip(flat, _classify_own(node, read, inspecting)):
             for name, value in own.items():
                 key = prefix + name
                 if any(key in d for d in flat):
@@ -347,7 +389,7 @@ def template_structure(obj) -> tuple:
         (path, type(node)) for path, node in template_tree(obj)[1:]))
 
 
-def iteration_space(cls) -> tuple:
+def iteration_space(cls, read=getattr) -> tuple:
     """The attributes a ``for c in obj`` loop runs over, fastest first.
 
     A device class declares them as ``__tack_iterate__``: one to
@@ -358,9 +400,10 @@ def iteration_space(cls) -> tuple:
     running fastest; at the top of a kernel that loop is launched in its
     own shape, so nothing divides to recover the indices. The object's
     methods take ``c`` as it comes, so a kernel written ``for c in obj:``
-    runs unchanged over objects that iterate differently.
+    runs unchanged over objects that iterate differently. ``read`` reads the
+    declaration (`_static` when inspecting).
     """
-    names = getattr(cls, '__tack_iterate__', None)
+    names = read(cls, '__tack_iterate__', None)
     if names is None:
         raise TypeError(
             f"a {cls.__name__} cannot be iterated in a kernel: its class declares no "

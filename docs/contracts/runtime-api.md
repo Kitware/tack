@@ -598,7 +598,9 @@ returns a string.
   its source that reach another method or device function, in source order,
   each with what it resolves to: `self.m(...)` and `self.a.m(...)`, a held
   device function, `self[i]`, `self[i] = v`, `self[i] += v` (both protocol
-  methods) and `len(self)`, and a free `@tack.func` given `self`. The calls
+  methods) and `len(self)`, and a free `@tack.func` given `self`. As in
+  lowering, a device function the object holds shadows a method of the same
+  name, and `len(self)` is `__len__` whatever `len` is bound to. The calls
   are read from the source text, not from what a kernel inlines: a call in a
   branch that constants decide against is listed, and a call through a local
   name is "unresolved".
@@ -606,7 +608,9 @@ returns a string.
 **Guarantees:** it classifies attributes by the compiler's rules
 (`template_rewrite`), reading instance attributes from the instance's
 dictionary, so no property runs (an attribute a class property hides is "not
-read"). It keeps none of the per-class state lowering keeps, enters no
+read"), and class values from the classes' dictionaries, so no metaclass code
+runs (a value only such code gives is "not read"; a metaclass's own
+`__getattribute__`, through which lowering reads, is named). It keeps none of the per-class state lowering keeps, enters no
 template scope and reports to no disk-cache recorder. It reads no device
 memory, launches nothing, compiles nothing, looks nothing up in the disk
 cache and makes no backend. A tree lowering would refuse (an object that

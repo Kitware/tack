@@ -262,7 +262,7 @@ def _objects():
 @pytest.mark.parametrize("index", range(6))
 def test_classification_is_the_compilers(index):
     obj = _objects()[index]
-    assert (template_rewrite._classify_tree(obj, it._read, remember=False)
+    assert (template_rewrite._classify_tree(obj, it._read, inspecting=True)
             == template_rewrite.classify_template_attrs(obj))
 
 
@@ -439,3 +439,122 @@ def test_selectors_are_checked():
 def test_it_is_public():
     assert "inspect_template" in tack.__all__
     assert tack.inspect_template is it.inspect_template
+
+
+# -- as lowering has it ---------------------------------------------------------
+
+@tack.func
+def _two():
+    return 2.0
+
+
+@tack.kernel
+def _each_call(obj, out):
+    for i in range(out.shape[0]):
+        out[i] = obj.call()
+
+
+def test_a_held_device_function_shadows_a_method_of_its_name():
+    """Lowering calls the device function an object holds over a method of the same
+    name (``_template_nodes``); the report, the method query and the calls say so."""
+    @tack.device_class
+    class Shadow:
+        def __init__(self):
+            self.f = _two
+
+        @tack.func
+        def f(self):
+            return 1.0
+
+        @tack.func
+        def call(self):
+            return self.f()
+
+    obj = Shadow()
+    out = tack.zeros((1,), tack.f32)
+    _each_call(obj, out)
+    assert out.numpy()[0] == 2.0
+    call = tack.inspect_template(obj, "call")
+    assert f"self.f()  -> held device function {__name__}._two" in call
+    assert f"{Shadow.__qualname__}.f" not in call
+    first = tack.inspect_template(obj, "f").splitlines()[0]
+    assert first == (f"f: a device function the object holds, {__name__}._two "
+                     f"(over {Shadow.__qualname__}'s method, not used)")
+    assert "not used: the object holds a device function of this name" in \
+        tack.inspect_template(obj)
+
+
+def test_len_of_the_object_is_its_len_whatever_len_is_bound_to():
+    """``_Indexing`` rewrites ``len(self)`` to ``self.__len__()`` from the syntax alone,
+    so a local ``len`` does not change the call."""
+    @tack.device_class
+    class Sized:
+        @tack.func
+        def __len__(self):
+            return 3
+
+        @tack.func
+        def call(self):
+            len = 99
+            return len(self) + 0 * len
+
+    obj = Sized()
+    out = tack.zeros((1,), tack.f32)
+    _each_call(obj, out)
+    assert out.numpy()[0] == 3.0
+    assert f"len(self)  -> {Sized.__qualname__}.__len__" in tack.inspect_template(obj, "call")
+
+
+def test_inspection_runs_no_metaclass_code():
+    """Class values are read from the classes' dictionaries: a metaclass's
+    ``__getattribute__`` never runs, and a value only a metaclass's code gives
+    (a descriptor of its) is shown as not read."""
+    reads = []
+
+    class Counting(type):
+        def __getattribute__(cls, name):
+            if name in ("K", "__tack_iterate__", "_device_class"):
+                reads.append(name)
+            return super().__getattribute__(name)
+
+    @tack.device_class
+    class Metered(metaclass=Counting):
+        K = 5
+        __tack_iterate__ = "n"
+
+        def __init__(self):
+            self.n = 4
+            self.inner = _Leaf(1)
+
+        @tack.func
+        def get(self, i):
+            return self.K * i + self.inner.get(i)
+
+    obj = Metered()
+    reads.clear()
+    text = tack.inspect_template(obj)
+    method = tack.inspect_template(obj, "get")
+    assert reads == []
+    assert "<locals>.Counting defines __getattribute__" in text
+    assert "K = 5" in text.split("compiled in:")[1]
+    assert "iterates: for c in obj runs range(obj.n)" in text
+    assert "inner: _Leaf" in text
+    assert "self.inner.get(i)  -> _Leaf.get" in method
+    assert template_rewrite.classify_template_attrs(obj)[0]["K"] == 5    # as lowering reads it
+
+    class Computed(type):
+        K = property(lambda cls: 7)       # a data descriptor of the metaclass: Python's K
+
+    @tack.device_class
+    class Overridden(metaclass=Computed):
+        K = 5
+
+        @tack.func
+        def get(self, i):
+            return self.K * i
+
+    obj = Overridden()
+    assert template_rewrite.classify_template_attrs(obj)[0]["K"] == 7
+    text = tack.inspect_template(obj)
+    assert "K: not read" in text.split("compiled in:")[1]
+    assert "K = 5" not in text

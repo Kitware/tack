@@ -28,9 +28,11 @@ from tack.lang.template_rewrite import (
     UNREAD,
     _classify_own,
     _classify_tree,
-    _is_template,
+    _is_template_static,
+    _meta_lookup,
     _number_tuple,
     _own_func_attrs,
+    _static,
     iteration_space,
     scalar_path,
     template_children,
@@ -74,7 +76,7 @@ def inspect_template(obj, name=None) -> str:
     if isinstance(obj, type):
         raise TypeError(f"inspect_template takes an object, not the class "
                         f"{obj.__qualname__}: what is compiled depends on its attributes")
-    if not _is_template(obj):
+    if not _is_template_static(obj):
         raise TypeError(f"inspect_template takes an object of a @tack.device_class "
                         f"class, not a {type(obj).__qualname__}")
     if name is None:
@@ -98,8 +100,14 @@ def _class_descriptor(cls, name):
         if name in vars(klass):
             value = vars(klass)[name]
             kind = type(value)
-            return hasattr(kind, "__set__") or hasattr(kind, "__delete__")
+            return _defines(kind, "__set__") or _defines(kind, "__delete__")
     return False
+
+
+def _defines(kind, name):
+    """Whether a class or one of its bases defines ``name``, read from their
+    dictionaries (``hasattr`` would run a metaclass's lookup)."""
+    return any(name in vars(k) for k in kind.__mro__)
 
 
 def _owner(cls, name):
@@ -172,15 +180,19 @@ def _describe_array(array):
 
 
 def _group(values):
-    """Values by attribute, a tuple's entries (``shape__0``) back into one tuple."""
+    """Values by attribute, a tuple's entries (``shape__0``) back into one tuple;
+    an `UNREAD` value stays `UNREAD`."""
     grouped = {}
     for key, value in values.items():
         path = scalar_path(key)
-        if len(path) == 2:
+        if value is UNREAD:
+            grouped[key] = value
+        elif len(path) == 2:
             grouped.setdefault(path[0], []).append((path[1], value))
         else:
             grouped[key] = value
-    return {name: (_numbers([v for _, v in sorted(value)]) if isinstance(value, list)
+    return {name: (UNREAD if value is UNREAD
+                   else _numbers([v for _, v in sorted(value)]) if isinstance(value, list)
                    else _number(value))
             for name, value in grouped.items()}
 
@@ -207,7 +219,7 @@ class _Report:
             self.lines.append(f"  view: {kind.__qualname__} of {shape.__qualname__}, parts "
                               + (", ".join(m.__qualname__ for m in mixins) or "none"))
         try:
-            _classify_tree(obj, _read, remember=False)
+            _classify_tree(obj, _read, inspecting=True)
         except TypeError as error:
             self.lines.append(f"  lowering would refuse it: {error}")
         self._object(obj, (), "")
@@ -217,10 +229,15 @@ class _Report:
         self.seen[id(obj)] = path
         cls = type(obj)
         try:
-            scalars, arrays, runtime = _classify_own(obj, _read, remember=False)
+            scalars, arrays, runtime = _classify_own(obj, _read, inspecting=True)
         except TypeError as error:
             self.lines.append(f"{indent}  lowering would refuse it: {error}")
             scalars, arrays, runtime = {}, {}, {}
+        meta = _meta_lookup(cls)
+        if meta is not None:
+            self.lines.append(f"{indent}  its metaclass {meta.__qualname__} defines "
+                              "__getattribute__: class values are shown as the classes "
+                              "hold them; lowering reads them through it")
         self._section(indent, "compiled in", self._constants(obj, scalars))
         self._section(indent, "passed at run time", [
             f"{name} = {text}" for name, text in _group(runtime).items()])
@@ -231,7 +248,7 @@ class _Report:
             f"{_location(func)}" for name, func in _own_func_attrs(obj).items()])
         self._section(indent, "not passed to kernels", self._others(obj, scalars, arrays,
                                                                     runtime))
-        self._section(indent, "methods", self._methods(cls))
+        self._section(indent, "methods", self._methods(obj))
         self._iteration(cls, indent)
         self._children(obj, path, indent)
 
@@ -249,6 +266,11 @@ class _Report:
         rows = []
         own = vars(obj)
         for name, text in _group(scalars).items():
+            if text is UNREAD:
+                owner = _owner(type(obj), name)
+                where = owner.__qualname__ if owner else "its metaclass"
+                rows.append((f"{name}: not read", f"Python would run code for it ({where})"))
+                continue
             if name in own:
                 where = "the object's own value, compiled in"
                 owner = _owner(type(obj), name)
@@ -270,15 +292,18 @@ class _Report:
                 rows.append(f"{name}: not read, a property of the class")
                 continue
             value = vars(obj)[name]
-            if _is_template(value) or isinstance(value, Func):
+            if _is_template_static(value) or isinstance(value, Func):
                 continue
             rows.append(f"{name}: {type(value).__qualname__}")
         return rows
 
-    def _methods(self, cls):
+    def _methods(self, obj):
         rows = []
-        for name, (func, owner, static) in sorted(template_func_owners(cls).items()):
+        held = _own_func_attrs(obj)
+        for name, (func, owner, static) in sorted(template_func_owners(type(obj)).items()):
             notes = [owner.__qualname__, _location(func)]
+            if name in held:
+                notes.append("not used: the object holds a device function of this name")
             if name in _PROTOCOL:
                 notes.append(f"serves {_PROTOCOL[name]}")
             if static:
@@ -289,10 +314,15 @@ class _Report:
         return rows
 
     def _iteration(self, cls, indent):
-        if getattr(cls, "__tack_iterate__", None) is None:
+        declared = _static(cls, "__tack_iterate__")
+        if declared is None:
+            return
+        if declared is UNREAD:
+            self.lines.append(f"{indent}iterates: not read, Python would run code for "
+                              "__tack_iterate__")
             return
         try:
-            names = iteration_space(cls)
+            names = iteration_space(cls, _static)
         except TypeError as error:
             self.lines.append(f"{indent}iterates: refused, {error}")
             return
@@ -303,7 +333,7 @@ class _Report:
         self.lines.append(f"{indent}iterates: for c in obj runs {loop}")
 
     def _children(self, obj, path, indent):
-        children = template_children(obj)
+        children = template_children(obj, _is_template_static)
         if not children:
             return
         self.lines.append(f"{indent}held objects:")
@@ -330,7 +360,7 @@ class _Report:
 def _count(obj, _seen=None):
     seen = set() if _seen is None else _seen
     total = 0
-    for child in template_children(obj).values():
+    for child in template_children(obj, _is_template_static).values():
         if id(child) not in seen:
             seen.add(id(child))
             total += 1 + _count(child, seen)
@@ -345,7 +375,7 @@ def _member_kind(obj, name):
     owner = _owner(cls, name)
     if name in vars(obj) and owner is None:
         value = vars(obj)[name]
-        if _is_template(value):
+        if _is_template_static(value):
             return "a held object"
         if isinstance(value, Array):
             return "an array"
@@ -366,14 +396,17 @@ def _method_report(obj, name):
     cls = type(obj)
     methods = template_func_owners(cls)
     held = _own_func_attrs(obj)
-    if name in methods:
-        func, owner, static = methods[name]
-        title = f"{name}: defined by {owner.__qualname__}" + (" (static)" if static else "")
-    elif name in held:
+    # A held device function shadows a method of its name, as lowering has it.
+    if name in held:
         func = held[name]
         static = True
         title = (f"{name}: a device function the object holds, "
                  f"{func.func.__module__}.{func.func.__qualname__}")
+        if name in methods:
+            title += f" (over {methods[name][1].__qualname__}'s method, not used)"
+    elif name in methods:
+        func, owner, static = methods[name]
+        title = f"{name}: defined by {owner.__qualname__}" + (" (static)" if static else "")
     else:
         kind = _member_kind(obj, name)
         if kind is None:
@@ -399,21 +432,16 @@ def _text(node):
 def _method_target(owner_obj, name):
     """What ``owner_obj.name(...)`` reaches: a method, a held device function, or why not."""
     cls = type(owner_obj)
+    held = _own_func_attrs(owner_obj)
+    if name in held:                # it shadows a method of its name, as lowering has it
+        func = held[name]
+        return (f"held device function {func.func.__module__}.{func.func.__qualname__}  "
+                f"{_location(func)}")
     methods = template_func_owners(cls)
     if name in methods:
         func, owner, _ = methods[name]
         return f"{owner.__qualname__}.{name}  {_location(func)}"
-    held = _own_func_attrs(owner_obj)
-    if name in held:
-        func = held[name]
-        return (f"held device function {func.func.__module__}.{func.func.__qualname__}  "
-                f"{_location(func)}")
     return f"not defined: {cls.__qualname__} has no @tack.func {name}"
-
-
-def _is_builtin_len(value):
-    # By identity: ``in`` would run a bound object's __eq__.
-    return value is _UNBOUND or value is len
 
 
 class _Calls:
@@ -457,7 +485,7 @@ class _Calls:
         current = self.obj
         for name in reversed(names):
             value = vars(current).get(name)
-            if value is None or not _is_template(value):
+            if value is None or not _is_template_static(value):
                 return None
             current = value
         return current
@@ -469,8 +497,9 @@ class _Calls:
             if receiver is not None:
                 self._add(node, _text(node), _method_target(receiver, func.attr))
                 return
-        if (isinstance(func, ast.Name) and func.id == "len" and len(node.args) == 1
-                and _is_builtin_len(self.bindings.lookup(func))):
+        # len(obj) is obj.__len__() whatever ``len`` is bound to, as _Indexing
+        # rewrites it.
+        if isinstance(func, ast.Name) and func.id == "len" and len(node.args) == 1:
             receiver = self._object_at(node.args[0])
             if receiver is not None:
                 self._add(node, _text(node), _method_target(receiver, "__len__"))

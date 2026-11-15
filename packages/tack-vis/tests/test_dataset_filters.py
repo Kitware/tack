@@ -684,6 +684,34 @@ def test_order_two_stays_order_two_on_the_surface(backend, mesh):
     np.testing.assert_allclose(curved.geometry.values.numpy(), _bend(at), atol=1e-5)
 
 
+@pytest.mark.parametrize("mesh", ["explicit", "tetrahedra"])
+def test_a_fresh_meshs_curved_surface_stays_curved(backend, mesh):
+    """A curved geometry and no order-2 field, on a mesh whose faces nobody derived:
+    the surface is curved as it is once the faces are derived. The shortcut for a
+    fresh mesh looked at the fields' orders alone, and gave tetrahedra a straight
+    surface (#421)."""
+    def curved():
+        data = _grid(4, "explicit")
+        if mesh == "tetrahedra":
+            data = td.tetrahedralize(data)
+        space = td.H1(data, order=2)
+        nodes = td.project(data, data.geometry, space).values.numpy()
+        data.geometry = td.Field(space, tack.array(_bend(nodes).astype(np.float32), tack.vec3()))
+        data.fields["c"] = td.Field(td.Constant(data), _scalars(np.arange(data.num_cells)))
+        return data
+
+    fresh = td.extract_surface(curved())
+    assert fresh.geometry.space is td.H1(fresh, order=2)
+    derived = curved()
+    derived.topology.faces()
+    expected = td.extract_surface(derived)
+    np.testing.assert_array_equal(fresh.topology.connectivity.numpy(),
+                                  expected.topology.connectivity.numpy())
+    np.testing.assert_array_equal(fresh.geometry.values.numpy(), expected.geometry.values.numpy())
+    np.testing.assert_array_equal(fresh.fields["c"].values.numpy(),
+                                  expected.fields["c"].values.numpy())
+
+
 def test_an_order_two_surface_needs_no_faces_of_its_own(backend):
     """Two hexahedra sharing one edge: four boundary quads meet there, which no face
     of the surface could have. Its order-2 layout has no face values, so it

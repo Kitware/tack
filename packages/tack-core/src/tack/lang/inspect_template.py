@@ -10,8 +10,11 @@ Usage:
 
 The plan is ``docs/design/plans/inspect-template.md``. Inspection uses the
 compiler's own classification (``template_rewrite``) and leaves no trace:
-it reads instance attributes from the instance's dictionary, so no property
-runs; it keeps no class's constant names that lowering would not have kept;
+it reads instance attributes from the instance's dictionary and class values
+from the classes' dictionaries, so no property or metaclass code computes
+what it shows; it follows lowering's rules where the source could mislead (a
+held device function shadows a method of its name; ``len(obj)`` is
+``__len__`` whatever ``len`` is bound to); it keeps no class's constant names that lowering would not have kept;
 it enters no ``template_scope``; it looks names up without the disk cache's
 recorder; and it reads nothing from a device, launches nothing, compiles
 nothing and makes no backend. The text it returns is for people: its layout
@@ -65,8 +68,9 @@ def inspect_template(obj, name=None) -> str:
     resolves to. Those calls are read from the source text, not from what a
     kernel inlines.
 
-    Inspection runs nothing: no property, no device read, launch or
-    compilation, no disk-cache lookup, and no backend is made.
+    Inspection runs nothing: no property or metaclass code for the values it
+    shows, no device read, launch or compilation, no disk-cache lookup, and no
+    backend is made.
 
     Raises:
         TypeError: ``obj`` is a class, or not an object of a device class; or

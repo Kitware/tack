@@ -182,3 +182,41 @@ def test_clip_holds_little_more_than_its_output(backend, peak_memory, kind):
     for value in (0.05, 0.5):
         out, peak = peak_memory(td.clip, data, "p", value)
         assert peak <= 3 * _clip_output_bytes(out), (value, peak / _clip_output_bytes(out))
+
+
+@pytest.mark.parametrize("kind", ["tetrahedra", "hexahedra"])
+def test_clip_in_batches_is_clip_cell_by_cell(backend, monkeypatch, kind):
+    """A mesh of one shape is counted and written in batches of cells (a thread's,
+    or a workgroup's 256 lanes), nothing kept per cell; the output is what
+    counting every cell gives, bit for bit: a last batch short, hidden cells,
+    both sides, a function (the cut filters' memory plan, D3)."""
+    import importlib
+
+    clip_module = importlib.import_module("tack.dataset.algorithms.clip")
+    grid = td.uniform_grid((12, 11, 9), spacing=(0.1, 0.12, 0.15))
+    data = (td.tetrahedralize(grid) if kind == "tetrahedra"
+            else td.extract_cells(grid, np.arange(grid.num_cells)))
+    data = td.DataSet(data.topology, data.geometry)
+    assert data.num_cells % 256
+    x = data.positions()
+    data.fields["p"] = td.Field(td.H1(data), tack.array((np.sin(4 * x[:, 0]) + x[:, 1] * x[:, 2])
+                                                         .astype(np.float32)))
+    data.fields["c"] = td.Field(td.Constant(data), tack.array(np.arange(data.num_cells,
+                                                                          dtype=np.float32)))
+    marks = np.zeros(data.num_cells, np.uint8)
+    marks[::7] = td.Ghosts.HIDDENCELL
+    data.ghosts = td.Ghosts(cells=tack.array(marks))
+    center = tuple(x.mean(axis=0))
+    for kwargs in ({"by": "p", "value": 0.4}, {"by": "p", "value": 0.4, "inside": True},
+                   {"by": td.implicit.Sphere(center=center, radius=0.4)}):
+        batched = td.clip(data, **kwargs)
+        monkeypatch.setattr(clip_module, "_BATCHES", False)
+        cellwise = td.clip(data, **kwargs)
+        monkeypatch.setattr(clip_module, "_BATCHES", True)
+        a, b = batched.topology, cellwise.topology
+        for name in ("types", "offsets", "connectivity"):
+            np.testing.assert_array_equal(getattr(a, name).numpy(), getattr(b, name).numpy())
+        np.testing.assert_array_equal(batched.positions(), cellwise.positions())
+        for name in ("p", "c"):
+            np.testing.assert_array_equal(batched.fields[name].values.numpy(),
+                                          cellwise.fields[name].values.numpy())

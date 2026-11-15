@@ -12,7 +12,7 @@ from tack.algorithms.scan import exclusive_scan
 from tack.arrays import size_of
 from tack.dataset import ids
 from tack.dataset.algorithms._common import _close, _crossing, _first_end
-from tack.dataset.algorithms.clip import _number_points, _renumber
+from tack.dataset.algorithms.clip import _number_points, _renumber, _scanned_map
 from tack.dataset.buckets import key_order, run_offsets
 from tack.dataset.carry import Interpolate, Take, carry
 
@@ -61,7 +61,7 @@ def _face_keys(face_offsets, face_points, values, iso, sizes, starts, record_sta
                 vb = values[b]
                 if va >= iso:
                     point_of[at] = a
-                    used[a] = 1
+                    tack.atomic_max(used, a, 1)
                     at += 1
                 if (va > iso and not vb >= iso) or (not va >= iso and vb > iso):
                     keys[record] = [min(a, b), max(a, b)]
@@ -304,7 +304,8 @@ def clip_parts(data, values, iso, inside):
     total = face_keys + cap_count
     point_of = tack.empty((total,), odt)
     num_points = data.num_points
-    used = tack.zeros((num_points + 1,), odt)
+    # Marked by every face and cap using the point, so atomically (as `clip`'s).
+    used = tack.zeros((num_points + 1,), tack.i32)
     crossing = -1
     if face_keys:
         _face_keys(t.face_offsets, t.face_points, values, iso, sizes, starts, face_records,
@@ -313,7 +314,7 @@ def clip_parts(data, values, iso, inside):
         _cap_names(cap_ends, cap_records, keys, slots, point_of, used, face_keys,
                    face_crossing_count, crossing, cap_count)
     del face_records, cap_records
-    kept_points = exclusive_scan(used, used, num_points, close=True) if num_points else 0
+    used, kept_points = _scanned_map(used, num_points, odt)
     order = key_order(keys, num_points, odt)
     runs, crossings = run_offsets(keys, order)
     count = kept_points + crossings
@@ -402,7 +403,7 @@ def _cap_names(ends, record_starts, keys, slots, point_of, used, offset, first_r
         e = ends[i]
         if e[0] == e[1]:
             point_of[offset + i] = e[0]
-            used[e[0]] = 1
+            tack.atomic_max(used, e[0], 1)
         else:
             record = first_record + record_starts[i]
             keys[record] = [min(e[0], e[1]), max(e[0], e[1])]

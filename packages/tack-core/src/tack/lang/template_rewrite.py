@@ -50,22 +50,36 @@ def _method_call_name(name):
 _CONSTANT_NAMES = weakref.WeakKeyDictionary()
 
 
-def _class_constants(cls):
-    """A class's compile-time constants, by name, with their current values."""
+def _scan_constant_names(cls):
+    """The names of a class's numeric class attributes, found along its method
+    resolution order without running anything (``vars`` of each class)."""
+    found = {}
+    # Base classes before the classes derived from them, so a subclass
+    # inherits its bases' constants and may override them.
+    for klass in reversed(cls.__mro__):
+        for name, val in vars(klass).items():
+            if name.startswith('_'):
+                continue
+            if isinstance(val, (int, float)) or _number_tuple(val):
+                found[name] = val
+            else:
+                found.pop(name, None)   # replaced by something that is not a constant
+    return tuple(found)
+
+
+def _class_constants(cls, remember=True):
+    """A class's compile-time constants, by name, with their current values.
+
+    The names are found once per class and kept. ``remember=False`` (for
+    `tack.inspect_template`) uses the kept names if there are any and
+    otherwise finds them without keeping them, so asking changes nothing
+    lowering will see.
+    """
     names = _CONSTANT_NAMES.get(cls)
     if names is None:
-        found = {}
-        # Base classes before the classes derived from them, so a subclass
-        # inherits its bases' constants and may override them.
-        for klass in reversed(cls.__mro__):
-            for name, val in vars(klass).items():
-                if name.startswith('_'):
-                    continue
-                if isinstance(val, (int, float)) or _number_tuple(val):
-                    found[name] = val
-                else:
-                    found.pop(name, None)   # replaced by something that is not a constant
-        names = _CONSTANT_NAMES[cls] = tuple(found)
+        names = _scan_constant_names(cls)
+        if remember:
+            _CONSTANT_NAMES[cls] = names
     constants = {}
     for name in names:
         val = getattr(cls, name)
@@ -173,9 +187,19 @@ def _prefix(path):
     return _NESTED.join(path) + _NESTED if path else ""
 
 
-def _classify_own(obj):
-    """One object's own constants, arrays and runtime scalars (not its children's)."""
-    scalars = _class_constants(type(obj))
+# What an inspection's reader returns for an attribute it does not read.
+UNREAD = object()
+
+
+def _classify_own(obj, read=getattr, remember=True):
+    """One object's own constants, arrays and runtime scalars (not its children's).
+
+    ``read(obj, name)`` gives an instance attribute's value: ``getattr`` when
+    lowering, a reader that runs nothing when inspecting, which returns
+    `UNREAD` for an attribute it will not read (one a class property hides);
+    such an attribute is left out. ``remember`` as for `_class_constants`.
+    """
+    scalars = _class_constants(type(obj), remember)
     arrays = {}
     runtime_scalars = {}
 
@@ -183,7 +207,9 @@ def _classify_own(obj):
     for name in vars(obj):
         if name.startswith('_'):
             continue
-        val = getattr(obj, name)
+        val = read(obj, name)
+        if val is UNREAD:
+            continue
         if _TUPLE_ENTRY.match(name):
             raise TypeError(f"{type(obj).__name__}.{name}: an attribute name ending in "
                             "'__' and digits is how a tuple's entries are named; rename it")
@@ -239,11 +265,11 @@ def classify_template_attrs(obj):
     return _memo("classes", obj, lambda: _classify_tree(obj))
 
 
-def _classify_tree(obj):
+def _classify_tree(obj, read=getattr, remember=True):
     flat = ({}, {}, {})
     for path, node in template_tree(obj):
         prefix = _prefix(path)
-        for out, own in zip(flat, _classify_own(node)):
+        for out, own in zip(flat, _classify_own(node, read, remember)):
             for name, value in own.items():
                 key = prefix + name
                 if any(key in d for d in flat):
@@ -262,13 +288,21 @@ def template_func_methods(cls) -> dict:
     treated the same. A device function under ``@staticmethod`` is one of
     them: it is called as ``self.name(...)`` and has no ``self`` to resolve.
     """
+    return {name: found[0] for name, found in template_func_owners(cls).items()}
+
+
+def template_func_owners(cls) -> dict:
+    """``{name: (func, defining class, static)}`` for `template_func_methods`' methods,
+    found the same way: the class is the one along the method resolution order
+    whose definition is used."""
     methods = {}
     for klass in reversed(cls.__mro__):
         for name, value in vars(klass).items():
-            if isinstance(value, staticmethod):
+            static = isinstance(value, staticmethod)
+            if static:
                 value = value.__func__
             if isinstance(value, Func):
-                methods[name] = value
+                methods[name] = (value, klass, static)
             else:
                 methods.pop(name, None)
     return methods

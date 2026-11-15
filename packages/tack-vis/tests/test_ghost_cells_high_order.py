@@ -61,7 +61,7 @@ def _whole(cells):
 
 
 @pytest.mark.parametrize("cells", ["hexahedra", "tetrahedra"])
-def test_ghost_cells_come_with_their_nodes(backend, cells):
+def test_ghost_cells_come_with_their_nodes(cells):
     """Each grown piece keeps its curved geometry and its fields at their orders, every
     value the field's at the grown piece's own nodes -- a node a ghost shares with the
     piece's cells is one value -- and an order per cell for the ghosts too."""
@@ -81,7 +81,7 @@ def test_ghost_cells_come_with_their_nodes(backend, cells):
 
 
 @pytest.mark.parametrize("cells", ["hexahedra", "tetrahedra"])
-def test_filters_over_the_grown_pieces_give_the_wholes(backend, cells):
+def test_filters_over_the_grown_pieces_give_the_wholes(cells):
     """With a ghost layer, the pieces' owned contour points of an order-3 field on the
     curved mesh are the whole's, bit for bit, and merging the grown pieces gives the
     whole back, its fields at their orders."""
@@ -107,7 +107,7 @@ def test_filters_over_the_grown_pieces_give_the_wholes(backend, cells):
                                    expected.values.numpy(), rtol=0, atol=1e-13)
 
 
-def test_what_ghost_cells_of_higher_order_refuse(backend):
+def test_what_ghost_cells_of_higher_order_refuse():
     """Structured pieces with fields of higher order; refreshing a field of higher
     order (update_ghosts); an L2 geometry."""
     structured = list(td.split(_grid(), (2, 1, 1)))

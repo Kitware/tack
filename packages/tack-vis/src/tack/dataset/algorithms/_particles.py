@@ -283,6 +283,25 @@ def _boxes(blocks, pieces, locators):
             for g, piece in zip(blocks.local, pieces)}
 
 
+def _holder(blocks, pieces, locators):
+    """``Routing``'s ``holds`` over this rank's pieces: how well one of a piece's own
+    cells (not a ghost) holds each point, 0 for none."""
+    def holds(g, x):
+        piece = pieces[g - blocks.local.start]
+        with piece.device:
+            cells, held = locators[g]._find_holding(x.astype(piece.dtype.numpy_dtype))
+        cells = arrays.to_host(cells).astype(np.int64)
+        owned = cells >= 0
+        marks = None if piece.ghosts is None else piece.ghosts.cells
+        if marks is not None:
+            owned &= (marks.numpy()[np.maximum(cells, 0)] & Ghosts.SKIPPED_CELLS) == 0
+        # Holding the point ranks ahead of coming within the tolerance, as one
+        # dataset's locator ranks its cells.
+        return np.where(owned, 1 + held.numpy(), 0)
+
+    return holds
+
+
 def _seeded(blocks, seeds, origin):
     """This rank's seeds, numbered after the ranks before it, on its first block:
     host seeds are world positions, taken relative to the pieces' ``origin``; a
@@ -308,19 +327,7 @@ def _route(blocks, pieces, locators, boxes, pending):
     particles each piece takes, those no piece takes, left with the piece they
     were on, and per piece ``(seed, x, time)`` for each particle that goes on
     from further along its push out (``_Particles``' ``beyond_*``)."""
-    def holds(g, x):
-        piece = pieces[g - blocks.local.start]
-        with piece.device:
-            cells, held = locators[g]._find_holding(x.astype(piece.dtype.numpy_dtype))
-        cells = arrays.to_host(cells).astype(np.int64)
-        owned = cells >= 0
-        marks = None if piece.ghosts is None else piece.ghosts.cells
-        if marks is not None:
-            owned &= (marks.numpy()[np.maximum(cells, 0)] & Ghosts.SKIPPED_CELLS) == 0
-        # Holding the point ranks ahead of coming within the tolerance, as one
-        # dataset's locator ranks its cells.
-        return np.where(owned, 1 + held.numpy(), 0)
-
+    holds = _holder(blocks, pieces, locators)
     routing = tc.Routing(blocks, {g: pending[g].x for g in blocks.local}, boxes, holds)
     # A particle no piece holds, pushed out of the piece it was on, may be in a
     # sliver between pieces whose shared faces are not one surface (a

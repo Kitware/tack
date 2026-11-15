@@ -132,6 +132,24 @@ def test_filters_see_the_twin(cells):
                                    rtol=0, atol=1e-13, err_msg=name)
 
 
+@pytest.mark.parametrize("cells", ["hexahedra", "tetrahedra", "wedges"])
+def test_a_surface_is_the_twins(cells):
+    """The surface of a mesh curved in a table space, with an order-2 table field,
+    is its twin's: its order-2 geometry and field gathered from values numbered by
+    entity (a table's read as entities' ran past their end)."""
+    data = _twins(cells, 2, curved=True)
+    twin = td.DataSet(data.topology, td.project(data, data.geometry, td.H1(
+        data, order=2, **_basis(cells))), fields={"e": data.fields["e"]})
+    a = td.extract_surface(twin, fields=["e"])
+    b = td.extract_surface(data, fields=["e", "t"])
+    assert a.num_cells == b.num_cells and b.geometry.space is td.H1(b, order=2,
+                                                                    **_basis(cells))
+    np.testing.assert_allclose(b.geometry.values.numpy(), a.geometry.values.numpy(), rtol=0,
+                               atol=1e-13)
+    np.testing.assert_allclose(b.fields["t"].values.numpy(), a.fields["e"].values.numpy(),
+                               rtol=0, atol=1e-13)
+
+
 def test_a_bernstein_table():
     data = _twins("hexahedra", 3, basis="bernstein")
     probed = td.probe(data, _points("hexahedra"))

@@ -127,7 +127,8 @@ def test_a_corner_where_faces_meet_flat_is_left_out_of_the_points_average(backen
     meeting flat there: AhmedML's mesh has such cells) has a singular Jacobian there,
     and its gradient grows without bound toward them. It is left out of those points'
     averages, which come from the cells around them that have one: exact for a linear
-    field. With no other cell there, the points are NaN."""
+    field. With no other cell there, the points take the cell's Green-Gauss
+    gradient, bounded and exact for a linear field too (they were NaN)."""
     flat = [(0, 0, 0), (1, 0, 0), (2, 0, 0), (0, 1, 0), (0, 0, 1), (1, 0, 1), (2, 0, 1), (0, 1, 1)]
     below = [(1, -1, 0), (2, -1, 0), (2, 0, 0), (1, 0, 0), (1, -1, 1), (2, -1, 1), (2, 0, 1),
              (1, 0, 1)]
@@ -148,9 +149,28 @@ def test_a_corner_where_faces_meet_flat_is_left_out_of_the_points_average(backen
     both = td.gradients(dataset(2), "u", at="points").values.numpy().reshape(-1, 3)
     np.testing.assert_allclose(both, np.tile([1.0, 2.0, 3.0], (12, 1)), rtol=1e-5)
     alone = td.gradients(dataset(1), "u", at="points").values.numpy().reshape(-1, 3)
-    assert np.isnan(alone[[1, 5]]).all()
-    np.testing.assert_allclose(np.delete(alone, [1, 5], axis=0), np.tile([1.0, 2.0, 3.0], (6, 1)),
-                               rtol=1e-5)
+    np.testing.assert_allclose(alone, np.tile([1.0, 2.0, 3.0], (8, 1)), rtol=1e-5)
+
+
+@pytest.mark.parametrize("off", [1e-6, -1e-6])
+def test_a_corner_flat_but_for_rounding_is_left_out_too(off):
+    """A flat corner of the test above, moved off its edge by rounding's worth (as
+    AhmedML's are, whose corner gradients reached 1e9): its scaled Jacobian is
+    within ``_FLAT`` of 0, so it is left out as an exact 0 is, rather than inverted,
+    whichever side it went. Alone at its point, it gives the cell's Green-Gauss
+    gradient there, the cell's gradient read as a polyhedron."""
+    flat = [(0, 0, 0), (1, off, 0), (2, 0, 0), (0, 1, 0), (0, 0, 1), (1, 0, 1), (2, 0, 1),
+            (0, 1, 1)]
+    x = np.array(flat, np.float64)
+    topology = td.UnstructuredTopology(tack.array([12], dtype=tack.u8),
+                                       tack.array([0, 8], dtype=tack.i32),
+                                       tack.array(list(range(8)), dtype=tack.i32), num_points=8)
+    data = td.DataSet(topology, tack.array(x, tack.vec3(tack.f64)))
+    data.fields["u"] = td.Field(td.H1(topology), tack.array(np.sin(x[:, 0]) + x[:, 1] ** 2))
+    g = td.gradients(data, "u", at="points").values.numpy().reshape(-1, 3)
+    polyhedral = td.gradients(td.as_polyhedra(data), "u").values.numpy().reshape(-1, 3)
+    np.testing.assert_allclose(g[[1, 5]], np.tile(polyhedral[0], (2, 1)), rtol=1e-12)  # 5: flat exactly
+    assert np.isfinite(g).all() and np.abs(g).max() < 10
 
 
 @pytest.mark.parametrize("at", ["cells", "points"])
@@ -167,3 +187,94 @@ def test_thin_cells_keep_their_gradients_in_f32(at):
     double = td.gradients(_thin_hexahedra(tack.f64), "u", at=at).values.numpy()
     error = np.linalg.norm(single - double, axis=1) / np.linalg.norm(double, axis=1)
     assert error.max() < 1e-6
+
+
+def _tangled():
+    """Eight hexahedra over a 3 x 3 x 3 grid of points, the middle point moved toward
+    the far corner until the last cell folds over (a negative Jacobian at its
+    corner there), and a field that is not linear."""
+    pid = lambda i, j, k: i + 3 * (j + 3 * k)
+    x = np.array([[i, j, k] for k in range(3) for j in range(3) for i in range(3)], np.float64)
+    conn = [pid(i + a, j + b, k + c) for k in range(2) for j in range(2) for i in range(2)
+            for a, b, c in ((0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+                            (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1))]
+    topology = td.UnstructuredTopology(np.full(8, 12, np.uint8), np.arange(0, 65, 8),
+                                       np.array(conn), num_points=27)
+    x[13] = [1.8, 1.8, 1.8]
+    data = td.DataSet(topology, tack.array(x, tack.vec3(tack.f64)))
+    data.fields["u"] = td.Field(td.H1(data), tack.array(np.sin(x[:, 0]) * x[:, 1] ** 2
+                                                        + x[:, 2] ** 3))
+    return data
+
+
+def test_point_gradients_of_a_tangled_hexahedron_are_its_own_as_a_polyhedron():
+    """A cell folded over has no inverse map near the fold, and its corner
+    gradients grow without bound there (AhmedML's tangled hexahedra, to 1e9). Its
+    corners take its gradient as a polyhedron's instead (Green-Gauss over its
+    faces), as the same mesh read as polyhedra gives it; the other cells keep
+    theirs."""
+    data = _tangled()
+    quality = td.cell_quality(data, "scaled_jacobian")["scaled_jacobian"].values.numpy()
+    assert quality[7] < 0 and (quality[:7] > 0).all()
+    at_points = td.gradients(data, "u", at="points").values.numpy()
+    polyhedral = td.gradients(td.as_polyhedra(data), "u").values.numpy()
+    # The far corner, (2, 2, 2), is the tangled cell's alone.
+    np.testing.assert_allclose(at_points[26], polyhedral[7], rtol=1e-12)
+    # The near corner, (0, 0, 0), is the first cell's alone, whose own corner
+    # gradient it keeps.
+    first = td.extract_cells(data, [0])
+    np.testing.assert_allclose(at_points[0], td.gradients(first, "u", at="points")
+                               .values.numpy()[0], rtol=1e-12)
+    assert not np.allclose(at_points[0], polyhedral[0])
+
+
+@pytest.mark.parametrize("t", [2.25, 2.3, 2.32, 2.335, 2.35, 2.4, 2.6])
+def test_a_cell_nearly_as_much_inside_out_as_not_keeps_bounded_gradients(t):
+    """Folded further (point 13 to (t, t, t)), the tangled cell's signed volume
+    crosses zero near t = 2.335, and its Green-Gauss gradient with it: the largest
+    point gradient was 7 at 2.25, 612 at 2.335, 12 at 2.6 (Jeff Lee's review of
+    #389). Below a tenth of its absolute volume (``_THIN``), the cell's unfolded
+    corners keep their own gradients and the folded ones are left out; a linear
+    field's stay exact."""
+    data = _tangled()
+    x = data.positions().copy()
+    x[13] = [t, t, t]
+    data = td.DataSet(data.topology, tack.array(x, tack.vec3(tack.f64)))
+    data.fields["u"] = td.Field(td.H1(data), tack.array(np.sin(x[:, 0]) * x[:, 1] ** 2
+                                                        + x[:, 2] ** 3))
+    data.fields["v"] = td.Field(td.H1(data), tack.array(x @ np.array([1.0, -2.0, 3.0]) + 4))
+    g = td.gradients(data, "u", at="points").values.numpy()
+    assert np.isfinite(g).all() and np.linalg.norm(g, axis=1).max() < 20
+    np.testing.assert_allclose(td.gradients(data, "v", at="points").values.numpy(),
+                               np.tile([1.0, -2.0, 3.0], (data.num_points, 1)), atol=1e-10)
+
+
+def test_a_linear_fields_point_gradients_stay_exact_beside_a_tangled_hexahedron():
+    data = _tangled()
+    x = data.positions()
+    data.fields["v"] = td.Field(td.H1(data), tack.array(x @ np.array([1.0, -2.0, 3.0]) + 4))
+    np.testing.assert_allclose(td.gradients(data, "v", at="points").values.numpy(),
+                               np.tile([1.0, -2.0, 3.0], (data.num_points, 1)), atol=1e-12)
+
+
+@pytest.mark.parametrize("make", ["distorted", "mixed", "tangled"])
+def test_a_vectors_point_gradients_are_its_components(make):
+    """A 3-vector's point gradients (straight hexahedra's corners all three components
+    from one Jacobian inverse) are its components' scalar point gradients, row by
+    row: on a distorted mesh of hexahedra, with polyhedra beside them, and with a
+    tangled hexahedron (its Green-Gauss gradient at every corner)."""
+    from test_mixed_cells import _located
+
+    if make == "tangled":
+        data = _tangled()
+    else:
+        shaped, mixed, _, _, _ = _located(distorted=True)
+        data = mixed if make == "mixed" else shaped
+    x = data.positions()
+    v = np.c_[np.sin(x[:, 0]) * x[:, 1], x[:, 2] ** 2, np.cos(x[:, 1]) + x[:, 0]]
+    data.fields["v"] = td.Field(td.H1(data), tack.array(v, tack.vec3(tack.f64)))
+    got = td.gradients(data, "v", at="points").values.numpy().reshape(-1, 9)
+    for k in range(3):
+        data.fields[f"v{k}"] = td.Field(td.H1(data), tack.array(np.ascontiguousarray(v[:, k])))
+        row = td.gradients(data, f"v{k}", at="points").values.numpy().reshape(-1, 3)
+        np.testing.assert_allclose(got[:, 3 * k:3 * k + 3], row, rtol=1e-12, atol=1e-12)

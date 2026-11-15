@@ -39,6 +39,7 @@ from tack.lang.types import (
     mat,
     vec,
 )
+from tack.runtime import memory_stats
 
 
 class DeviceBuffer:
@@ -1102,16 +1103,18 @@ def _allocate(backend, dtype, shape, **options):
     memory: a 16 GB GPU ran out with dropped meshes still on it. The wait
     lets frees a backend defers (Level Zero's, a device without memory
     pools) complete before the retry, and buffers the collection returned to
-    a backend's cache (HIP's, Metal's) are freed (``release_memory``)."""
+    a backend's cache (HIP's, Metal's) are freed (``release_memory``). The
+    buffer is counted on its device (`tack.runtime.memory_stats`)."""
     try:
-        return backend.allocate_array(dtype, shape, **options)
+        buffer = backend.allocate_array(dtype, shape, **options)
     except MemoryError:
         import gc
 
         gc.collect()
         backend.synchronize()
         backend.release_memory()        # what the collection gave back to a cache
-        return backend.allocate_array(dtype, shape, **options)
+        buffer = backend.allocate_array(dtype, shape, **options)
+    return memory_stats.counted(backend, buffer)
 
 
 def _empty_for_mpi(shape, dtype, device) -> Array:
@@ -1124,8 +1127,8 @@ def _empty_for_mpi(shape, dtype, device) -> Array:
     scalar = dtype.scalar_dtype if isinstance(dtype, ElementType) else dtype
     _check_dtype(backend, scalar)
     storage = (int(math.prod(shape)) * dtype.size,) if isinstance(dtype, ElementType) else shape
-    return _array_view(dtype, shape, backend.allocate_mpi_array(scalar, storage),
-                       device=backend)
+    buffer = memory_stats.counted(backend, backend.allocate_mpi_array(scalar, storage))
+    return _array_view(dtype, shape, buffer, device=backend)
 
 
 def zeros(shape, dtype=None, *, device=None, layout="aos") -> Array:

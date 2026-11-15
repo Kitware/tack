@@ -1102,6 +1102,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#see-what-an-object-brings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See what an object brings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#details" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5291,6 +5302,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#see-what-an-object-brings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See what an object brings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#details" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5870,6 +5892,49 @@ several storage layouts. A second class with the same <code>point</code> method,
 reading an explicit connectivity array, would run the same <code>cell_average</code>
 kernel on an unstructured mesh. See also
 <a href="../../data/">Data</a>, whose mesh views follow this pattern.</p>
+<h2 id="see-what-an-object-brings">See what an object brings<a class="headerlink" href="#see-what-an-object-brings" title="Permanent link">&para;</a></h2>
+<p><code>tack.inspect_template</code> describes an object as a kernel will see it: what is
+compiled in and what is passed at each call, the arrays and objects it holds,
+and which class defines each method. Given a method's name, it shows where
+that method is and what it calls. It runs nothing, so it is safe on any
+object, however large its arrays.</p>
+<!-- tack-check: device-classes-inspect -->
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">tack</span>
+
+<span class="n">tack</span><span class="o">.</span><span class="n">set_default_device</span><span class="p">(</span><span class="s2">&quot;cpu&quot;</span><span class="p">)</span>
+
+<span class="nd">@tack</span><span class="o">.</span><span class="n">device_class</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">Scaled</span><span class="p">:</span>
+    <span class="n">FACTOR</span> <span class="o">=</span> <span class="mf">2.0</span>                        <span class="c1"># compiled in</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">values</span><span class="p">,</span> <span class="n">offset</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">values</span> <span class="o">=</span> <span class="n">values</span>            <span class="c1"># an array</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">offset</span> <span class="o">=</span> <span class="n">offset</span>            <span class="c1"># passed at each call</span>
+
+    <span class="nd">@tack</span><span class="o">.</span><span class="n">func</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">get</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">i</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">values</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">FACTOR</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">offset</span>
+
+    <span class="nd">@tack</span><span class="o">.</span><span class="n">func</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__getitem__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">i</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">i</span><span class="p">)</span>
+
+<span class="n">s</span> <span class="o">=</span> <span class="n">Scaled</span><span class="p">(</span><span class="n">tack</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">tack</span><span class="o">.</span><span class="n">f32</span><span class="p">),</span> <span class="mf">1.0</span><span class="p">)</span>
+<span class="n">text</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">inspect_template</span><span class="p">(</span><span class="n">s</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">text</span><span class="p">)</span>
+<span class="k">assert</span> <span class="s2">&quot;FACTOR = 2.0&quot;</span> <span class="ow">in</span> <span class="n">text</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;compiled in:&quot;</span><span class="p">)[</span><span class="mi">1</span><span class="p">]</span>
+<span class="k">assert</span> <span class="s2">&quot;offset = 1.0&quot;</span> <span class="ow">in</span> <span class="n">text</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;passed at run time:&quot;</span><span class="p">)[</span><span class="mi">1</span><span class="p">]</span>
+
+<span class="n">method</span> <span class="o">=</span> <span class="n">tack</span><span class="o">.</span><span class="n">inspect_template</span><span class="p">(</span><span class="n">s</span><span class="p">,</span> <span class="s2">&quot;__getitem__&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">method</span><span class="p">)</span>
+<span class="k">assert</span> <span class="s2">&quot;self.get(i)  -&gt; Scaled.get&quot;</span> <span class="ow">in</span> <span class="n">method</span>
+</code></pre></div>
+<p>The first call prints the class, <code>FACTOR</code> under "compiled in", <code>offset</code>
+under "passed at run time", the array's shape, element type and device, and
+both methods with the file and line of each. The second names the class
+that defines <code>__getitem__</code> and the calls in its source: here <code>self.get(i)</code>,
+resolved to <code>Scaled.get</code>. Those calls are read from the source, so a call in
+a branch that is never taken is listed too.</p>
 <h2 id="details">Details<a class="headerlink" href="#details" title="Permanent link">&para;</a></h2>
 <p><strong>Instance numbers that shadow class constants.</strong> A number set on the
 object with the same name as a class constant replaces it, and stays

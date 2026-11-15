@@ -4369,6 +4369,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#inspecting-an-object" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inspecting an Object
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#nested-templates" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5220,6 +5231,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#inspecting-an-object" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inspecting an Object
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#nested-templates" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5408,6 +5430,41 @@ globals/closure lookup and do not mutate the class's captured source.</p>
 </ul>
 <p>This distinction avoids unnecessary JIT recompilation when only runtime
 values (like image dimensions) change between calls.</p>
+<h3 id="inspecting-an-object">Inspecting an Object<a class="headerlink" href="#inspecting-an-object" title="Permanent link">&para;</a></h3>
+<p><code>tack.inspect_template</code> (<code>lang/inspect_template.py</code>) reports what
+classification finds, through the same functions, called so that they leave
+nothing behind:</p>
+<ul>
+<li><code>_classify_own(obj, read, inspecting)</code> and <code>_classify_tree</code> take the reader of
+  instance attributes. Lowering passes <code>getattr</code>; inspection passes one that
+  reads <code>vars(obj)</code> and returns <code>UNREAD</code> where a class property hides the
+  attribute, which is then left out.</li>
+<li><code>_class_constants(cls, inspecting=True)</code> uses the class's kept constant names
+  if lowering kept them, and otherwise finds them (<code>_scan_constant_names</code>)
+  without keeping them: a numeric attribute added to a class after its first
+  launch is not a constant, so keeping the names early would change what a
+  later compile sees.</li>
+<li>Class values (constants, <code>__tack_iterate__</code>, the <code>_device_class</code> mark) are
+  read from the classes' dictionaries (<code>_static</code>, <code>_is_template_static</code>), never
+  with <code>getattr</code>, so a metaclass's code does not run. A value Python would run
+  code for (the metaclass holds the name, or the value is a descriptor) is
+  <code>UNREAD</code>, shown as "not read"; a metaclass defining <code>__getattribute__</code> is
+  named in the report (<code>_meta_lookup</code>), since lowering reads through it.</li>
+<li><code>template_func_owners(cls)</code> is <code>template_func_methods</code> with each method's
+  defining class and whether it is static.</li>
+<li><code>CallBindings.lookup(node)</code> resolves a name by <code>resolve</code>'s rules without
+  reporting to the disk cache's recorder (<code>resolve</code> recurses through itself
+  and records each part, <code>module.f</code>'s module included).</li>
+</ul>
+<p>It follows lowering's rules where they could be misread from the source: a
+device function an object holds shadows a method of the same name
+(<code>_template_nodes</code>), and <code>len(obj)</code> is <code>obj.__len__()</code> whatever <code>len</code> is
+bound to (<code>_Indexing</code>).</p>
+<p>Inspection enters no <code>template_scope</code>, so the per-object memo is untouched.
+<code>tests/test_inspect_template.py</code> checks its classification against
+<code>classify_template_attrs</code> and that nothing is run or kept. A new kind of
+attribute belongs in both: classify it in <code>_classify_own</code>, and describe it in
+the report.</p>
 <h3 id="nested-templates">Nested Templates<a class="headerlink" href="#nested-templates" title="Permanent link">&para;</a></h3>
 <p>A template may hold templates as instance attributes. <code>template_tree(obj)</code>
 lists <code>(path, object)</code> for the object and everything nested in it, depth

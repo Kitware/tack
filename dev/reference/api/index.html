@@ -5297,6 +5297,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#tack.inspect_template" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        inspect_template
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -9441,6 +9452,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#tack.inspect_template" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        inspect_template
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -10491,6 +10513,11 @@ belong on the host or in a kernel, use the <a href="../../core/how-programs-run/
 <td>Inspect a kernel</td>
 <td><code>tack.inspect(kernel, *args, mode="source")</code></td>
 <td>Generated source as a string; does not execute the kernel</td>
+</tr>
+<tr>
+<td>Inspect a device-class object</td>
+<td><code>tack.inspect_template(obj, name=None)</code></td>
+<td>What it brings to a kernel, and where each method is defined, as a string; runs nothing</td>
 </tr>
 </tbody>
 </table>
@@ -15285,9 +15312,9 @@ shape up to 4×4. See <a href="../../core/vectors-and-matrices/">Vectors and Mat
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-core/src/tack/__init__.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">143</span>
-<span class="normal">144</span>
-<span class="normal">145</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">identity</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">144</span>
+<span class="normal">145</span>
+<span class="normal">146</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">identity</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;The n-by-n identity matrix, as ``np.identity``. Only usable inside a @tack.kernel.&quot;&quot;&quot;</span>
     <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">&quot;identity() can only be used inside a @tack.kernel&quot;</span><span class="p">)</span>
 </code></pre></div></td></tr></table></div>
@@ -15317,14 +15344,14 @@ or vectors of one shape, a scalar standing for every component.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-core/src/tack/__init__.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">102</span>
-<span class="normal">103</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">103</span>
 <span class="normal">104</span>
 <span class="normal">105</span>
 <span class="normal">106</span>
 <span class="normal">107</span>
 <span class="normal">108</span>
-<span class="normal">109</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">select</span><span class="p">(</span><span class="n">mask</span><span class="p">,</span> <span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">):</span>
+<span class="normal">109</span>
+<span class="normal">110</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">select</span><span class="p">(</span><span class="n">mask</span><span class="p">,</span> <span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;``a`` where ``mask`` is true, else ``b``, component by component.</span>
 
 <span class="sd">    Only usable inside a kernel or device function. ``mask`` is a scalar</span>
@@ -15423,8 +15450,7 @@ on every backend, including CPU.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-core/src/tack/__init__.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">171</span>
-<span class="normal">172</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">172</span>
 <span class="normal">173</span>
 <span class="normal">174</span>
 <span class="normal">175</span>
@@ -15443,7 +15469,8 @@ on every backend, including CPU.</p>
 <span class="normal">188</span>
 <span class="normal">189</span>
 <span class="normal">190</span>
-<span class="normal">191</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">texture3d</span><span class="p">(</span><span class="n">source_array</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">interp</span><span class="o">=</span><span class="s1">&#39;linear&#39;</span><span class="p">):</span>
+<span class="normal">191</span>
+<span class="normal">192</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">texture3d</span><span class="p">(</span><span class="n">source_array</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">interp</span><span class="o">=</span><span class="s1">&#39;linear&#39;</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Create a 3D texture from an array for hardware-accelerated sampling.</span>
 
 <span class="sd">    The texture copies the array&#39;s data now. Later writes to the array --</span>
@@ -16935,13 +16962,13 @@ size or a <code>(start, end)</code> pair. Cannot be called from Python directly.
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-core/src/tack/__init__.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">134</span>
-<span class="normal">135</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">135</span>
 <span class="normal">136</span>
 <span class="normal">137</span>
 <span class="normal">138</span>
 <span class="normal">139</span>
-<span class="normal">140</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">ndindex</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">):</span>
+<span class="normal">140</span>
+<span class="normal">141</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">ndindex</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Multi-dimensional parallel iteration, as ``np.ndindex``.</span>
 
 <span class="sd">    Used in kernels: ``for i, j in tack.ndindex(w, h)``; each argument is a</span>
@@ -18269,6 +18296,143 @@ message says what to use instead.</p>
     <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
         <span class="sa">f</span><span class="s2">&quot;Unknown inspect mode: &#39;</span><span class="si">{</span><span class="n">mode</span><span class="si">}</span><span class="s2">&#39;. Use &#39;ir&#39;, &#39;source&#39;, or &#39;optimized&#39;.&quot;</span>
     <span class="p">)</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="tack.inspect_template" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">tack.inspect_template</span>
+
+
+<a href="#tack.inspect_template" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">inspect_template</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span>
+</code></pre></div>
+
+    <div class="doc doc-contents first">
+
+        <p>Describe a device-class object, or one of its methods, as text.</p>
+<p><code>obj</code> is an object of a <code>@tack.device_class</code> class that exists
+already: one of yours, an implicit array of <code>tack.arrays</code>, or a dataset
+view. Without <code>name</code> the text gives its class, what is compiled in and
+what is passed at run time, its arrays (never their values), the objects
+and device functions it holds, and its <code>@tack.func</code> methods with the
+class that defines each and its source location. With <code>name</code>, a method
+of the object's class (or a device function it holds), it gives that
+method's defining class, source location and signature, and the calls in
+its source that reach another method or device function, with what each
+resolves to. Those calls are read from the source text, not from what a
+kernel inlines.</p>
+<p>Inspection runs nothing: no property or metaclass code for the values it
+shows, no device read, launch or compilation, no disk-cache lookup, and no
+backend is made.</p>
+
+
+<p><span class="doc-section-title">Raises:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="TypeError">TypeError</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p><code>obj</code> is a class, or not an object of a device class; or
+<code>name</code> is a member that is not a device function.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="AttributeError">AttributeError</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p><code>obj</code> has no member <code>name</code>.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>packages/tack-core/src/tack/lang/inspect_template.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">56</span>
+<span class="normal">57</span>
+<span class="normal">58</span>
+<span class="normal">59</span>
+<span class="normal">60</span>
+<span class="normal">61</span>
+<span class="normal">62</span>
+<span class="normal">63</span>
+<span class="normal">64</span>
+<span class="normal">65</span>
+<span class="normal">66</span>
+<span class="normal">67</span>
+<span class="normal">68</span>
+<span class="normal">69</span>
+<span class="normal">70</span>
+<span class="normal">71</span>
+<span class="normal">72</span>
+<span class="normal">73</span>
+<span class="normal">74</span>
+<span class="normal">75</span>
+<span class="normal">76</span>
+<span class="normal">77</span>
+<span class="normal">78</span>
+<span class="normal">79</span>
+<span class="normal">80</span>
+<span class="normal">81</span>
+<span class="normal">82</span>
+<span class="normal">83</span>
+<span class="normal">84</span>
+<span class="normal">85</span>
+<span class="normal">86</span>
+<span class="normal">87</span>
+<span class="normal">88</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">inspect_template</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Describe a device-class object, or one of its methods, as text.</span>
+
+<span class="sd">    ``obj`` is an object of a ``@tack.device_class`` class that exists</span>
+<span class="sd">    already: one of yours, an implicit array of `tack.arrays`, or a dataset</span>
+<span class="sd">    view. Without ``name`` the text gives its class, what is compiled in and</span>
+<span class="sd">    what is passed at run time, its arrays (never their values), the objects</span>
+<span class="sd">    and device functions it holds, and its ``@tack.func`` methods with the</span>
+<span class="sd">    class that defines each and its source location. With ``name``, a method</span>
+<span class="sd">    of the object&#39;s class (or a device function it holds), it gives that</span>
+<span class="sd">    method&#39;s defining class, source location and signature, and the calls in</span>
+<span class="sd">    its source that reach another method or device function, with what each</span>
+<span class="sd">    resolves to. Those calls are read from the source text, not from what a</span>
+<span class="sd">    kernel inlines.</span>
+
+<span class="sd">    Inspection runs nothing: no property or metaclass code for the values it</span>
+<span class="sd">    shows, no device read, launch or compilation, no disk-cache lookup, and no</span>
+<span class="sd">    backend is made.</span>
+
+<span class="sd">    Raises:</span>
+<span class="sd">        TypeError: ``obj`` is a class, or not an object of a device class; or</span>
+<span class="sd">            ``name`` is a member that is not a device function.</span>
+<span class="sd">        AttributeError: ``obj`` has no member ``name``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="nb">type</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;inspect_template takes an object, not the class &quot;</span>
+                        <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">obj</span><span class="o">.</span><span class="vm">__qualname__</span><span class="si">}</span><span class="s2">: what is compiled depends on its attributes&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">_is_template_static</span><span class="p">(</span><span class="n">obj</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;inspect_template takes an object of a @tack.device_class &quot;</span>
+                        <span class="sa">f</span><span class="s2">&quot;class, not a </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">obj</span><span class="p">)</span><span class="o">.</span><span class="vm">__qualname__</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">name</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">_Report</span><span class="p">(</span><span class="n">obj</span><span class="p">)</span><span class="o">.</span><span class="n">text</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">_method_report</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -20083,9 +20247,9 @@ the values' width.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-core/src/tack/__init__.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">147</span>
-<span class="normal">148</span>
-<span class="normal">149</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">block_sum</span><span class="p">(</span><span class="n">value</span><span class="p">):</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">148</span>
+<span class="normal">149</span>
+<span class="normal">150</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">block_sum</span><span class="p">(</span><span class="n">value</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Sum a value across all threads in the workgroup. Only usable inside a @tack.kernel.&quot;&quot;&quot;</span>
     <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">&quot;block_sum() can only be used inside a @tack.kernel&quot;</span><span class="p">)</span>
 </code></pre></div></td></tr></table></div>
@@ -20112,9 +20276,9 @@ the values' width.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-core/src/tack/__init__.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">155</span>
-<span class="normal">156</span>
-<span class="normal">157</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">block_min</span><span class="p">(</span><span class="n">value</span><span class="p">):</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">156</span>
+<span class="normal">157</span>
+<span class="normal">158</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">block_min</span><span class="p">(</span><span class="n">value</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Min of a value across all threads in the workgroup. Only usable inside a @tack.kernel.&quot;&quot;&quot;</span>
     <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">&quot;block_min() can only be used inside a @tack.kernel&quot;</span><span class="p">)</span>
 </code></pre></div></td></tr></table></div>
@@ -20141,9 +20305,9 @@ the values' width.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-core/src/tack/__init__.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">151</span>
-<span class="normal">152</span>
-<span class="normal">153</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">block_max</span><span class="p">(</span><span class="n">value</span><span class="p">):</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">152</span>
+<span class="normal">153</span>
+<span class="normal">154</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">block_max</span><span class="p">(</span><span class="n">value</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Max of a value across all threads in the workgroup. Only usable inside a @tack.kernel.&quot;&quot;&quot;</span>
     <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">&quot;block_max() can only be used inside a @tack.kernel&quot;</span><span class="p">)</span>
 </code></pre></div></td></tr></table></div>

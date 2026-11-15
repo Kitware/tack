@@ -5320,8 +5320,9 @@
 
 
 <h1 id="cut-filters-memory">Cut filters' memory<a class="headerlink" href="#cut-filters-memory" title="Permanent link">&para;</a></h1>
-<p><strong>Status: proposed.</strong> Issue <a href="https://github.com/Kitware/tack/issues/318">#318</a>,
-2026-11-10.</p>
+<p><strong>Status: accepted.</strong> Issue <a href="https://github.com/Kitware/tack/issues/318">#318</a>,
+2026-11-10. Accepted in <a href="https://github.com/Kitware/tack/pull/416">#416</a>,
+merged 2026-11-15.</p>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
 <p>Clip holds 2.5 to 3 times VTK's memory while it runs, and on a GPU that memory
 is the device's. Measured as Tack's and VTK's live allocations, the other cut

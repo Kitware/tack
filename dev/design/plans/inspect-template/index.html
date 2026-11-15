@@ -4995,6 +4995,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#how-it-came-out" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How it came out
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#not-in-this-plan" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5267,6 +5278,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#how-it-came-out" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How it came out
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#not-in-this-plan" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5352,8 +5374,9 @@
 
 
 <h1 id="inspecting-device-class-objects">Inspecting device-class objects<a class="headerlink" href="#inspecting-device-class-objects" title="Permanent link">&para;</a></h1>
-<p><strong>Status: proposed.</strong> Issue <a href="https://github.com/Kitware/tack/issues/324">#324</a>,
-2026-11-14.</p>
+<p><strong>Status: done.</strong> Issue <a href="https://github.com/Kitware/tack/issues/324">#324</a>,
+2026-11-14. Carried out in <a href="https://github.com/Kitware/tack/pull/457">#457</a>,
+merged 2026-11-15; see <a href="#how-it-came-out">How it came out</a>.</p>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
 <p>A kernel that takes a device-class object compiles what the object brings:
 its class constants, its arrays and run-time scalars, the templates it holds
@@ -5612,6 +5635,45 @@ methods asked about are ones each view has, not one list for all.</p>
 <p>All CPU: inspection touches no device, which the patched device reads
 check. A view of GPU arrays is shown the same way, and needs no hardware run
 of its own.</p>
+<h2 id="how-it-came-out">How it came out<a class="headerlink" href="#how-it-came-out" title="Permanent link">&para;</a></h2>
+<p><a href="https://github.com/Kitware/tack/pull/457">#457</a> carried out D1 to D5 as
+recommended: <code>tack.inspect_template</code> in <code>lang/inspect_template.py</code>, the
+classification shared with lowering, <code>template_func_owners</code>,
+<code>CallBindings.lookup</code>, and <code>_tack_composition</code> on view classes. The tests
+are 29 in tack-core and 18 in tack-vis, all in the quick tier.</p>
+<p><strong>Where it departs from the plan:</strong></p>
+<ul>
+<li><strong>D6:</strong> two commits for the work, not three. The one-method query shares the
+  report's module and helpers, so it was not split out. Two more commits came
+  from review (below).</li>
+<li><strong>Tests, D2:</strong> the equivalence with <code>classify_template_attrs</code> is checked on
+  six fixed objects (a user template with nested objects, a leaf,
+  <code>CountingArray</code>, <code>Permutation</code>, <code>Concatenate</code>, <code>ConstantArray</code>), not on
+  every device class the template test modules define.</li>
+<li><strong>Tests, views:</strong> there is no points domain, so face and edge domain views
+  stand in for the "node view". A table-backed H1 field view is covered.</li>
+<li><strong>D4's example:</strong> a source location is given from the top-level package
+  (<code>tack/dataset/views.py:1400</code>), not from the repository root.</li>
+</ul>
+<p><strong>What review added.</strong> The review of #457 found three places where inspection
+could disagree with lowering, or run code. Each is fixed, with a test that
+runs the kernel or the compiler's classification first:</p>
+<ul>
+<li><strong>A held device function shadows a method of its name,</strong> as lowering's
+  <code>_template_nodes</code> has it. D4's call targets and the method query follow
+  that, and the methods list marks a shadowed method "not used".</li>
+<li><strong><code>len(obj)</code> is <code>obj.__len__()</code> whatever <code>len</code> is bound to,</strong> since
+  <code>_Indexing</code> rewrites it from the syntax alone.</li>
+<li><strong>No metaclass code runs (D2, extended).</strong> Class values (the constants,
+  <code>__tack_iterate__</code>, the <code>_device_class</code> mark, the property checks) are read
+  from the classes' dictionaries (<code>_static</code>, <code>_is_template_static</code>,
+  <code>iteration_space(cls, read)</code>), never with <code>getattr</code>. A value Python would
+  run code for is "not read", and a metaclass that defines
+  <code>__getattribute__</code> is named in the report, since lowering reads class values
+  through it. Class metadata (<code>__qualname__</code>, <code>__mro__</code>) is still read through
+  Python's attribute lookup. The flag that asks for all this is
+  <code>inspecting=True</code> (D2's "scan without storing").</li>
+</ul>
 <h2 id="not-in-this-plan">Not in this plan<a class="headerlink" href="#not-in-this-plan" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Structured output (a report class, JSON), and a combined browser of

@@ -228,6 +228,27 @@ def no_debug():
 
 
 @pytest.fixture
+def peak_memory():
+    """A function measuring the most memory Tack's arrays held on a device during
+    one call, above what they held before it: ``result, nbytes = peak_memory(fn,
+    *args, device=None, **kwargs)``. It reads the count of every array Tack makes
+    (`tack.runtime.memory_stats`), the same on every backend; garbage is collected
+    first, so arrays dropped before the call are not in it. For a test that holds a
+    filter's peak to a multiple of its output (the cut filters' memory plan)."""
+    import gc
+
+    from tack.runtime import memory_stats
+
+    def measure(fn, *args, device=None, **kwargs):
+        gc.collect()
+        start = memory_stats.reset_peak(device)
+        result = fn(*args, **kwargs)
+        return result, memory_stats.peak(device) - start
+
+    return measure
+
+
+@pytest.fixture
 def no_disk_cache():
     """For a test that counts compile work in this process, which a disk-cache
     hit would skip when the suite runs with the cache on."""

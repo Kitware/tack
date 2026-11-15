@@ -5598,7 +5598,8 @@ pieces (<a href="../../data/polyhedra/">Polyhedra and Polygons</a>).</p>
 </tbody>
 </table>
 <p>There is no fixed upper order (the tests go to order 6). An <code>L2</code> order may
-also vary per cell (orders 0 and 1, <code>L2(data, order=array)</code>).</p>
+also vary per cell (orders 0 to 15 in one basis, <code>L2(data, order=array)</code>), each
+cell read as the space of its order, where that space exists for its shape.</p>
 <p>A <strong>curved geometry</strong> is a geometry field above order 1, in <code>H1</code>, or in <code>L2</code> for
 cells that do not meet (a mesh displaced by a DG field, a periodic mesh). Cells
 are then located, probed, measured, integrated, cut and drawn as they are, not

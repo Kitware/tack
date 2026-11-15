@@ -5785,8 +5785,16 @@ each. A shared edge or face keeps its values once, whatever order it is.</p>
 cells. This is how DG solutions are stored. <code>L2</code> of order 0 is one value per
 cell, which means the same as cell data (<code>Constant</code>). <code>L2</code> of order 1 has a
 value at each corner of each cell, so a point shared by four cells has four
-values. Higher orders have a cell's full lattice of nodes. The order may
-also differ per cell, given as an array, for orders 0 and 1.</p>
+values. Higher orders have a cell's full lattice of nodes.</p>
+<p>The order may also differ per cell, as a p-adaptive DG solver's does:
+<code>L2(data, order=orders, basis=...)</code> with an array of one order per cell, 0 to
+15, in one basis. Each cell is read as the space of its order reads it: order
+0 its one value, order 1 its corners (Gauss-Legendre's 2^d interior nodes),
+higher orders their lattice. Its values are each cell's in blocks, at
+<code>space.offsets[c]</code>. Every algorithm takes such a field. The cutting filters
+cut at the highest order present; <code>integrate</code> takes points enough for it.
+<code>space.at_order(p)</code> is the space of one order that reads the cells of order
+<code>p</code>, and <code>space.orders()</code> lists the orders present.</p>
 <h3 id="what-the-names-mean">What the names mean<a class="headerlink" href="#what-the-names-mean" title="Permanent link">&para;</a></h3>
 <p>The names come from mathematics and describe smoothness, not degree. <code>L2</code>
 fields need only be integrable, so they may jump. <code>H1</code> fields have
@@ -6225,7 +6233,8 @@ Bézier cells with weights other than 1, which are refused when read);
 Gauss-point bases on triangles, tetrahedra and wedges, which are resampled
 into equispaced ones when read; an order per axis, as VTK's
 quadratic-linear cells have, which are embedded in the full order; and
-serendipity for <code>L2</code>. An <code>L2</code> order per cell is limited to 0 and 1.</p>
+serendipity for <code>L2</code>. An <code>L2</code> order per cell does not go to VTK cell grids
+or MFEM yet (VTK's unstructured grids take no <code>L2</code> field at any order).</p>
 <h2 id="where-to-go-next">Where to go next<a class="headerlink" href="#where-to-go-next" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../storage-and-layouts/">Storage and layouts</a> gives the exact place of

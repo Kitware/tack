@@ -8895,8 +8895,9 @@ kept only if a point is strictly above <code>value</code> (below, with <code>ins
 cell that touches it from the other side is dropped, where the shapes' tables
 (and VTK's) keep a piece of it of no volume, so a clip through a plane of mesh
 points has fewer cells than VTK's, all of its volume.</p>
-<p>A curved geometry or a field above order 1 (or <code>subdivision</code> above 1, or a
-<code>tolerance</code>) is clipped through subdivision, as <code>contour</code> cuts it, and the
+<p>A curved geometry, a field above order 1 or any <code>L2</code> field (or <code>subdivision</code>
+above 1, or a <code>tolerance</code>) is clipped through subdivision, as <code>contour</code> cuts it,
+and the
 result is <code>PartitionedDataSet([whole, part])</code>: <code>whole</code> the cells the field's
 Bernstein bound keeps entirely, as they are (curved, their fields of any order),
 and <code>part</code> the clip of the others that the bound does not drop, cut into
@@ -9085,7 +9086,10 @@ between the lattice values does.</p>
 <span class="normal">428</span>
 <span class="normal">429</span>
 <span class="normal">430</span>
-<span class="normal">431</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">431</span>
+<span class="normal">432</span>
+<span class="normal">433</span>
+<span class="normal">434</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">clip</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">by</span><span class="p">,</span> <span class="n">value</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">inside</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">subdivision</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">tolerance</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
          <span class="n">exact</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;The part of ``data`` where ``by`` -- point data (a field or its name) or an</span>
@@ -9122,8 +9126,9 @@ between the lattice values does.</p>
 <span class="sd">    (and VTK&#39;s) keep a piece of it of no volume, so a clip through a plane of mesh</span>
 <span class="sd">    points has fewer cells than VTK&#39;s, all of its volume.</span>
 
-<span class="sd">    A curved geometry or a field above order 1 (or ``subdivision`` above 1, or a</span>
-<span class="sd">    ``tolerance``) is clipped through subdivision, as ``contour`` cuts it, and the</span>
+<span class="sd">    A curved geometry, a field above order 1 or any ``L2`` field (or ``subdivision``</span>
+<span class="sd">    above 1, or a ``tolerance``) is clipped through subdivision, as ``contour`` cuts it,</span>
+<span class="sd">    and the</span>
 <span class="sd">    result is ``PartitionedDataSet([whole, part])``: ``whole`` the cells the field&#39;s</span>
 <span class="sd">    Bernstein bound keeps entirely, as they are (curved, their fields of any order),</span>
 <span class="sd">    and ``part`` the clip of the others that the bound does not drop, cut into</span>
@@ -9159,7 +9164,9 @@ between the lattice values does.</p>
         <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="s2">&quot;clip needs a scalar field&quot;</span><span class="p">)</span>
     <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.algorithms.subdivide</span><span class="w"> </span><span class="kn">import</span> <span class="n">split_by_range</span><span class="p">,</span> <span class="n">subdivides</span>
 
+    <span class="c1"># An L2 field, of any order, is read cell by cell: through subdivision too.</span>
     <span class="k">if</span> <span class="ow">not</span> <span class="n">polyhedral</span> <span class="ow">and</span> <span class="p">(</span><span class="n">subdivides</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">)</span> <span class="ow">or</span> <span class="n">tolerance</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+                           <span class="ow">or</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">space</span><span class="p">,</span> <span class="n">L2</span><span class="p">)</span>
                            <span class="ow">or</span> <span class="p">(</span><span class="n">subdivision</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">subdivision</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">)):</span>
         <span class="k">if</span> <span class="n">tolerance</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
             <span class="n">tolerance</span> <span class="o">=</span> <span class="n">_in_unit_of</span><span class="p">(</span><span class="n">field</span><span class="p">,</span> <span class="n">tolerance</span><span class="p">,</span> <span class="s2">&quot;clip&#39;s tolerance&quot;</span><span class="p">)</span>
@@ -11686,9 +11693,7 @@ sub-cell of their cell. Segments, quads, pixels, hexahedra and voxels.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/algorithms/subdivide.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1332</span>
-<span class="normal">1333</span>
-<span class="normal">1334</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1334</span>
 <span class="normal">1335</span>
 <span class="normal">1336</span>
 <span class="normal">1337</span>
@@ -11706,7 +11711,9 @@ sub-cell of their cell. Segments, quads, pixels, hexahedra and voxels.</p>
 <span class="normal">1349</span>
 <span class="normal">1350</span>
 <span class="normal">1351</span>
-<span class="normal">1352</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">1352</span>
+<span class="normal">1353</span>
+<span class="normal">1354</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">subdivide</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">level</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;``data``&#39;s cells cut into ``level`` steps along each parametric axis -- linear</span>
 <span class="sd">    hexahedra, quads or lines on each cell&#39;s lattice -- and its fields evaluated at</span>
@@ -13954,7 +13961,9 @@ order-1 <code>H1</code> into order-1 <code>L2</code>, which copies them and take
 <span class="normal">449</span>
 <span class="normal">450</span>
 <span class="normal">451</span>
-<span class="normal">452</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">452</span>
+<span class="normal">453</span>
+<span class="normal">454</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">project</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">,</span> <span class="n">space</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">average</span><span class="o">=</span><span class="s2">&quot;integral&quot;</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;``field`` (a ``Field`` or a name) in ``space``, a space of the same topology:</span>
 <span class="sd">    a new field. Values on points or cells count as order-1 ``H1`` and</span>
@@ -14055,7 +14064,9 @@ order-1 <code>H1</code> into order-1 <code>L2</code>, which copies them and take
     <span class="k">for</span> <span class="n">group</span> <span class="ow">in</span> <span class="n">groups</span><span class="p">:</span>
         <span class="k">if</span> <span class="n">group</span><span class="o">.</span><span class="n">count</span><span class="p">:</span>
             <span class="n">kernel</span> <span class="o">=</span> <span class="n">_cell_nodes</span>
-            <span class="k">if</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">space</span><span class="p">,</span> <span class="s2">&quot;tensor&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">):</span>
+            <span class="c1"># An order per cell: each subgroup as the space of its order.</span>
+            <span class="n">fixed</span> <span class="o">=</span> <span class="n">space</span><span class="o">.</span><span class="n">at_order</span><span class="p">(</span><span class="n">group</span><span class="o">.</span><span class="n">keys</span><span class="p">[</span><span class="n">space</span><span class="p">])</span> <span class="k">if</span> <span class="n">space</span><span class="o">.</span><span class="n">varies</span> <span class="k">else</span> <span class="n">space</span>
+            <span class="k">if</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">fixed</span><span class="p">,</span> <span class="s2">&quot;tensor&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">):</span>
                 <span class="n">kernel</span> <span class="o">=</span> <span class="p">(</span><span class="n">_tensor_cell_nodes</span> <span class="k">if</span> <span class="n">bases</span><span class="o">.</span><span class="n">tensor_shape</span><span class="p">(</span><span class="n">group</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>
                           <span class="k">else</span> <span class="n">_lattice_cell_nodes</span><span class="p">)</span>
             <span class="n">kernel</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">domain_view</span><span class="p">(</span><span class="s2">&quot;cells&quot;</span><span class="p">,</span> <span class="n">group</span><span class="p">),</span> <span class="n">field</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">group</span><span class="p">),</span> <span class="n">target</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">group</span><span class="p">),</span>
@@ -14898,7 +14909,8 @@ included.</p>
 <span class="normal">93</span>
 <span class="normal">94</span>
 <span class="normal">95</span>
-<span class="normal">96</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">96</span>
+<span class="normal">97</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">jump</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;A field&#39;s difference across each face at the face&#39;s center, side 1 minus side</span>
 <span class="sd">    0 (zero on the boundary): a field on faces. Each side is the field as its own</span>
@@ -14920,7 +14932,8 @@ included.</p>
         <span class="c1"># every face, polygons of five or more points too, agree.</span>
         <span class="k">if</span> <span class="n">faces</span><span class="o">.</span><span class="n">num_faces</span><span class="p">:</span>
             <span class="n">out</span><span class="o">.</span><span class="n">fill</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
-    <span class="k">elif</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">space</span><span class="p">,</span> <span class="s2">&quot;order&quot;</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span> <span class="o">&lt;=</span> <span class="mi">1</span> <span class="ow">or</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">space</span><span class="p">,</span> <span class="s2">&quot;varies&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">):</span>
+    <span class="k">elif</span> <span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">space</span><span class="o">.</span><span class="n">max_order</span> <span class="k">if</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">space</span><span class="p">,</span> <span class="s2">&quot;varies&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">)</span>
+          <span class="k">else</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">space</span><span class="p">,</span> <span class="s2">&quot;order&quot;</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span> <span class="o">&lt;=</span> <span class="mi">1</span><span class="p">:</span>
         <span class="c1"># Up to order 1 a side is linear over the face, so its corner values</span>
         <span class="c1"># (traces) give the center exactly -- on a pyramid&#39;s triangles too, whose</span>
         <span class="c1"># map from the reference is not affine.</span>
@@ -15490,9 +15503,7 @@ the pieces' order.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/algorithms/integrate.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 941</span>
-<span class="normal"> 942</span>
-<span class="normal"> 943</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 943</span>
 <span class="normal"> 944</span>
 <span class="normal"> 945</span>
 <span class="normal"> 946</span>
@@ -15564,7 +15575,9 @@ the pieces' order.</p>
 <span class="normal">1012</span>
 <span class="normal">1013</span>
 <span class="normal">1014</span>
-<span class="normal">1015</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">1015</span>
+<span class="normal">1016</span>
+<span class="normal">1017</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">integrate</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;The measure of ``data`` -- its cells&#39; total volume, area or length -- and the</span>
 <span class="sd">    integral over it of each of ``fields`` (names; a mapping of names to field</span>

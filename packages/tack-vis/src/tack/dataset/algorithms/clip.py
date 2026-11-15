@@ -26,7 +26,7 @@ from tack.dataset.algorithms.implicit_values import implicit_values
 from tack.dataset.buckets import key_order, run_offsets
 from tack.dataset.carry import Interpolate, Pieces, _point_values, carry
 from tack.dataset.dataset import Field
-from tack.dataset.spaces import H1, Values
+from tack.dataset.spaces import H1, L2, Values
 from tack.dataset.topology import UnstructuredTopology
 from tack.runtime.dispatch import on_inputs_device
 
@@ -282,10 +282,18 @@ def clip(data, by, value=0.0, inside=False, fields=None, subdivision=None, toler
     ``contour`` traces them, by López's method -- as caps wound out of it; the
     output is a ``PolyhedralTopology``. A point at exactly ``value`` is kept on
     either side (``inside`` keeps at or below). Polygons and polylines are not
-    clipped yet.
+    clipped yet. Polyhedra beside shapes (a mixed ``UnstructuredTopology``) are
+    clipped the same way, and so is every cut shape beside them, since a shape's
+    pieces would split faces a polyhedron holds whole; a shape kept whole stays
+    as it is, so the output is mixed too, its whole shapes first. There a cell is
+    kept only if a point is strictly above ``value`` (below, with ``inside``): a
+    cell that touches it from the other side is dropped, where the shapes' tables
+    (and VTK's) keep a piece of it of no volume, so a clip through a plane of mesh
+    points has fewer cells than VTK's, all of its volume.
 
-    A curved geometry or a field above order 1 (or ``subdivision`` above 1, or a
-    ``tolerance``) is clipped through subdivision, as ``contour`` cuts it, and the
+    A curved geometry, a field above order 1 or any ``L2`` field (or ``subdivision``
+    above 1, or a ``tolerance``) is clipped through subdivision, as ``contour`` cuts it,
+    and the
     result is ``PartitionedDataSet([whole, part])``: ``whole`` the cells the field's
     Bernstein bound keeps entirely, as they are (curved, their fields of any order),
     and ``part`` the clip of the others that the bound does not drop, cut into
@@ -299,8 +307,9 @@ def clip(data, by, value=0.0, inside=False, fields=None, subdivision=None, toler
     from tack.dataset.ghosts import visible
     from tack.dataset.polyhedra import PolygonalTopology, PolyhedralTopology
 
-    polyhedral = isinstance(data.topology, PolyhedralTopology) and \
-        not isinstance(data.topology, PolygonalTopology)
+    mixed = data.topology.has_polyhedra
+    polyhedral = mixed or (isinstance(data.topology, PolyhedralTopology)
+                           and not isinstance(data.topology, PolygonalTopology))
     if not polyhedral and not getattr(data.topology, "reference_cells", True):
         raise NotImplementedError("clip takes cells of the linear shapes or polyhedra, not "
                                   "polygons or polylines")
@@ -320,7 +329,9 @@ def clip(data, by, value=0.0, inside=False, fields=None, subdivision=None, toler
         raise TypeError("clip needs a scalar field")
     from tack.dataset.algorithms.subdivide import split_by_range, subdivides
 
+    # An L2 field, of any order, is read cell by cell: through subdivision too.
     if not polyhedral and (subdivides(data, field) or tolerance is not None
+                           or isinstance(field.space, L2)
                            or (subdivision is not None and subdivision > 1)):
         if tolerance is not None:
             tolerance = _in_unit_of(field, tolerance, "clip's tolerance")
@@ -340,6 +351,10 @@ def clip(data, by, value=0.0, inside=False, fields=None, subdivision=None, toler
         raise TypeError(f"clip takes point data or an implicit function, not {space!r}")
     precision = _floating_dtype(field.values)
     values = _converted(_point_values(field.values, data.num_points), precision)
+    if mixed:
+        from tack.dataset.algorithms._clip_polyhedra import clip_mixed
+
+        return clip_mixed(data, arrays.materialize(values), float(value), inside, fields)
     if polyhedral:
         from tack.dataset.algorithms._clip_polyhedra import clip_polyhedra
 

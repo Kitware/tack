@@ -33,7 +33,6 @@ def shrink(data, factor=0.5, fields=None):
     topology, and point data becomes ``L2`` the same way (each cell's own copy
     of its corners' values). Everything else is kept, the topology's faces and
     edges with it."""
-
     if not 0 <= factor <= 1:
         raise ValueError(f"factor must lie in [0, 1], not {factor!r}")
     corners = project(data, data.geometry, L2(data))

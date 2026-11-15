@@ -213,8 +213,13 @@ the normal points to, and `clip(data, sphere)` keeps the outside. Pass
 below, is the other way round: it keeps the inside by default.
 
 A polyhedral mesh is clipped into polyhedra: each cut cell becomes the
-polyhedron of its kept part, capped by its iso-polygons. Polygon and polyline
-meshes are not clipped yet. The full signature is in the
+polyhedron of its kept part, capped by its iso-polygons. A mesh with polyhedra
+beside shaped cells (as `vtk_to_dataset` reads one) keeps each whole shape as
+it is, but every cut cell, shaped or not, becomes a polyhedron: a cut
+hexahedron's pieces would not meet a neighbouring polyhedron's clipped face, so
+the output is a mixed mesh of whole shapes and polyhedra, where clipping a
+mesh of shapes alone cuts each cell into the clip tables' shapes. Polygon and
+polyline meshes are not clipped yet. The full signature is in the
 [reference](../vis-guide/reference/algorithms.md#tack.dataset.algorithms.clip.clip).
 
 ## Keep cells whose field lies in a range

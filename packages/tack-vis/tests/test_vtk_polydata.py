@@ -58,12 +58,84 @@ def test_a_surface_of_triangles_and_quads_is_unstructured():
     assert set(np.unique(disk.topology.types.numpy())) == {9}         # VTK_QUAD
 
 
-def test_larger_polygons_make_a_polygonal_topology():
+def test_larger_polygons_stand_beside_the_triangles():
+    """One topology of both, as for polyhedra beside shapes; ``polyhedral="all"``
+    reads every cell as a polygon, as before 0.8."""
     hexagon = [[np.cos(a), np.sin(a), 0] for a in np.linspace(0, 2 * np.pi, 7)[:-1]]
     surface = _polydata([*hexagon, [0, 0, 1]], polys=[[0, 1, 2, 3, 4, 5], [1, 0, 6]])
     data = vtk_to_dataset(surface, dtype=tack.f64)
-    assert isinstance(data.topology, td.PolygonalTopology)
+    assert isinstance(data.topology, td.UnstructuredTopology)
+    assert list(np.asarray(data.topology.types.numpy())) == [7, 5]
     assert _measure(data) == pytest.approx(_vtk_measure(surface), rel=1e-12)
+    every = vtk_to_dataset(surface, dtype=tack.f64, polyhedral="all")
+    assert isinstance(every.topology, td.PolygonalTopology)
+    assert _measure(every) == pytest.approx(_measure(data), rel=1e-12)
+
+
+
+def test_hidden_polygons_beside_triangles_are_left_out_as_the_polygonal_readings():
+    """Hidden cells of a mixed surface, left out in place as main's masked filters
+    leave hidden shapes out (#410): each filter's answer is that of the same surface
+    read as polygons alone (``polyhedral="all"``), with the same cells hidden."""
+    nx, ny = 7, 5
+    pts = [[i, j, 0.1 * np.sin(i + 2 * j)] for j in range(ny) for i in range(nx)]
+    pid = lambda i, j: i + nx * j
+    polys = []
+    for j in range(ny - 1):                 # pairs of quads as hexagons, beside triangles
+        i = 0
+        while i < nx - 1:
+            if i + 2 <= nx - 1 and (i + j) % 3 != 2:
+                polys.append([pid(i, j), pid(i + 1, j), pid(i + 2, j), pid(i + 2, j + 1),
+                              pid(i + 1, j + 1), pid(i, j + 1)])
+                i += 2
+            else:
+                polys += [[pid(i, j), pid(i + 1, j), pid(i + 1, j + 1)],
+                          [pid(i, j), pid(i + 1, j + 1), pid(i, j + 1)]]
+                i += 1
+    surface = _polydata(pts, polys=polys)
+
+    def edges(d):
+        e = td.feature_edges(d, manifold=True)
+        x = e.geometry.values.numpy()
+        pairs = e.topology.connectivity.numpy().reshape(-1, 2)
+        return sorted((tuple(map(tuple, np.round(x[r], 9))), int(k))
+                      for r, k in zip(pairs, e.fields["kind"].values.numpy()))
+
+    for seed in range(3):
+        mixed = vtk_to_dataset(surface, dtype=tack.f64)
+        every = vtk_to_dataset(surface, dtype=tack.f64, polyhedral="all")
+        marks = np.zeros(mixed.num_cells, np.uint8)
+        marks[np.random.default_rng(seed).random(mixed.num_cells) < 0.3] = td.Ghosts.HIDDENCELL
+        for d in (mixed, every):
+            d.ghosts = td.Ghosts(cells=tack.array(marks, tack.u8))
+        a, b = td.triangulate(mixed), td.triangulate(every)
+        assert a.num_cells == b.num_cells
+        assert _measure(a) == pytest.approx(_measure(b), rel=1e-12)
+        for consistent in (False, True):
+            na = td.surface_normals(mixed, consistent=consistent)
+            nb = td.surface_normals(every, consistent=consistent)
+            for name in ("normals", "cell_normals"):
+                np.testing.assert_allclose(na.fields[name].values.numpy(),
+                                           nb.fields[name].values.numpy(), atol=1e-12)
+        assert edges(mixed) == edges(every)
+
+def test_a_grids_polygons_of_three_and_four_points_are_triangles_and_quads():
+    """As a vtkPolyData's are, so they take the shapes' paths rather than a polygon's
+    fan (Jeff Lee's review of #389); larger ones stay polygons."""
+    from vtkmodules.vtkCommonCore import vtkPoints, vtkUnsignedCharArray
+    from vtkmodules.vtkCommonDataModel import vtkCellArray, vtkUnstructuredGrid
+
+    pts = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [2, 0, 0], [2, 1, 0],
+                    [3, 0.5, 0]], float)
+    grid = vtkUnstructuredGrid()
+    grid.points = vtkPoints(data=pts)
+    grid.cells = (vtkUnsignedCharArray(np.array([7, 7, 7], np.uint8)),
+                  vtkCellArray(offsets=np.array([0, 4, 7, 12]),
+                               connectivity=np.array([0, 1, 2, 3, 1, 4, 2, 4, 6, 5, 2, 1])))
+    data = vtk_to_dataset(grid, dtype=tack.f64)
+    assert data.topology.types.numpy().tolist() == [9, 5, 7]
+    assert _measure(data) == pytest.approx(_vtk_measure(grid), rel=1e-12)
+    assert isinstance(vtk_to_dataset(grid, polyhedral="all").topology, td.PolygonalTopology)
 
 
 def test_strips_are_their_triangles_wound_alike_with_their_cell_data():

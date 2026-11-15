@@ -38,6 +38,10 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/tack"]
 
+# tack-vis's deprecations (tack._deprecation's registry), declared without importing VTK.
+[project.entry-points."tack.deprecations"]
+tack-vis = "tack.dataset._deprecations"
+
 [project.urls]
 Homepage = "https://github.com/Kitware/tack"
 Repository = "https://github.com/Kitware/tack"

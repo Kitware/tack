@@ -143,6 +143,53 @@ def _same_mesh(a, b):
     return all(_equal(getattr(a, name), getattr(b, name)) for name in a._STORED)
 
 
+@tack.kernel
+def _moved_apart(a, b, out):
+    for i in range(out.shape[0]):
+        out[i] = 1.0 if any(a[i] != b[i]) else 0.0
+
+
+def _same_positions(a, b):
+    """Whether two geometries' values (arrays of points, stored or implicit) are
+    the same points, compared on their device."""
+    if a is b:
+        return True
+    n = arrays.size_of(a)
+    if n != arrays.size_of(b) or arrays.width_of(a) != arrays.width_of(b):
+        return False
+    if not n:
+        return True
+    device = a.device if isinstance(a, tack.Array) else b.device
+    flags = tack.empty((n,), tack.f32, device=device)
+    _moved_apart(a, b, flags)
+    return flags.max() == 0.0
+
+
+def _on_one_mesh(a, b):
+    """Whether datasets ``a`` and ``b`` are on one mesh at one origin, ``b`` without
+    hidden or refined cells (``Ghosts.MASKED_CELLS``), which the kernel would
+    search and a probe passes over."""
+    from tack.dataset.ghosts import Ghosts, _has
+
+    if b.ghosts is not None:
+        with b.device:
+            if _has(b.ghosts.cells, Ghosts.MASKED_CELLS):
+                return False
+    return (np.array_equal(np.asarray(a.origin), np.asarray(b.origin))
+            and _same_mesh(a.topology, b.topology)
+            and _same_positions(a.geometry.values, b.geometry.values))
+
+
+def _one_mesh(before, now):
+    """Whether two steps are on one mesh (``_on_one_mesh``); over pieces, each of
+    ``now``'s with ``before``'s in order, agreed on every rank (collective)."""
+    if not isinstance(now, PartitionedDataSet):
+        return not isinstance(before, PartitionedDataSet) and _on_one_mesh(before, now)
+    mine = (isinstance(before, PartitionedDataSet) and len(before) == len(now)
+            and all(_on_one_mesh(a, b) for a, b in zip(before, now)))
+    return all(now.world._allgather(mine))
+
+
 def _refuse_another_mesh(what, kept, data):
     if not _same_mesh(kept, data.topology):
         raise ValueError(f"{what} needs one mesh over the steps, and this step is on "
@@ -381,19 +428,58 @@ def _frame_of(data, check=None):
     return first._frame(), first.device
 
 
-def _velocities(data, field, x):
-    """The velocity at world points ``x`` (``(n, 3)`` f64) and whether a cell holds
-    each: ``probe``, over pieces routed to the rank whose cells hold them. Over
-    pieces the probe is collective, so a rank with no points probes too."""
+def _velocities(data, field, x, *others):
+    """The velocity at world points ``x`` (``(n, 3)`` f64), the values of the fields
+    ``others`` there, and whether a cell holds each point: ``probe``, over pieces
+    routed to the rank whose cells hold them. Over pieces the probe is
+    collective, so a rank with no points probes too."""
     from tack.dataset.algorithms.probe import probe
 
+    names = (field, *others)
     if not len(x) and not isinstance(data, PartitionedDataSet):
-        return np.zeros((0, 3)), np.zeros(0, bool)
-    out = probe(data, x, fields=[field])
+        return (*(np.zeros((0, 3)) for _ in names), np.zeros(0, bool))
+    out = probe(data, x, fields=list(names))
     if not len(x):
-        return np.zeros((0, 3)), np.zeros(0, bool)
-    values = np.asarray(out.fields[field].values.numpy(), np.float64).reshape(len(x), -1)
-    return values, out.fields["valid"].values.numpy() == 1
+        return (*(np.zeros((0, 3)) for _ in names), np.zeros(0, bool))
+    return (*(np.asarray(out.fields[n].values.numpy(), np.float64).reshape(len(x), -1)
+              for n in names), out.fields["valid"].values.numpy() == 1)
+
+
+#: The previous step's velocity, beside this one's on one mesh (``_with_before``).
+_BEFORE = "__tack_before__"
+
+
+def _alike(a, b):
+    """Whether fields ``a`` and ``b`` of two steps on one mesh hold their values
+    alike -- spaces of one class and parameters (an array parameter, the same
+    array) that store their values -- so that ``b``'s space holds ``a``'s values.
+    The velocity may be on the cells one step and on the points the next."""
+    from tack.dataset.spaces import _is_array
+
+    s, t = a.space, b.space
+    if type(s) is not type(t) or s.evaluated or s.params.keys() != t.params.keys():
+        return False
+    for name, x in s.params.items():
+        y = t.params[name]
+        if not (x is y or (not (_is_array(x) or _is_array(y)) and x == y)):
+            return False
+    return True
+
+
+def _with_before(before, now, field):
+    """``now`` with ``before``'s velocity beside its own (``_BEFORE``), both steps
+    on one mesh, so that one probe gives both; piece by piece over pieces. ``None``
+    where any piece's two velocities are not ``_alike`` (collective)."""
+    if isinstance(now, PartitionedDataSet):
+        if not all(now.world._allgather(all(_alike(b.fields[field], n.fields[field])
+                                            for b, n in zip(before, now)))):
+            return None
+        return PartitionedDataSet([_with_before(b, n, field) for b, n in zip(before, now)],
+                                  world=now.world)
+    velocity, earlier = now.fields[field], before.fields[field]
+    fields = {field: velocity, _BEFORE: Field(velocity.space, earlier.values, earlier.unit)}
+    return DataSet(now.topology, now.geometry, fields=fields, ghosts=now.ghosts,
+                   **now._frame())
 
 
 class Advection:
@@ -416,7 +502,16 @@ class Advection:
     substep from step to step. A particle leaving the mesh stops where it last
     was, marked ``SPATIAL_BOUNDS``; one released outside has ``SUCCESS``
     cleared. Times convert between the steps' unit and the velocity's (a
-    velocity in m/s over steps in minutes)."""
+    velocity in m/s over steps in minutes).
+
+    Two steps on one mesh -- the same topology, or one of the same arrays and
+    positions, as a reader gives each step -- are integrated in one launch of
+    ``advect``'s kernel, the velocity blended in time between them, on the
+    steps' device. Over pieces on one mesh, each particle is integrated so by
+    the piece whose cells hold it, wherever its rank, until a step would leave
+    that piece; that step is taken on the host, and the piece it ends in goes
+    on. Steps on different meshes are integrated on the host, probing each
+    step's mesh at every stage; every way gives the same paths."""
 
     def __init__(self, field, seeds=None, integrator="rk4", step_size=None, copy=True):
         if integrator not in ("rk4", "euler"):
@@ -539,47 +634,193 @@ class Advection:
         self._last = t1
         return self._particles(data)
 
+    def _moving(self, t1):
+        """The particles still to carry to ``t1``."""
+        return np.flatnonzero(((self.status & 1) != 0) & ((self.status & 2) == 0)
+                              & (self.time < t1 - 1e-12 * max(abs(t1), 1.0)))
+
     def _advance(self, before, now, t0, t1):
+        if not _one_mesh(before, now):
+            self._advance_on_host(before, now, t0, t1)
+        elif isinstance(now, PartitionedDataSet):
+            self._advance_pieces(before, now, t0, t1)
+        else:
+            self._advance_on_device(before, now, t0, t1)
+
+    def _carry(self, before, now, x, time, status, t0, t1, scale, piece=False):
+        """The advection kernel on one mesh (``now``'s, ``before`` the previous
+        step's velocity on it): particles at world points ``x`` carried from their
+        ``time``s towards ``t1``, with the velocity blended in time. Returns their
+        points relative to ``now``'s origin, their times and the kernel's status,
+        ``SPATIAL_BOUNDS`` (4) where a step would have left the mesh, the particle
+        where that step began. A ``piece``'s ghost cells are outside it: their
+        owner's velocity, which a ghost's copy may not match, decides a step
+        reaching one."""
+        from tack.dataset.algorithms._advection import _AT_END, _run
+
+        n = len(x)
+        # The kernel's times are from t0, in the velocity's time unit.
+        limit = self.step_size if self.step_size is not None else t1 - t0
+        with now.device:
+            xs, times, _, out, *_ = _run(
+                now, self.field, x, limit * scale, 1 << 30, self.integrator, None, False,
+                resume=((time - t0) * scale, np.zeros(n, np.int32), status),
+                before=before, until=(t1 - t0) * scale, handoff=piece)
+        out = out.numpy().astype(np.int32)
+        ended = (out & int(_AT_END)) != 0
+        times = np.where(ended, t1, t0 + times.numpy().astype(np.float64) / scale)
+        return (xs.numpy().astype(np.float64).reshape(n, 3), times,
+                out & ~int(_AT_END))
+
+    def _advance_on_device(self, before, now, t0, t1):
+        """Both steps on one mesh: the advection kernel, with the velocity blended
+        in time, carries every moving particle from its time to ``t1`` in one
+        run (Viskores' and VTK's way of keeping the loop off the host)."""
+        moving = self._moving(t1)
+        if not len(moving):
+            return
+        xs, times, status = self._carry(before, now, self.x[moving], self.time[moving],
+                                        self.status[moving], t0, t1,
+                                        self._velocity_scale(now))
+        self.x[moving] = xs + np.asarray(now.origin)
+        self.time[moving] = times
+        # A particle that would have left stops where it was, as on the host.
+        self.status[moving] = np.where((status & 4) != 0, status | 2, status)
+
+    def _advance_pieces(self, before, now, t0, t1):
+        """Pieces on one mesh, by rounds until no particle moves on any rank: each
+        moving particle goes to the piece one of whose own cells holds it
+        (``tack.communication.Routing``), whose kernel carries it until it reaches
+        ``t1`` or a step would leave the piece, and comes back to its rank. That
+        step is taken on the host (``_substep``), probing every piece: it ends in
+        another piece, which carries it on in the next round, or it leaves the
+        mesh and the particle stops where it was. Every round each particle moving
+        takes a step or stops, so the rounds end. Collective."""
+        from tack import communication as tc
+        from tack.dataset.algorithms._common import _stand_in
+        from tack.dataset.algorithms._particles import _bits, _boxes, _holder, _unbits
+        from tack.dataset.locator import cached_locator
+        from tack.dataset.partitioned import common_origin
+
         scale = self._velocity_scale(now)
-        span = t1 - t0
+        origin = common_origin(now, "advection over pieces")
+        # A rank with no pieces takes part through a piece of nothing (no box, so
+        # no particle goes there) and sends its particles to the pieces.
+        nothing = _stand_in(now, origin)
+        pairs = list(zip(before, now)) if nothing is None else [(nothing, nothing)]
+        pieces = [piece for _, piece in pairs]
+        blocks = tc.Blocks([piece.device for piece in pieces], now.world)
+        locators = {}
+        for g, piece in zip(blocks.local, pieces):
+            if piece.num_points:
+                with piece.device:
+                    locators[g] = cached_locator(piece)
+        boxes, holds = _boxes(blocks, pieces, locators), _holder(blocks, pieces, locators)
+        home = blocks.local.start                   # this rank's particles' block
+        both = _with_before(before, now, self.field)
+        velocity = self._blended(before, now, t0, t1) if both is None else \
+            self._blended(None, both, t0, t1)
+        origin = np.asarray(origin, np.float64)
+        like = {"x0": tack.u64, "x1": tack.u64, "x2": tack.u64, "time": tack.u64,
+                "status": tack.i32}
+        while True:
+            moving = self._moving(t1)
+            if not blocks.all_reduce({g: len(moving) if g == home else 0
+                                      for g in blocks.local}):
+                break
+            routing = tc.Routing(blocks, {g: self.x[moving] - origin if g == home
+                                          else np.zeros((0, 3)) for g in blocks.local},
+                                 boxes, holds)
+            where = routing.destination[home]
+            # No piece holds it (coming within the probe's tolerance, not the
+            # locators'): it has left, where it is.
+            self.status[moving[where < 0]] |= 2 | 4
+            device = blocks.device(home)
+            sent = {g: {} for g in blocks.local}
+            sent[home] = {"time": tack.array(self.time[moving].view(np.uint64), tack.u64,
+                                             device=device),
+                          "status": tack.array(self.status[moving], tack.i32, device=device)}
+            arrived = routing.send(sent)
+            answers = {g: {} for g in blocks.local}
+            for g, (kept, piece) in zip(blocks.local, pairs):
+                x, values = arrived[g]
+                if not len(x):
+                    continue
+                xs, times, status = self._carry(
+                    kept, piece, x + origin, values["time"].numpy().view(np.float64),
+                    values["status"].numpy(), t0, t1, scale, piece=True)
+                device = blocks.device(g)
+                answers[g] = {**_bits(xs, device),
+                              "time": tack.array(times.view(np.uint64), tack.u64,
+                                                 device=device),
+                              "status": tack.array(status, tack.i32, device=device)}
+            back = routing.reply(answers, like)[home]
+            taken, rows = moving[where >= 0], where >= 0
+            self.x[taken] = _unbits(back)[rows] + origin
+            self.time[taken] = back["time"].numpy().view(np.float64)[rows]
+            status = back["status"].numpy()[rows]
+            self.status[taken] = status & ~4
+            self._substep(velocity, taken[(status & 4) != 0], t0, t1, scale)
 
-        def velocity(x, t):
-            a = np.clip((t - t0) / span, 0.0, 1.0)[:, None]
-            v0, in0 = _velocities(before, self.field, x)
-            v1, in1 = _velocities(now, self.field, x)
-            return (1.0 - a) * v0 + a * v1, in0 & in1
-
-        limit = self.step_size if self.step_size is not None else span
+    def _advance_on_host(self, before, now, t0, t1):
+        """Each step's velocity probed in its own mesh at every stage: steps on
+        different meshes."""
+        scale = self._velocity_scale(now)
         # Over pieces every rank takes each substep, moving particles or not, until
         # none moves on any: the probes are collective.
         world = now.world if isinstance(now, PartitionedDataSet) else None
+        velocity = self._blended(before, now, t0, t1)
         while True:
-            moving = np.flatnonzero(((self.status & 1) != 0) & ((self.status & 2) == 0)
-                                    & (self.time < t1 - 1e-12 * max(abs(t1), 1.0)))
+            moving = self._moving(t1)
             if not (len(moving) if world is None
                     else any(world._allgather(bool(len(moving))))):
                 break
-            x, t = self.x[moving], self.time[moving]
-            h = np.minimum(limit, t1 - t)
-            k1, ok = velocity(x, t)
-            if self.integrator == "euler":
-                step = k1
+            self._substep(velocity, moving, t0, t1, scale)
+
+    def _blended(self, before, now, t0, t1):
+        """The velocity at world points and times, linear in time from ``t0`` to
+        ``t1``, and whether the mesh holds each point: each step's probed in its
+        own mesh, or, ``before`` ``None``, both at once from ``now``
+        (``_with_before``: one mesh)."""
+        def velocity(x, t):
+            a = np.clip((t - t0) / (t1 - t0), 0.0, 1.0)[:, None]
+            if before is None:
+                v1, v0, inside = _velocities(now, self.field, x, _BEFORE)
             else:
-                k2, ok2 = velocity(x + 0.5 * (h * scale)[:, None] * k1, t + 0.5 * h)
-                k3, ok3 = velocity(x + 0.5 * (h * scale)[:, None] * k2, t + 0.5 * h)
-                k4, ok4 = velocity(x + (h * scale)[:, None] * k3, t + h)
-                ok = ok & ok2 & ok3 & ok4
-                step = (k1 + 2.0 * k2 + 2.0 * k3 + k4) / 6.0
-            end = x + (h * scale)[:, None] * step
-            _, inside = velocity(end, t + h)
-            ok &= inside
-            # A particle whose step leaves the mesh stops where it was.
-            left = moving[~ok]
-            self.status[left] |= 2 | 4
-            went = moving[ok]
-            self.x[went] = end[ok]
-            self.time[went] = (t + h)[ok]
-            self.status[went] |= 16
+                v0, in0 = _velocities(before, self.field, x)
+                v1, in1 = _velocities(now, self.field, x)
+                inside = in0 & in1
+            return (1.0 - a) * v0 + a * v1, inside
+
+        return velocity
+
+    def _substep(self, velocity, rows, t0, t1, scale):
+        """One substep of particles ``rows`` on the host, ``velocity`` (``_blended``)
+        probed at every stage: those whose step stays in the mesh move, the
+        others stop where they were. Over pieces the probes are collective:
+        every rank takes it, with particles or none."""
+        limit = self.step_size if self.step_size is not None else t1 - t0
+        x, t = self.x[rows], self.time[rows]
+        h = np.minimum(limit, t1 - t)
+        k1, ok = velocity(x, t)
+        if self.integrator == "euler":
+            step = k1
+        else:
+            k2, ok2 = velocity(x + 0.5 * (h * scale)[:, None] * k1, t + 0.5 * h)
+            k3, ok3 = velocity(x + 0.5 * (h * scale)[:, None] * k2, t + 0.5 * h)
+            k4, ok4 = velocity(x + (h * scale)[:, None] * k3, t + h)
+            ok = ok & ok2 & ok3 & ok4
+            step = (k1 + 2.0 * k2 + 2.0 * k3 + k4) / 6.0
+        end = x + (h * scale)[:, None] * step
+        _, inside = velocity(end, t + h)
+        ok &= inside
+        # A particle whose step leaves the mesh stops where it was.
+        left = rows[~ok]
+        self.status[left] |= 2 | 4
+        went = rows[ok]
+        self.x[went] = end[ok]
+        self.time[went] = (t + h)[ok]
+        self.status[went] |= 16
 
     def _particles(self, data):
         from tack.dataset.dataset import point_cloud

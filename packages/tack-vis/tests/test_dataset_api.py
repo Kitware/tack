@@ -387,7 +387,10 @@ def test_rectilinear_round_trip(backend):
 @pytest.mark.parametrize("make", ["as_polygons", "polyhedral_contour"])
 def test_polygonal_round_trip(backend, make):
     """A polygonal topology exports as VTK_POLYGON cells, which the import read
-    as linear shapes and refused ("cell types [7] are not linear shapes")."""
+    as linear shapes and refused ("cell types [7] are not linear shapes"). They
+    come back in an unstructured topology, those of three and four points
+    triangles and quads, or with ``polyhedral="all"`` as the polygonal topology
+    they were."""
     if make == "as_polygons":
         data = td.as_polygons(td.extract_surface(td.uniform_grid((3, 3, 3))))
     else:
@@ -396,7 +399,16 @@ def test_polygonal_round_trip(backend, make):
     assert isinstance(data.topology, td.PolygonalTopology) and data.num_cells
     data.fields["c"] = td.Field(td.Constant(data), _scalars(np.arange(data.num_cells)))
     grid = dataset_to_vtk(data)
-    back = vtk_to_dataset(grid)
+    mixed = vtk_to_dataset(grid)
+    assert isinstance(mixed.topology, td.UnstructuredTopology)
+    offsets, loops = data.topology.loops()
+    sizes = np.diff(offsets.numpy())
+    np.testing.assert_array_equal(mixed.topology.types.numpy(),
+                                  np.select([sizes == 3, sizes == 4], [5, 9], 7))
+    np.testing.assert_array_equal(mixed.topology.offsets.numpy(), offsets.numpy())
+    np.testing.assert_array_equal(mixed.topology.connectivity.numpy(), loops.numpy())
+    np.testing.assert_array_equal(mixed.fields["c"].values.numpy(), np.arange(data.num_cells))
+    back = vtk_to_dataset(grid, polyhedral="all")
     assert isinstance(back.topology, td.PolygonalTopology)
     assert back.num_cells == data.num_cells
     for a, b in zip(back.topology.loops(), data.topology.loops()):
@@ -801,8 +813,14 @@ def test_variable_order_spaces(backend):
     assert td.L2(data, order=orders).varies and not td.L2(data).varies
     np.testing.assert_array_equal(td.L2(data, order=orders).offsets.numpy(), [0, 8, 9, 14])
     np.testing.assert_array_equal(td.L2(data, order=0).offsets.numpy(), [0, 1, 2, 3])
-    with pytest.raises(NotImplementedError, match=r"orders \[2\]"):
-        td.L2(data, order=np.array([1, 2, 1])).cell_keys()
+    # Orders 0 to 15 per cell, each where the space of that order is (#423): order 2
+    # on a hexahedron, not on the pyramid.
+    np.testing.assert_array_equal(td.L2(data, order=np.array([1, 2, 1])).offsets.numpy(),
+                                  [0, 8, 35, 40])
+    with pytest.raises(NotImplementedError, match="on Pyramid cells"):
+        _ = td.L2(data, order=np.array([1, 1, 2])).size
+    with pytest.raises(ValueError, match="0 to 15"):
+        td.L2(data, order=np.array([1, 16, 1])).cell_keys()
     with pytest.raises(ValueError, match="3 orders, not 2"):
         td.L2(data, order=np.array([1, 0])).cell_keys()
     u = td.Field(td.L2(data, order=orders), _scalars(np.zeros(14)))

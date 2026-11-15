@@ -271,7 +271,7 @@ def _as_geometry(geometry, topology, dtype, unit=None):
         except TypeError:
             positions = np.ascontiguousarray(geometry)
             geometry = tack.empty((positions.shape[0],), tack.vec(3, dtype))
-            tack.copyto(geometry, positions.astype(dtype.numpy_dtype))
+            tack.copyto(geometry, positions.astype(dtype.numpy_dtype, copy=False))
         geometry = Field(H1(topology), geometry, unit)
     if geometry.space.topology is not topology:
         raise ValueError("the geometry's space is on another topology")
@@ -1301,25 +1301,29 @@ class DataSet:
         for group in groups:
             if not group.count:
                 continue
-            if isinstance(space, L2) and space.tensor and group.shape is shapes.Pyramid:
+            # An order per cell reads each subgroup as the space of its order does,
+            # at its own offsets.
+            fixed = (space.at_order(group.keys[space])
+                     if isinstance(space, L2) and space.varies else space)
+            if isinstance(space, L2) and fixed.tensor and group.shape is shapes.Pyramid:
                 view = self.domain_view("cells", group, (views._PyramidCellNodes,),
                                         node_offsets=space.offsets)
-            elif isinstance(space, L2) and space.tensor and (bases.simplex_shape(group.shape)
-                                                             or bases.wedge_shape(group.shape)):
-                lattice = bases.lattice_ijk(group.shape, space.order).reshape(-1)
+            elif isinstance(space, L2) and fixed.tensor and (bases.simplex_shape(group.shape)
+                                                           or bases.wedge_shape(group.shape)):
+                lattice = bases.lattice_ijk(group.shape, fixed.order).reshape(-1)
                 ijk = tack.empty((len(lattice),), tack.i32)
                 tack.copyto(ijk, lattice)
-                nodes_of = views.of_node_order(views._SimplexCellNodes, space.order,
+                nodes_of = views.of_node_order(views._SimplexCellNodes, fixed.order,
                                                len(lattice) // group.shape.DIMENSION)
                 view = self.domain_view("cells", group, (nodes_of,),
                                         node_offsets=space.offsets, node_ijk=ijk,
-                                        node_points=_space_nodes(space, self.geometry))
-            elif isinstance(space, L2) and space.tensor:
+                                        node_points=_space_nodes(fixed, self.geometry))
+            elif isinstance(space, L2) and fixed.tensor:
                 cells = space.layout == "cells"
                 mixin = views._TensorCellNodesCells if cells else views._TensorCellNodes
-                view = self.domain_view("cells", group, (views.of_node_order(mixin, space.order),),
+                view = self.domain_view("cells", group, (views.of_node_order(mixin, fixed.order),),
                                         node_offsets=space.offsets, node_cells=self.num_cells,
-                                        node_points=_space_nodes(space, self.geometry))
+                                        node_points=_space_nodes(fixed, self.geometry))
             elif isinstance(space, L2):
                 order = group.keys[space] if space.varies else space.order
                 dof = views._CornerDof if order == 1 else views._OffsetDof

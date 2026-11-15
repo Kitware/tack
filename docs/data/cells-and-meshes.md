@@ -177,8 +177,10 @@ own:
 | `PolyhedralTopology` | polyhedra, each a list of faces | `VTK_POLYHEDRON` |
 
 Triangles and quads are polygons too, and a line is a two-point polyline.
-These topologies hold one kind of cell each, so polygons cannot sit beside
-tetrahedra in one mesh. A field on such cells is linear on pieces of each
+These topologies hold one kind of cell each. An `UnstructuredTopology` may
+also hold polyhedra beside solid shapes, or polygons beside triangles and
+quads, and that is how `vtk_to_dataset` reads them; polygons still cannot sit
+beside tetrahedra in one mesh. A field on such cells is linear on pieces of each
 cell, such as the triangles that fan a polygon from its centre.
 [Polyhedra, polygons and polylines](polyhedra.md) explains how values live in them and
 how to build them.
@@ -196,10 +198,10 @@ the searches over them.
 | Topology | Its cells | VTK types that map to it |
 |---|---|---|
 | `StructuredTopology` | lines, quads or hexahedra of a grid, numbered by index | `vtkImageData`, `vtkRectilinearGrid`, `vtkStructuredGrid` |
-| `UnstructuredTopology` | any mix of the shapes with a reference element | `vtkUnstructuredGrid`, or a `vtkPolyData` of triangles and quads |
-| `PolygonalTopology` | polygons | a `vtkPolyData` with larger polygons |
+| `UnstructuredTopology` | any mix of the shapes with a reference element, with polyhedra beside the solids or polygons beside the triangles and quads | `vtkUnstructuredGrid`, or a `vtkPolyData` of polygons |
+| `PolygonalTopology` | polygons | `vtk_to_dataset(..., polyhedral="all")` of polygons |
 | `PolylineTopology` | polylines | a `vtkPolyData` of lines |
-| `PolyhedralTopology` | polyhedra | a `vtkUnstructuredGrid` of `VTK_POLYHEDRON` cells |
+| `PolyhedralTopology` | polyhedra | `vtk_to_dataset(..., polyhedral="all")` of a grid with `VTK_POLYHEDRON` cells |
 
 When the VTK interop reads a `vtkPolyData`, a surface of triangles and quads
 becomes an `UnstructuredTopology`, and its triangle strips become triangles.

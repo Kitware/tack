@@ -39,6 +39,7 @@ from tack.dataset.algorithms._advection import (
     SUCCESS,
     TERMINATE,
     ZERO_VELOCITY,
+    _parameters,
     _run,
     check_arguments,
     check_piece,
@@ -135,8 +136,8 @@ def advect_pieces(data, field, seeds, step_size, steps, integrator="rk4", unit="
     ``seeds`` are this rank's, an ``(n, 3)`` array; across MPI ranks each rank
     passes its own, numbered after the ranks before it."""
     blocks, pieces, finished, _, nothing, time_unit = _rounds(
-        data, field, seeds, step_size, steps, integrator, record=False, unit=unit,
-        neighbors=neighbors, adaptive=adaptive)
+        data, field, seeds, step_size, steps, integrator, record=False, who="advect",
+        unit=unit, neighbors=neighbors, adaptive=adaptive)
     out = []
     for g, piece in zip(blocks.local, pieces):
         done = finished[g]
@@ -169,8 +170,8 @@ def streamlines_pieces(data, field, seeds, step_size, steps, integrator="rk4", u
     from tack.dataset.polyhedra import PolylineTopology
 
     blocks, pieces, _, traced, nothing, time_unit = _rounds(
-        data, field, seeds, step_size, steps, integrator, record=True, unit=unit,
-        neighbors=neighbors, adaptive=adaptive)
+        data, field, seeds, step_size, steps, integrator, record=True, who="streamlines",
+        unit=unit, neighbors=neighbors, adaptive=adaptive)
     out = []
     for g, piece in zip(blocks.local, pieces):
         if piece is nothing:
@@ -212,15 +213,16 @@ def streamlines_pieces(data, field, seeds, step_size, steps, integrator="rk4", u
     return PartitionedDataSet(out, world=blocks.world)
 
 
-def _rounds(data, field, seeds, step_size, steps, integrator, record, unit="time",
+def _rounds(data, field, seeds, step_size, steps, integrator, record, who, unit="time",
             neighbors=False, adaptive=None):
     """The rounds: ``(blocks, pieces, finished, traced, nothing, time_unit)``, the
     particles each piece finished with (the velocity resolved once a piece,
     ``fields_of``), with ``record`` each piece's stretches
     ``(seed, segment, positions, times)``, the piece of nothing standing in for a
     rank without pieces (``_stand_in``, else ``None``) and the particles' unit of
-    time."""
-    check_arguments(steps, integrator, step_size, unit=unit, **(adaptive or {}))
+    time. ``step_size`` and ``adaptive`` are as ``who`` (``advect`` or
+    ``streamlines``) was given them: their quantities are read in the units of the
+    velocity the rounds resolve."""
     resolved = []
 
     def check():                             # what only a rank with pieces can see
@@ -230,6 +232,11 @@ def _rounds(data, field, seeds, step_size, steps, integrator, record, unit="time
                 check_piece(piece, own)
 
     origin = common_origin(data, "advection over pieces", check=check)
+    step_size, tolerance, min_step, max_step, max_length, terminal_speed = _parameters(
+        data, field, unit, who, step_size, fields=resolved, **(adaptive or {}))
+    adaptive = {"tolerance": tolerance, "min_step": min_step, "max_step": max_step,
+                "max_length": max_length, "terminal_speed": terminal_speed}
+    check_arguments(steps, integrator, step_size, unit=unit, **adaptive)
     pieces, fields = [], []
     for piece, own in zip(data, resolved):
         with piece.device:                   # each piece's work on its own device
@@ -268,8 +275,7 @@ def _rounds(data, field, seeds, step_size, steps, integrator, record, unit="time
             pending[g], done = _advance(pieces[g - blocks.local.start],
                                         fields[g - blocks.local.start],
                                         arrived[g], step_size, steps, integrator, record,
-                                        traced[g], unit, neighbors,
-                                        adaptive or {})
+                                        traced[g], unit, neighbors, adaptive)
             finished[g].append(done)
     else:
         raise RuntimeError("particles were still in flight after a round per step")

@@ -87,17 +87,20 @@ def streamlines(data, field, seeds, step_size, steps, integrator="rk4", locator=
     # a length ("1 mm"), in the spatial unit.
     if step_unit not in ("time", "length"):
         raise ValueError(f"step_unit is 'time' or 'length', not {step_unit!r}")
-    step_size, tolerance, min_step, max_step, max_length, terminal_speed = _parameters(
-        data, field, step_unit, "streamlines", step_size, tolerance, min_step, max_step,
-        max_length, terminal_speed)
-    adaptive = {"tolerance": tolerance, "min_step": min_step, "max_step": max_step,
-                "max_length": max_length, "terminal_speed": terminal_speed}
     from tack.dataset.partitioned import PartitionedDataSet
 
     if isinstance(data, PartitionedDataSet):
         from tack.dataset.algorithms._particles import streamlines_pieces
         return streamlines_pieces(data, field, seeds, step_size, steps, integrator, step_unit,
-                                  neighbors, **adaptive)
+                                  neighbors, tolerance=tolerance, min_step=min_step,
+                                  max_step=max_step, max_length=max_length,
+                                  terminal_speed=terminal_speed)
+
+    step_size, tolerance, min_step, max_step, max_length, terminal_speed = _parameters(
+        data, field, step_unit, "streamlines", step_size, tolerance, min_step, max_step,
+        max_length, terminal_speed)
+    adaptive = {"tolerance": tolerance, "min_step": min_step, "max_step": max_step,
+                "max_length": max_length, "terminal_speed": terminal_speed}
     from tack.dataset.ghosts import refuse_hidden, visible
 
     if locator is None:

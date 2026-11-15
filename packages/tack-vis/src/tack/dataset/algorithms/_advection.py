@@ -552,19 +552,20 @@ def _velocity(data, field):
 
 
 def _parameters(data, field, unit, who, step_size, tolerance=None, min_step=None,
-                max_step=None, max_length=None, terminal_speed=None):
+                max_step=None, max_length=None, terminal_speed=None, fields=None):
     """The step parameters as numbers: ``step_size``, ``min_step`` and ``max_step`` in
     the spatial unit along the path (``unit="length"``) or the field's time unit
     (``"time"``), ``tolerance`` (a distance) and ``max_length`` in the spatial unit,
     ``terminal_speed`` in the velocity's unit; a plain number as given, ``None``
-    kept."""
+    kept. Over a partitioned dataset, ``fields`` are this rank's pieces' velocities,
+    resolved once a piece by the caller."""
     def step(value, what):
         if value is None:
             return None
         if unit == "length":
             return _length(data, value, f"{who}'s {what}")
         if _has_quantity(value):
-            return units.magnitude(value, _time_unit(data, field), f"{who}'s {what}")
+            return units.magnitude(value, _time_unit(data, field, fields), f"{who}'s {what}")
         return value
 
     def length(value, what):
@@ -576,8 +577,7 @@ def _parameters(data, field, unit, who, step_size, tolerance=None, min_step=None
         from tack.dataset.partitioned import PartitionedDataSet
 
         if isinstance(data, PartitionedDataSet):
-            every = data.world._allgather([piece.fields[field].unit for piece in data
-                                           if field in piece.fields])
+            every = data.world._allgather([f.unit for f in fields])
             velocity = units.common("the pieces' velocity", [u for part in every for u in part])
         else:
             velocity = _field(data, field).unit

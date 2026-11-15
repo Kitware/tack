@@ -49,6 +49,15 @@ def flowing():
     return _with_velocity(tetrahedra(), 0.0)
 
 
+def flowing_in_metres():
+    """Four pieces of a grid in metres with a velocity ``v`` in metres a second."""
+    grid = td.uniform_grid((9, 9, 9), unit="m")
+    v = np.zeros((grid.num_points, 3), np.float32)
+    v[:, 0] = 1.0
+    grid.fields["v"] = td.Field(td.H1(grid), tack.array(v, tack.vec3()), "m/s")
+    return list(td.split(grid, (2, 2, 1)))
+
+
 def cloud():
     rng = np.random.default_rng(7)
     points = rng.random((2000, 3)) * 8.0
@@ -148,6 +157,10 @@ CASES = {
     "advect/a velocity read on each piece": (
         flowing, lambda d: _paths(td.advect(d, _OnEachPiece("v"), SEEDS if _rank() == 0
                                             else np.zeros((0, 3)), 0.1, 40)), _total),
+    "advect/quantities, a velocity read on each piece": (
+        flowing_in_metres, lambda d: _paths(td.advect(d, _OnEachPiece("v"), SEEDS if _rank() == 0
+                                                      else np.zeros((0, 3)), "0.1 s", 40,
+                                                      terminal_speed="30 cm/s")), _total),
     "ghost_points": (cloud, lambda d: _cells(td.ghost_points(d, radius=0.5)), _total),
     "voxel_downsample": (cloud, lambda d: _cells(td.voxel_downsample(d, 1.0)), _total),
     "outliers": (cloud, lambda d: sum(int(p.fields["outlier"].values.numpy().sum())

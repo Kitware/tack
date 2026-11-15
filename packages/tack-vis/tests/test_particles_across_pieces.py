@@ -49,13 +49,15 @@ def cpu():
     tack.set_default_device("cpu")
 
 
-def helix():
+def helix(unit=None):
     """A grid with a velocity turning about (1, 1) and rising: steps of 0.02 move
-    a particle at most 0.04, under the 0.1 cell of a ghost layer."""
-    grid = td.uniform_grid((21, 21, 21), spacing=(0.1, 0.1, 0.1))
+    a particle at most 0.04, under the 0.1 cell of a ghost layer. With ``unit``,
+    positions are in it and the velocity in it per second."""
+    grid = td.uniform_grid((21, 21, 21), spacing=(0.1, 0.1, 0.1), unit=unit)
     x = grid.positions()
     v = np.stack([-(x[:, 1] - 1), x[:, 0] - 1, np.full(len(x), 0.3)], 1).astype(np.float32)
-    grid.fields["v"] = td.Field(td.H1(grid), tack.array(v, tack.vec3()))
+    grid.fields["v"] = td.Field(td.H1(grid), tack.array(v, tack.vec3()),
+                                None if unit is None else f"{unit}/s")
     return grid
 
 
@@ -344,3 +346,20 @@ def test_a_velocity_read_on_each_piece():
     assert [p.num_points for p in lines] == [p.num_points for p in named]
     with pytest.raises(TypeError, match="partition"):
         td.advect(pieces, pieces[0].fields["v"], SEEDS, 0.02, 10)
+
+
+def test_quantities_read_the_velocity_on_each_piece_once():
+    pieces = td.split(helix("m"), (2, 2, 2), ghost_layers=1)
+    given = {"step_size": "0.02 s", "steps": 200, "terminal_speed": "30 cm/s"}
+    velocity = _Velocity()
+    got = by_seed(td.advect(pieces, velocity, SEEDS, **given))
+    want = by_seed(td.advect(pieces, "v", SEEDS, **given))
+    for seed, (x, steps, status, time) in want.items():
+        np.testing.assert_array_equal(got[seed][0], x)
+        assert got[seed][1:] == (steps, status, time)
+    assert velocity.calls == len(pieces)
+    velocity = _Velocity()
+    lines = td.streamlines(pieces, velocity, SEEDS[:4], **given)
+    named = td.streamlines(pieces, "v", SEEDS[:4], **given)
+    assert [p.num_points for p in lines] == [p.num_points for p in named]
+    assert velocity.calls == len(pieces)

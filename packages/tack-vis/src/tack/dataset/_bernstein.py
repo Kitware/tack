@@ -279,7 +279,7 @@ def _converted(data, values, space, forward):
     staged = Field(space, values)                  # the values, read through space's view
     out = tack.empty_like(values)
     order = space.order
-    q = order + 1
+    q = None if space.varies else order + 1   # an order per cell: set per group
     like = tack.empty((1,), arrays.dtype_of(values))
 
     def typed(m):

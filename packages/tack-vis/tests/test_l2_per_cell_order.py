@@ -216,6 +216,40 @@ def test_carry_and_project():
     np.testing.assert_allclose(td.jump(data, "v").values.numpy(), 0.0, rtol=0, atol=1e-12)
 
 
+@tack.func
+def _linear(x):
+    return 1.0 + x[0] - 0.5 * x[1] + 0.25 * x[2]
+
+
+def test_bernstein_orders_in_a_tack_array():
+    """Orders given as a Tack array, not NumPy, reach the Bernstein conversion one
+    subgroup at a time, through interpolate and project (orders 0 and 1 copied, the
+    others converted), as NumPy orders do; orders 1 and up hold a linear function
+    exactly."""
+    data = _mesh("hexahedra")
+    data.fields["h"] = td.interpolate(data, _linear, td.H1(data), dtype=tack.f64)
+    points = np.random.default_rng(3).random((300, 3)) * 0.98 + 0.01
+    exact = 1.0 + points[:, 0] - 0.5 * points[:, 1] + 0.25 * points[:, 2]
+    for low, seed in ((0, 4), (1, 5)):
+        host = _orders(data, low, 3, seed=seed).astype(np.int32)
+        space = td.L2(data, order=tack.array(host), basis="bernstein")
+        numpy_space = td.L2(data, order=host, basis="bernstein")
+        assert space.orders() == list(range(low, 4))
+        field = td.interpolate(data, _linear, space, dtype=tack.f64)
+        np.testing.assert_array_equal(
+            field.values.numpy(),
+            td.interpolate(data, _linear, numpy_space, dtype=tack.f64).values.numpy())
+        np.testing.assert_allclose(td.project(data, "h", space).values.numpy(),
+                                   td.project(data, "h", numpy_space).values.numpy(),
+                                   rtol=0, atol=1e-14)
+        if low == 1:
+            data.fields["w"] = field
+            np.testing.assert_allclose(td.probe(data, points).fields["w"].values.numpy(),
+                                       exact, rtol=0, atol=1e-12)
+            np.testing.assert_allclose(td.project(data, "h", space).values.numpy(),
+                                       field.values.numpy(), rtol=0, atol=1e-12)
+
+
 def test_subdivide_evaluates_each_cell_at_its_order():
     data = _mesh("tetrahedra")
     data.fields["w"] = td.interpolate(data, _quadratic, td.L2(data, order=_orders(data)),
@@ -230,6 +264,12 @@ def test_what_an_order_per_cell_refuses():
     data = _mesh("tetrahedra")
     with pytest.raises(ValueError, match="0 to 15"):
         _ = td.L2(data, order=np.full(data.num_cells, 16)).size
+    with pytest.raises(ValueError, match=r"whole number from 0 to 15, not \[2\.5\]"):
+        td.L2(data, order=np.full(data.num_cells, 2.5)).cell_keys()
+    with pytest.raises(ValueError, match="whole number"):
+        td.L2(data, order=np.full(data.num_cells, np.nan)).cell_keys()
+    assert td.L2(data, order=np.full(data.num_cells, 3.0),
+                 basis="equispaced").orders() == [3]
     with pytest.raises(NotImplementedError, match="equispaced basis only"):
         _ = td.L2(data, order=np.full(data.num_cells, 3), basis="gauss_lobatto").size
     with pytest.raises(ValueError, match="blocks"):

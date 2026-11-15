@@ -971,6 +971,13 @@ class L2(Space):
             if host.shape[0] != self.topology.num_cells:
                 raise ValueError(f"an order per cell: {self.topology.num_cells} orders, "
                                  f"not {host.shape[0]}")
+            if host.size and not np.issubdtype(host.dtype, np.integer):
+                # A fraction (or NaN) would pass the range check and be cast away.
+                whole = np.asarray(host, np.float64)
+                bad = whole[whole != np.trunc(whole)]
+                if bad.size:
+                    raise ValueError(f"an order per cell is a whole number from 0 to 15, "
+                                     f"not {sorted(set(bad.tolist()))[:5]}")
             if host.size and (host.min() < 0 or host.max() > 15):
                 bad = sorted(set(host.tolist()) - set(range(16)))
                 raise ValueError(f"an order per cell is 0 to 15, not {bad}")

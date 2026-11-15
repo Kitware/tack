@@ -23,7 +23,7 @@ from tack.dataset.algorithms._common import (
     _with_basis,
 )
 from tack.dataset.buckets import key_order, run_offsets
-from tack.dataset.carry import Interpolate, Pieces, _like, carry
+from tack.dataset.carry import Interpolate, Pieces, _like, _point_values, carry
 from tack.dataset.dataset import Field
 from tack.dataset.spaces import H1, Values
 from tack.dataset.topology import UnstructuredTopology, uniform_cells
@@ -154,6 +154,79 @@ def _contour_points(cells, u, levels, nlevels, per_cell, starts, points, edges, 
                     else:
                         keys[at] = [min(a, b) * nlevels + v, max(a, b)]
                 at += 1
+
+
+@tack.kernel
+def _contour_names(cells, u, levels, nlevels, starts, keys, triangle_cells, triangle_levels):
+    # Each triangle corner's name alone, as _contour_points names it -- (low point *
+    # nlevels + level, high point) for an edge's crossing, (p * nlevels + level, p)
+    # at a corner it lands on (_end_hit) -- and each triangle's cell and level
+    # once. A point's position, ends and weight follow from its name, computed once
+    # a name after the merge (_named_points): carried with every corner, they were
+    # most of contour's memory (the cut filters' memory plan, D4).
+    for c in cells:
+        cell = cells.entity_id(c)
+        at = 3 * starts[cell]
+        for v in range(nlevels):
+            level = levels[v]
+            case = _cell_case(cells, u, c, level)
+            for k in range(3 * cells.contour_count(case)):
+                e = cells.contour_edge(case, k)
+                ja = cells.edge_corner(e, 0)
+                jb = cells.edge_corner(e, 1)
+                if not _first_end(cells.corner_position(c, ja), cells.corner_position(c, jb),
+                                  cells.point_id(c, ja), cells.point_id(c, jb)):
+                    ja, jb = jb, ja
+                a = cells.point_id(c, ja)
+                b = cells.point_id(c, jb)
+                end = _end_hit(level, a, b, u.corner_value(c, ja), u.corner_value(c, jb),
+                               cells.corner_position(c, ja), cells.corner_position(c, jb))
+                if end == a or end == b:
+                    keys[at] = [end * nlevels + v, end]
+                else:
+                    keys[at] = [min(a, b) * nlevels + v, max(a, b)]
+                if at % 3 == 0:
+                    triangle_cells[at // 3] = cell
+                    triangle_levels[at // 3] = v
+                at += 1
+
+
+@tack.kernel
+def _named_points(keys, order, offsets, positions, values, levels, nlevels, points, edges,
+                  weights, count):
+    # Each run's point from its name: a corner where both ids are one, else the
+    # edge's crossing placed from its end first by position, as _contour_points
+    # placed it from every corner naming it.
+    for r in range(count):
+        key = keys[order[offsets[r]]]
+        v = key[0] % nlevels
+        a = key[0] // nlevels
+        b = key[1]
+        if a == b:
+            points[r] = positions[a]
+            edges[r] = [a, a]
+            weights[r] = 0.0
+        else:
+            if not _first_end(positions[a], positions[b], a, b):
+                a, b = b, a
+            xa = positions[a]
+            xb = positions[b]
+            w = _crossing(levels[v], values[a], values[b])
+            points[r] = xa + w * (xb - xa)
+            edges[r] = [a, b]
+            weights[r] = w
+
+
+@tack.kernel
+def _kept_names(keep, slots, keys, triangle_cells, triangle_levels, out_keys, out_cells,
+                out_levels):
+    for t in range(keep.shape[0]):
+        if keep[t] == 1:
+            s = slots[t]
+            out_cells[s] = triangle_cells[t]
+            out_levels[s] = triangle_levels[t]
+            for j in range(3):
+                out_keys[3 * s + j] = keys[3 * t + j]
 
 
 # Within-cell keys of corner hits: (cell, _CORNER_KEY + corner), past every
@@ -585,6 +658,31 @@ def _triangle_parts(data, field, levels, nlevels, merge_points):
         _contour_counts(data.domain_view("cells", group), field.view(group), levels, nlevels,
                         counts)
     starts, triangles = _scanned(counts, n_cells, odt)
+    # Points named by their edge (a continuous field numbered by point, on an H1
+    # geometry): each corner keeps its name alone.
+    if not per_cell and (not isinstance(space, H1) or space.dofs is None):
+        keys = tack.empty((3 * triangles,), tack.vec(2, kdt))
+        triangle_cells = tack.empty((triangles,), idt)
+        triangle_levels = tack.empty((triangles,), tack.i32)
+        for group in groups:
+            _contour_names(data.domain_view("cells", group), field.view(group), levels,
+                           nlevels, starts, keys, triangle_cells, triangle_levels)
+        del counts, starts                # the cells' bookkeeping, before the merge
+        if triangles:
+            keep = tack.empty((triangles,), tack.i32)
+            _distinct_triangles(keys, keep)
+            slots = tack.empty((triangles,), odt)
+            kept = exclusive_scan(keep, slots, triangles)
+            if kept < triangles:
+                out = (tack.empty((3 * kept,), keys.dtype), tack.empty((kept,), idt),
+                       tack.empty((kept,), tack.i32))
+                _kept_names(keep, slots, keys, triangle_cells, triangle_levels, *out)
+                keys, triangle_cells, triangle_levels = out
+                del out
+                triangles = kept
+            del keep, slots
+        return _named_points_of(data, field, levels, nlevels, merge_points, keys,
+                                triangle_cells, triangle_levels, triangles, idt, odt)
 
     n = 3 * triangles
     points = tack.empty((n,), tack.vec(3, data.dtype))
@@ -637,6 +735,34 @@ def _triangle_parts(data, field, levels, nlevels, merge_points):
 
     return (rows, count, edges, weights, points, triangle_cells, triangle_levels,
             triangles)
+
+
+def _named_points_of(data, field, levels, nlevels, merge_points, keys, triangle_cells,
+                     triangle_levels, triangles, idt, odt):
+    """The end of `_triangle_parts` where every point is named by its edge (or the
+    corner it lands on) and level (``keys``, three a triangle, the triangles of no
+    area dropped): the names merged, and each point's position, ends and weight
+    computed once from its name."""
+    n = 3 * triangles
+    num_points = data.num_points
+    positions = _point_values(data.geometry.values, num_points)
+    values = _point_values(field.values, num_points)
+    if merge_points and n:
+        order = key_order(keys, num_points * nlevels, odt)
+        offsets, count = run_offsets(keys, order)
+        rows = tack.empty((n,), odt)
+        _run_of_each(order, offsets, rows, count)
+    else:
+        # Each triangle its own points.
+        order, offsets, count = CountingArray(n, dtype=odt), CountingArray(n + 1, dtype=odt), n
+        rows = CountingArray(n, dtype=odt)
+    points = tack.empty((count,), tack.vec(3, data.dtype))
+    edges = tack.empty((count,), tack.vec(2, idt))
+    weights = tack.empty((count,), arrays.dtype_of(field.values))
+    if count:
+        _named_points(keys, order, offsets, positions, values, levels, nlevels, points, edges,
+                      weights, count)
+    return (rows, count, edges, weights, points, triangle_cells, triangle_levels, triangles)
 
 
 def plane_cut(data, function, value, fields=None):

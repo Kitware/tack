@@ -6018,7 +6018,8 @@ defines results, precision and ordering for both paths.</p>
 <code>tack.device("cpu", num_threads=n)</code> makes a CPU device with that worker count;
 it shares memory with the other CPU devices.
 Kernels that use shared memory, barriers, <code>thread_id</code> or block reductions
-are rejected even when the primitive is unreachable. For private scratch
+are rejected even when the primitive is unreachable (but not when it sits
+in an arm that constants decide against, which lowering drops). For private scratch
 storage, use <code>local_array</code> or <code>local_array_like</code>. Parallelism comes from a
 thread pool JIT'd from LLVM IR, or a <code>ThreadPoolExecutor</code> with
 <code>TACK_CPU_POOL=python</code>, on Windows, or where the pool cannot be made. See

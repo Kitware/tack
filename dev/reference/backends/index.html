@@ -5316,7 +5316,7 @@ drifts, and this one has.</p>
 <tr>
 <td><strong>CUDA</strong></td>
 <td><code>cuda_gen.py</code> → CUDA C</td>
-<td>NVRTC → PTX</td>
+<td>NVRTC → CUBIN (or PTX)</td>
 <td><code>cuLaunchKernel</code></td>
 <td><code>CUDABuffer</code></td>
 </tr>
@@ -5372,7 +5372,7 @@ wrong spelling still compiles as C.</p>
 <tr>
 <td><strong>CUDA</strong></td>
 <td>once queued on a stream</td>
-<td>PTX, compiled by the driver at load</td>
+<td>the device's code (CUBIN) from NVRTC, or PTX the driver compiles at load where NVRTC does not know the device</td>
 </tr>
 <tr>
 <td><strong>HIP</strong></td>

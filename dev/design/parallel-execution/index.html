@@ -5951,7 +5951,8 @@ provides that; a CPU thread pool does not.</p>
 <p><code>workgroup_features</code> (<code>lang/workgroup_support.py</code>) walks the IR and collects
 every primitive that needs the model: <code>shared</code>, <code>shared_like</code>, <code>barrier</code>,
 <code>thread_id</code> and <code>block_&lt;op&gt;</code>. The walk is structural, so a primitive in an
-unreachable branch or an inlined device function still counts.
+unreachable branch or an inlined device function still counts, except in an
+arm that constants decide against, which lowering drops.
 <code>check_workgroup_support</code> raises <code>NotImplementedError</code> naming the kernel,
 the backend and the primitives when the backend lacks the capability. It
 runs at three points:</p>
@@ -6356,7 +6357,8 @@ element type also raises <code>TypeError</code>. The check sets each atomic node
 dtype from the parameter rather than trusting an earlier annotation.</p>
 <p>It runs before optimization in <code>resolve_variant</code>, in every inspection mode,
 and in every generator. The check is structural: an atomic in unreachable
-code, or in a kernel launched with an empty range, is still checked.
+code, or in a kernel launched with an empty range, is still checked (an arm
+that constants decide against is not lowered, so not checked).
 <code>Kernel.__call__</code> re-raises <code>TypeError</code> with the kernel name prefixed.</p>
 <h3 id="alignment">Alignment<a class="headerlink" href="#alignment" title="Permanent link">&para;</a></h3>
 <p>An atomic target must be naturally aligned: 1, 2, 4 or 8 bytes for its

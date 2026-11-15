@@ -6023,7 +6023,7 @@ are dictionary reads.</p>
 <td style="text-align: center;">✓</td>
 </tr>
 <tr>
-<td><code>verify_ir</code> at each boundary</td>
+<td><code>verify_ir</code> on the final IR (every boundary in debug mode or with <code>TACK_VERIFY_ALL</code>)</td>
 <td style="text-align: center;"></td>
 <td style="text-align: center;">✓</td>
 </tr>
@@ -6367,8 +6367,8 @@ anew from the call's scalars, as <code>_build_variant</code> does.</p>
 </tr>
 <tr>
 <td>CUDA</td>
-<td>PTX from NVRTC, entry name, parameter layout, scalar pack layout</td>
-<td><code>cuModuleLoadData</code>: the driver compiles the PTX for the device, so the target names the device and compute capability, the driver version, NVRTC's version and its options</td>
+<td>CUBIN from NVRTC (PTX where NVRTC does not know the device's architecture), entry name, parameter layout, scalar pack layout</td>
+<td><code>cuModuleLoadData</code>: a CUBIN loads as it is, PTX the driver compiles for the device; the target names the device and compute capability, the driver version, NVRTC's version and its options, and which of the two is stored</td>
 </tr>
 <tr>
 <td>HIP</td>

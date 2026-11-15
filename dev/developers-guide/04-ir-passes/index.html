@@ -5371,7 +5371,13 @@ samples plus unique-node and occurrence counts. Setup, compilation and
 filtering are outside those timings; this
 measures copying cost, not total cold compilation or GPU performance.</p>
 <h2 id="verification-ir_verifypy">Verification (<code>ir_verify.py</code>)<a class="headerlink" href="#verification-ir_verifypy" title="Permanent link">&para;</a></h2>
-<p>The production pipeline calls <code>verify_ir()</code> at these boundaries:</p>
+<p>The pipeline verifies the IR at these boundaries. Outside debug mode only
+<code>lowered</code> and <code>typed</code> run (<code>typed</code> repeats every earlier stage's checks but
+<code>packed</code>'s); the others go through <code>verify_stage</code>, which runs them in debug
+mode or with <code>TACK_VERIFY_ALL</code> set, as the test suite sets it, so a failure
+names the pass that broke the invariant. <code>packed</code> goes through
+<code>verify_packed</code>, whose own check (no scalar parameter left) reads only the
+parameters and runs on every compile:</p>
 <table>
 <thead>
 <tr>
@@ -5476,7 +5482,10 @@ its source when the source is never rebound in the containing block.
 Assignment counts include nested control flow, loop-variable bindings, and
 local/shared array bindings.
 Assignments remain in place, reads before the assignment are unchanged,
-and rewritten sequential loops retain their step.</p>
+and rewritten sequential loops retain their step. It is one walk: each
+statement's own expressions take the copies known where it stands, from the
+enclosing blocks and its own block's earlier statements, and its bodies
+inherit them.</p>
 <p>This is useful after <code>@tack.func</code> inlining, which creates assignments such
 as <code>__func_x_0__ = x</code>. Array aliases can then use the original parameter:
 <code>a = x</code> followed by <code>a[i]</code> becomes <code>x[i]</code>.</p>

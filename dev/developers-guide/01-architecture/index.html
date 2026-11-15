@@ -5202,7 +5202,9 @@
     → Bind texture storage and arguments, launch (queued on GPU backends)
     → Debug mode: raise IndexError for an out-of-bounds access [debug_bounds.py]
 </code></pre></div>
-<p><code>verify_ir()</code> checks the IR after each of these stages. The IR template
+<p><code>verify_ir()</code> checks the IR after each of these stages in debug mode and in
+the test suite (<code>TACK_VERIFY_ALL</code>), and otherwise after lowering and at the
+end. The IR template
 cached on the <code>Kernel</code> is never mutated; each new variant clones it and the
 passes mutate the clone. Compiled variants are cached per backend and per
 kernel object, under a key built from argument dtypes and array/scalar/texture

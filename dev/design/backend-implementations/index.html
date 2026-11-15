@@ -5572,7 +5572,7 @@ Capabilities</a>.</p>
 <td>Compiler</td>
 <td>llvmlite, O3 pipeline, MCJIT</td>
 <td><code>newLibraryWithSource</code></td>
-<td>NVRTC → PTX</td>
+<td>NVRTC → CUBIN (or PTX)</td>
 <td>hipRTC → code object</td>
 <td><code>libocloc</code> → SPIR-V → <code>zeModuleCreate</code></td>
 </tr>
@@ -5636,7 +5636,7 @@ Capabilities</a>.</p>
 <td>Disk-cache artifact</td>
 <td>object code</td>
 <td>MSL source</td>
-<td>PTX</td>
+<td>CUBIN (or PTX)</td>
 <td>code object</td>
 <td>native binary and SPIR-V</td>
 </tr>
@@ -5701,10 +5701,15 @@ over <code>[__loop_start__, __loop_end__)</code>. <code>CompiledKernel</code> bu
 <code>bind()</code> marshals the array addresses (<code>NumpyBuffer.address</code>, computed once
 per array) and scalars once per dispatch; <code>call_range()</code> then runs each
 chunk with its own bounds, because chunks run concurrently. The JIT'd pool
-does not call through ctypes at all: <code>cpu_pool.chunk_wrapper</code> JITs, once per
-compiled kernel and under a lock, a <code>__tack_chunk(pack, start, end)</code> that
-loads the arguments from 8-byte slots (<code>pack_args</code>) and calls the kernel at
-its address.</p>
+does not call through ctypes at all: it runs the kernel's
+<code>&lt;entry&gt;__chunk(pack, start, end)</code>, which loads the arguments from 8-byte
+slots (<code>pack_args</code>) and calls the kernel. <code>cpu_pool.add_chunk_wrapper</code> puts it
+in the kernel's own module, the kernel kept out of line (<code>noinline</code>), so it is
+compiled with the kernel and stored with its object code. Each wrapper had been
+a JIT module of its own, made at the kernel's first fan-out in every process:
+2-3 ms each, about 0.7 s over AhmedML's analysis sweep, which the disk cache
+did not hold. <code>chunk_wrapper</code> still builds one apart, once and under a lock,
+for object code stored without it.</p>
 <p><strong>Disk cache.</strong> <code>set_object_cache</code> captures the object code MCJIT emits, and
 <code>variant_artifact</code> stores it after a header and the entry's unique name
 (<code>_STORED</code>); <code>load_variant</code> adds it to the shared engine with
@@ -5819,9 +5824,13 @@ target also names:</p>
 </tr>
 </tbody>
 </table>
-<p><code>--use_fast_math</code> is never passed. No target architecture is given, so
-NVRTC emits PTX for its default virtual architecture and the driver
-JIT-compiles that PTX in <code>cuModuleLoadData</code>. A compile failure raises
+<p><code>--use_fast_math</code> is never passed. Where NVRTC supports the device's
+architecture (<code>nvrtcGetSupportedArchs</code>, <code>_cubin_arch</code>) it compiles for it
+(<code>-arch=sm_XY</code>) and returns the device's code (CUBIN), which
+<code>cuModuleLoadData</code> loads as it is. Otherwise, as on a device newer than the
+NVRTC, it emits PTX for its default virtual architecture and the driver
+JIT-compiles that in <code>cuModuleLoadData</code>. Cold, the two cost the same, since
+NVRTC then does the driver's work; but a stored CUBIN loads with no compile. A compile failure raises
 <code>RuntimeError</code> with the NVRTC log and the source; the program is destroyed
 on both paths.</p>
 <p>The first compile in a process checks <code>nvrtcVersion</code> and warns if NVRTC is
@@ -5859,7 +5868,7 @@ context and freed once the stream is idle, at the next allocation or sync
 (<code>_free_dropped</code>). <code>from_numpy</code>, <code>fill</code> and the
 allocation's zeroing are queued in order with the launches; <code>to_numpy</code> and
 <code>read_range</code> queue their copy and wait with <code>cuStreamSynchronize</code>.</p>
-<p><strong>Disk cache.</strong> The PTX NVRTC made is stored with the entry name, the
+<p><strong>Disk cache.</strong> The CUBIN or PTX NVRTC made is stored with the entry name, the
 parameter layout and the scalar pack layout, and loaded with
 <code>cuModuleLoadData</code>; <code>load_variant</code> makes the pack arrays anew from the
 call's arguments, since they are device memory of the process.</p>

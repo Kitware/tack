@@ -372,11 +372,19 @@ def _whole_or_cut(cells, values, iso, whole, cut):
 
 
 @tack.kernel
-def _every_cell(cells, whole, cut):
+def _polyhedra_kept(cells, values, iso, whole, cut):
+    # A polyhedron takes the polyhedral path (never whole) when any point is
+    # strictly above; one with none keeps nothing and is gone, as a shape is --
+    # most of a mesh's polyhedra, for a cut far from where they cluster (AhmedML's
+    # 508K went through clip_parts every time).
     for c in cells:
+        above = 0
+        for j in range(cells.num_points(c)):
+            if values[cells.point_id(c, j)] > iso:
+                above = 1
         e = cells.entity_id(c)
         whole[e] = 0
-        cut[e] = 1
+        cut[e] = above
 
 
 @tack.kernel
@@ -465,13 +473,13 @@ def clip_mixed(data, values, iso, inside, fields):
             if group.shape.REFERENCE:
                 _whole_or_cut(group.view(), values, iso, whole, cut)
             else:
-                _every_cell(group.view(), whole, cut)
+                _polyhedra_kept(group.view(), values, iso, whole, cut)
     # The input's point and cell ids ride along as fields, through both parts.
     marked = DataSet(t, data.geometry, fields={
-        "point": Field(Values(data, "points"), tack.arange(data.num_points, dtype=idt)),
-        "cell": Field(Values(data, "cells"), tack.arange(n, dtype=idt)),
+        "point": Field(Values(data, "points"), arrays.CountingArray(data.num_points, dtype=idt)),
+        "cell": Field(Values(data, "cells"), arrays.CountingArray(n, dtype=idt)),
         "value": Field(Values(data, "points"), values)}, **data._frame())
-    shaped = _keep_cells(marked, whole)
+    shaped = _keep_cells(marked, whole, shapes_only=True)      # whole cells are shapes
     kept_ids = arrays.materialize(shaped.fields["point"].values)
     n_kept, n_shapes = shaped.num_points, shaped.num_cells
     if int(cut.numpy().max(initial=0)):

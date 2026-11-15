@@ -534,6 +534,19 @@ def _order_two(field):
     return isinstance(field.space, H1) and field.space.order == 2
 
 
+def _by_entity(data, field):
+    """``field`` with its values numbered by entity, as ``_keep_order_two`` gathers
+    them: one numbered by a table (``H1(dofs=...)``, as MFEM and VTK's cell grids
+    number theirs) projected into the space numbered by entity (the same functions)."""
+    space = field.space
+    if space.dofs is None:
+        return field
+    from tack.dataset.algorithms.project import project
+
+    return project(data, field, H1(data, order=space.order,
+                                   **({"basis": space.basis} if space.basis else {})))
+
+
 def _keep_order_two(data, out, ids, fields):
     """``out``'s fields and geometry that are order 2 in ``data``, made order 2 on the
     surface ``out`` of ``data``'s faces ``ids``: the surface's nodes are the
@@ -557,10 +570,11 @@ def _keep_order_two(data, out, ids, fields):
     if ids.shape[0]:
         _center_sources(ids, data.topology.faces().kinds, solid_face_dofs, cell_dofs, sources)
     for name in names:
-        out.fields[name] = Field(space, _take(data.fields[name].values, sources),
-                                 data.fields[name].unit)
+        out.fields[name] = Field(space, _take(_by_entity(data, data.fields[name]).values,
+                                              sources), data.fields[name].unit)
     if curved:
-        out.geometry = Field(space, _take(data.geometry.values, sources), data.unit)
+        out.geometry = Field(space, _take(_by_entity(data, data.geometry).values, sources),
+                             data.unit)
 
 
 @tack.kernel

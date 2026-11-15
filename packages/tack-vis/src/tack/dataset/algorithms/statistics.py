@@ -18,6 +18,43 @@ from tack.runtime.dispatch import on_inputs_device
 __all__ = ['Statistics', 'statistics']
 
 
+#: Values one thread adds (`_partial_sums`) before the partial sums are added in
+#: f64 on the host (`_sum`).
+_SUM_CHUNK = 256
+
+
+@tack.kernel
+def _partial_sums(values, n, chunk, out):
+    # Each chunk's sum with Kahan's compensation: an AMR level's cells have one
+    # volume, and adding equal f32 values in order rounds the same way every time
+    # (2e-6 of a level's volume in chunks of 256). Tack does not reassociate the
+    # additions, so the compensation is kept.
+    for c in range(out.shape[0]):
+        s = 0.0
+        carry = 0.0
+        for k in range(c * chunk, min(n, c * chunk + chunk)):
+            y = values[k] - carry
+            t = s + y
+            carry = (t - s) - y
+            s = t
+        out[c] = s
+
+
+def _sum(values):
+    """``values``' sum, a Python float. ``Array.sum()`` is NumPy's pairwise sum on
+    the CPU, but on a GPU it adds an f32 array on the device with f32 partial sums,
+    whose error grows with the length: 3e-4 in the volume of an AMR level of 160M
+    cells on Metal (#314). There each thread adds `_SUM_CHUNK` values, compensated,
+    and the partial sums are added in f64 on the host, as the boxes' moments were
+    merged when statistics took them box by box."""
+    if values.device.type == "cpu" or values.dtype != tack.f32:
+        return values.sum()
+    n = size_of(values)
+    parts = tack.empty((-(-n // _SUM_CHUNK),), values.dtype, device=values.device)
+    _partial_sums(values, n, _SUM_CHUNK, parts)
+    return float(np.sum(parts.numpy(), dtype=np.float64))
+
+
 @tack.kernel
 def _central_powers(values, mean, p2, p3, p4):
     for i in range(p2.shape[0]):
@@ -169,14 +206,14 @@ def _array_moments(source, weights=None):
     # Integer sums are exact in f64 up to 2**53 and cannot wrap; summing the
     # converted f32 values was off by 57 for a million i32 values of 1001.
     # NumPy reduces integer fields on the host anyway.
-    total = values.sum() if values is source else float(
+    total = _sum(values) if values is source else float(
         np.sum(source.numpy(), dtype=np.float64))
     mean = total / n
     # The powers of differences from a mean are fractions, whatever the values are.
     p2, p3, p4 = (tack.empty((n,), values.dtype) for _ in range(3))
     _central_powers(values, mean, p2, p3, p4)
-    return (n, float(n), float(n), source.min(), source.max(), total, mean, p2.sum(),
-            p3.sum(), p4.sum())
+    return (n, float(n), float(n), source.min(), source.max(), total, mean, _sum(p2),
+            _sum(p3), _sum(p4))
 
 
 def _weighted_moments(source, weights, n):
@@ -186,15 +223,15 @@ def _weighted_moments(source, weights, n):
     weights = _converted(arrays.materialize(weights), values.dtype)
     wx, w2 = tack.empty((n,), values.dtype), tack.empty((n,), values.dtype)
     _weighted(values, weights, wx, w2)
-    total_weight = weights.sum()
+    total_weight = _sum(weights)
     if not total_weight > 0:
         raise ValueError("statistics with weights needs a positive sum of weights")
-    total = wx.sum()
+    total = _sum(wx)
     mean = total / total_weight
     p2, p3, p4 = (tack.empty((n,), values.dtype) for _ in range(3))
     _weighted_powers(values, weights, mean, p2, p3, p4)
-    return (n, total_weight, w2.sum(), source.min(), source.max(), total, mean, p2.sum(),
-            p3.sum(), p4.sum())
+    return (n, total_weight, _sum(w2), source.min(), source.max(), total, mean, _sum(p2),
+            _sum(p3), _sum(p4))
 
 
 def _merged(a, b):

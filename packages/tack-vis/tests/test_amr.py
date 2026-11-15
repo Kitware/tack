@@ -670,6 +670,59 @@ def test_statistics_a_level_at_a_time_are_the_boxes(kind, name, weights):
         assert a.unit == by_box.unit and a.weight_unit == by_box.weight_unit
 
 
+@pytest.mark.parametrize("weights", [None, "volume", "w"])
+def test_statistics_of_a_long_f32_field_are_accurate_on_every_device(backend, weights):
+    """On a GPU, ``Array.sum()`` adds an f32 array with f32 partial sums. Over an AMR
+    level of 160M cells reduced as one array, the volume came out 3e-4 off on Metal
+    and the variance 0.7% (#314). The moments' sums are partial sums of a few hundred
+    values, added in f64 on the host (``_sum``), so a field of 4M values (one array,
+    as a level's are) agrees with NumPy's f64 moments of the same values. A
+    level's cells have one volume, which is not a power of two here: adding equal
+    f32 values in order rounds the same way every time (5880 off in that volume
+    before the chunks were added with compensation)."""
+    h = (0.3, 0.7, 0.11)
+    data = td.uniform_grid((257, 129, 129), spacing=h)
+    n = data.num_cells
+    k = np.arange(n)
+    x = (291.0 + 0.7 * np.sin(k * 1e-3)).astype(np.float32)
+    w = (1.0 + 0.5 * np.cos(k * 7e-4)).astype(np.float32)
+    data.fields["c"] = td.Field(td.Constant(data), tack.array(x))
+    data.fields["w"] = td.Field(td.Constant(data), tack.array(w))
+    got = td.statistics(data, "c", weights)
+    xs = x.astype(np.float64)
+    ws = {None: np.ones(n), "volume": np.full(n, float(np.prod(np.float32(h)))),
+          "w": w.astype(np.float64)}[weights]
+    total = ws.sum()
+    mean = (ws * xs).sum() / total
+    m2 = (ws * (xs - mean) ** 2).sum()
+    assert got.n == n
+    np.testing.assert_allclose(got.weight, total, rtol=3e-7)    # a cell's volume, in f32
+    np.testing.assert_allclose(got.mean, mean, rtol=1e-7)
+    np.testing.assert_allclose(got.m2, m2, rtol=1e-4)
+    np.testing.assert_allclose(got.population_variance, m2 / total, rtol=1e-4)
+
+
+def test_partial_sums_add_every_value_once(backend):
+    """``_partial_sums``, which a GPU's statistics add in f64: every value once,
+    the last chunk short."""
+    from tack.dataset.algorithms.statistics import _SUM_CHUNK, _partial_sums
+
+    for n in (1, _SUM_CHUNK, 1_000_003):
+        x = np.random.default_rng(n).random(n).astype(np.float32)
+        parts = tack.empty((-(-n // _SUM_CHUNK),), tack.f32)
+        _partial_sums(tack.array(x), n, _SUM_CHUNK, parts)
+        np.testing.assert_allclose(np.sum(parts.numpy(), dtype=np.float64),
+                                   np.sum(x, dtype=np.float64), rtol=1e-6)
+    # One value many times, as a level's cell volumes are: added in order without
+    # compensation, every step rounds the same way (2e-6 here).
+    n = 1_000_003
+    v = np.float32(0.3) * np.float32(0.7) * np.float32(0.11)
+    parts = tack.empty((-(-n // _SUM_CHUNK),), tack.f32)
+    _partial_sums(tack.full((n,), v, tack.f32), n, _SUM_CHUNK, parts)
+    np.testing.assert_allclose(np.sum(parts.numpy(), dtype=np.float64), n * float(v),
+                               rtol=1e-7)
+
+
 def _three_levels(kind):
     boxes = [[image(lo, cells, h) for lo, cells in level] for level, h in
              zip([[((0, 0), (4, 8)), ((4, 0), (4, 8))],

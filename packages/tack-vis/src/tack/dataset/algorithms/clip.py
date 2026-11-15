@@ -41,7 +41,7 @@ _TABLE_OF = {int(shapes.PIXEL): (9, [0, 1, 3, 2]),
              int(shapes.WEDGE): (13, [0, 2, 1, 3, 5, 4])}
 
 
-_KINDS = 5            # cells, connectivity, records, centroids, centroid members
+_KINDS = 5            # cells, connectivity, crossings, centroids, centroid members
 
 
 # Entries of any kind one cell can make, at most: a bound for the output's ids.
@@ -102,7 +102,6 @@ def _clip_counts(cells, values, value, invert, data, cases, remap, counts, marks
         if whole:
             n_cells = 1
             n_conn = cells.NUM_POINTS
-            n_records = cells.NUM_POINTS
         elif not dropped:
             at = cases[case]
             shapes_left = data[at]
@@ -114,12 +113,14 @@ def _clip_counts(cells, values, value, invert, data, cases, remap, counts, marks
                 if kind == 0:
                     n_centroids += 1
                     n_members += count
-                    n_records += count
+                    for k in range(count):
+                        if data[at + k] >= 8:
+                            n_records += 1
                 else:
                     n_cells += 1
                     n_conn += count
                     for k in range(count):
-                        if data[at + k] != 20:
+                        if data[at + k] >= 8 and data[at + k] != 20:
                             n_records += 1
                 at += count
         counts[e] = [n_cells, n_conn, n_records, n_centroids, n_members]
@@ -128,7 +129,10 @@ def _clip_counts(cells, values, value, invert, data, cases, remap, counts, marks
 @tack.kernel
 def _clip_emit(cells, values, value, invert, data, cases, edges, remap, whole_type,
                whole_order, starts, types, offsets, connectivity, sources, keys, slots,
-               centroid_offsets, centroid_cells, marks, hidden):
+               centroid_offsets, centroid_cells, members, used, crossing, marks, hidden):
+    # An input point a cell keeps is written as its id and marked used; a
+    # crossing gets a record (its edge, and the slot that takes its point) and
+    # `crossing` in its slot until the records are merged.
     for c in cells:
         e = cells.entity_id(c)
         full = (1 << cells.NUM_POINTS) - 1
@@ -152,9 +156,8 @@ def _clip_emit(cells, values, value, invert, data, cases, edges, remap, whole_ty
             sources[cell] = e
             for k in range(cells.NUM_POINTS):
                 p = cells.point_id(c, whole_order[k])
-                keys[record] = [p, p]
-                slots[record] = conn
-                record += 1
+                connectivity[conn] = p
+                used[p] = 1
                 conn += 1
         elif not dropped:
             at = cases[case]
@@ -169,17 +172,17 @@ def _clip_emit(cells, values, value, invert, data, cases, edges, remap, whole_ty
                     centroid_cells[centroid] = e
                     for k in range(count):
                         entry = data[at + k]
-                        pa = 0
-                        pb = 0
                         if entry < 8:
-                            pa = cells.point_id(c, remap[entry])
-                            pb = pa
+                            p = cells.point_id(c, remap[entry])
+                            members[member] = p
+                            used[p] = 1
                         else:
                             pa = cells.point_id(c, remap[edges[2 * (entry - 8)]])
                             pb = cells.point_id(c, remap[edges[2 * (entry - 8) + 1]])
-                        keys[record] = [min(pa, pb), max(pa, pb)]
-                        slots[record] = -(member + 1)
-                        record += 1
+                            keys[record] = [min(pa, pb), max(pa, pb)]
+                            slots[record] = -(member + 1)
+                            members[member] = crossing
+                            record += 1
                         member += 1
                 else:
                     types[cell] = tack.u8(kind)
@@ -196,43 +199,74 @@ def _clip_emit(cells, values, value, invert, data, cases, edges, remap, whole_ty
                             connectivity[conn] = -(centroid + 1)     # resolved later
                         else:
                             entry = data[at + k]
-                            pa = 0
-                            pb = 0
                             if entry < 8:
-                                pa = cells.point_id(c, remap[entry])
-                                pb = pa
+                                p = cells.point_id(c, remap[entry])
+                                connectivity[conn] = p
+                                used[p] = 1
                             else:
                                 pa = cells.point_id(c, remap[edges[2 * (entry - 8)]])
                                 pb = cells.point_id(c, remap[edges[2 * (entry - 8) + 1]])
-                            keys[record] = [min(pa, pb), max(pa, pb)]
-                            slots[record] = conn
-                            record += 1
+                                keys[record] = [min(pa, pb), max(pa, pb)]
+                                slots[record] = conn
+                                connectivity[conn] = crossing
+                                record += 1
                         conn += 1
                 at += count
 
 
 @tack.kernel
+def _number_points(used, keys, order, run_offsets, crossings, number, ends, weights):
+    # The output's points are numbered as a sort of (low, high) edge keys over
+    # every point use would number them: each used input point p, then the
+    # crossings on its edges to higher points. So p's number is the used points
+    # before it (``used``, scanned) and the crossings whose low end is below it.
+    for p in range(number.shape[0]):
+        if used[p + 1] > used[p]:
+            lo = 0
+            hi = crossings
+            while lo < hi:
+                mid = (lo + hi) // 2
+                if keys[order[run_offsets[mid]]][0] < p:
+                    lo = mid + 1
+                else:
+                    hi = mid
+            r = used[p] + lo
+            number[p] = r
+            ends[r] = [p, p]
+            weights[r] = 0.0
+
+
+@tack.kernel
+def _renumber(entries, number):
+    # Input point ids to their output numbers; the negative markers (crossings'
+    # slots, centroids) stay.
+    for i in range(entries.shape[0]):
+        p = entries[i]
+        if p >= 0:
+            entries[i] = number[p]
+
+
+@tack.kernel
 def _resolve_points(keys, order, run_offsets, slots, values, positions, value, connectivity,
-                    members, ends, weights, count):
-    # Each run of equal keys is one output point: a corner, or an edge crossing
-    # interpolated from its end first by position, as contour's are, so every
-    # piece holding the edge computes it alike.
+                    members, ends, weights, used, count):
+    # Each run of equal keys is one crossing, numbered after the used points up to
+    # its low end, and interpolated from its end first by position, as contour's
+    # are, so every piece holding the edge computes it alike.
     for r in range(count):
         key = keys[order[run_offsets[r]]]
         a = key[0]
         b = key[1]
-        if a != b and not _first_end(positions[a], positions[b], a, b):
+        point = used[a + 1] + r
+        if not _first_end(positions[a], positions[b], a, b):
             a, b = b, a
-        ends[r] = [a, b]
-        weights[r] = 0.0
-        if a != b:
-            weights[r] = _crossing(value, values[a], values[b])
+        ends[point] = [a, b]
+        weights[point] = _crossing(value, values[a], values[b])
         for i in range(run_offsets[r], run_offsets[r + 1]):
             slot = slots[order[i]]
             if slot >= 0:
-                connectivity[slot] = r
+                connectivity[slot] = point
             else:
-                members[-slot - 1] = r
+                members[-slot - 1] = point
 
 
 @tack.kernel
@@ -403,29 +437,47 @@ def clip(data, by, value=0.0, inside=False, fields=None, subdivision=None, toler
     offsets = tack.zeros((n_cells + 1,), odt)
     connectivity = tack.empty((n_conn,), odt)
     sources = tack.empty((n_cells,), idt)
+    # Records only for crossings: the input points cells keep are numbered through
+    # a map of one entry per input point (VTK's point map), so only the cut's new
+    # points are sorted. A record for every kept corner made the merge most of
+    # clip's memory (the cut filters' memory plan, D2).
     keys = tack.empty((n_records,), tack.vec(2, idt))
     slots = tack.empty((n_records,), odt)
     centroid_offsets = tack.empty((n_centroids + 1,), odt)
     centroid_cells = tack.empty((n_centroids,), idt)
+    members = tack.empty((n_members,), odt)
+    num_points = data.num_points
+    used = tack.zeros((num_points + 1,), odt)
+    crossing = -(n_centroids + 1)         # below every centroid's placeholder
     for group, (table, cases, edges, remap, whole_type, whole_order) in groups:
         _clip_emit(group.view(), values, float(value), invert, table, cases, edges, remap,
                    whole_type, whole_order, starts, types, offsets, connectivity, sources,
-                   keys, slots, centroid_offsets, centroid_cells, marks, hidden)
-    del starts                            # before the merge, the clip's peak
+                   keys, slots, centroid_offsets, centroid_cells, members, used, crossing,
+                   marks, hidden)
+    del starts
     _close(offsets, n_cells, n_conn)
     _close(centroid_offsets, n_centroids, n_members)
 
-    order = key_order(keys, data.num_points, odt)
-    point_runs, count = run_offsets(keys, order)
-    members = tack.empty((n_members,), odt)
+    kept = exclusive_scan(used, used, num_points, close=True) if num_points else 0
+    order = key_order(keys, num_points, odt)
+    point_runs, crossings = run_offsets(keys, order)
+    count = kept + crossings
     ends = tack.empty((count,), tack.vec(2, idt))
     # Weights are fractions even when the values are integers (Viskores interpolates
     # an integer field's crossings the same way).
     weights = tack.empty((count,), precision)
-    if count:
+    if kept:
+        number = tack.empty((num_points,), odt)
+        _number_points(used, keys, order, point_runs, crossings, number, ends, weights)
+        if n_conn:
+            _renumber(connectivity, number)
+        if n_members:
+            _renumber(members, number)
+        del number
+    if crossings:
         _resolve_points(keys, order, point_runs, slots, values,
                         data.geometry.values, float(value), connectivity,
-                        members, ends, weights, count)
+                        members, ends, weights, used, crossings)
     if n_conn:
         _centroid_entries(connectivity, count)
     out = UnstructuredTopology(types, offsets, connectivity, num_points=count + n_centroids)

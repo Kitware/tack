@@ -157,7 +157,7 @@ def _clip_emit(cells, values, value, invert, data, cases, edges, remap, whole_ty
             for k in range(cells.NUM_POINTS):
                 p = cells.point_id(c, whole_order[k])
                 connectivity[conn] = p
-                used[p] = 1
+                tack.atomic_max(used, p, 1)
                 conn += 1
         elif not dropped:
             at = cases[case]
@@ -175,7 +175,7 @@ def _clip_emit(cells, values, value, invert, data, cases, edges, remap, whole_ty
                         if entry < 8:
                             p = cells.point_id(c, remap[entry])
                             members[member] = p
-                            used[p] = 1
+                            tack.atomic_max(used, p, 1)
                         else:
                             pa = cells.point_id(c, remap[edges[2 * (entry - 8)]])
                             pb = cells.point_id(c, remap[edges[2 * (entry - 8) + 1]])
@@ -202,7 +202,7 @@ def _clip_emit(cells, values, value, invert, data, cases, edges, remap, whole_ty
                             if entry < 8:
                                 p = cells.point_id(c, remap[entry])
                                 connectivity[conn] = p
-                                used[p] = 1
+                                tack.atomic_max(used, p, 1)
                             else:
                                 pa = cells.point_id(c, remap[edges[2 * (entry - 8)]])
                                 pb = cells.point_id(c, remap[edges[2 * (entry - 8) + 1]])
@@ -212,6 +212,16 @@ def _clip_emit(cells, values, value, invert, data, cases, edges, remap, whole_ty
                                 record += 1
                         conn += 1
                 at += count
+
+
+def _scanned_map(used, num_points, odt):
+    """``(starts, kept)``: the point map's marks (i32, ``num_points + 1`` of them)
+    scanned into the output's id type, in place where that is i32, and how many
+    points are marked."""
+    if not num_points:
+        return used, 0
+    out = used if odt == tack.i32 else tack.empty((num_points + 1,), odt)
+    return out, exclusive_scan(used, out, num_points, close=True)
 
 
 @tack.kernel
@@ -447,7 +457,9 @@ def clip(data, by, value=0.0, inside=False, fields=None, subdivision=None, toler
     centroid_cells = tack.empty((n_centroids,), idt)
     members = tack.empty((n_members,), odt)
     num_points = data.num_points
-    used = tack.zeros((num_points + 1,), odt)
+    # Marked by every cell keeping the point, so atomically (i32, which every
+    # backend's atomics take); scanned into the output's id type.
+    used = tack.zeros((num_points + 1,), tack.i32)
     crossing = -(n_centroids + 1)         # below every centroid's placeholder
     for group, (table, cases, edges, remap, whole_type, whole_order) in groups:
         _clip_emit(group.view(), values, float(value), invert, table, cases, edges, remap,
@@ -458,7 +470,7 @@ def clip(data, by, value=0.0, inside=False, fields=None, subdivision=None, toler
     _close(offsets, n_cells, n_conn)
     _close(centroid_offsets, n_centroids, n_members)
 
-    kept = exclusive_scan(used, used, num_points, close=True) if num_points else 0
+    used, kept = _scanned_map(used, num_points, odt)
     order = key_order(keys, num_points, odt)
     point_runs, crossings = run_offsets(keys, order)
     count = kept + crossings

@@ -258,3 +258,48 @@ def test_implicit_arrays_index_from_the_host_as_arrays_do():
             values[0:2]
         with pytest.raises(TypeError, match="not iterated"):
             iter(values)
+
+
+@pytest.mark.parametrize("ids", [
+    lambda base: base,                                          # reversed: float ids
+    lambda base: [0.0, 1.0],
+    lambda base: tack.zeros((2,), tack.vec2(tack.i32)),
+], ids=["reversed", "float-list", "vectors"])
+def test_a_permutation_refuses_ids_that_are_not_integers(ids):
+    """Permutation(base, ids), the arguments reversed, used the base's floats as ids
+    and read past the end in plain mode (#376); only integer scalar ids are taken."""
+    tack.set_default_device("cpu")
+    base = tack.array(np.array([1.5, 2.5, 3.5], np.float32))
+    with pytest.raises(TypeError, match=r"Permutation\(ids, base\) takes integer ids"):
+        arrays.Permutation(ids(base), base)
+
+
+def test_a_permutation_takes_integer_ids_of_every_kind():
+    tack.set_default_device("cpu")
+    base = tack.array(np.array([1.5, 2.5, 3.5], np.float32))
+    for ids in (tack.array(np.array([2, 0], np.int32)), [2, 0], np.array([2, 0], np.uint64),
+                arrays.CountingArray(2, 2, -2)):
+        np.testing.assert_array_equal(arrays.to_host(arrays.Permutation(ids, base)), [3.5, 1.5])
+
+
+@pytest.mark.parametrize("make, what", [
+    (lambda v: arrays.ConstantArray(1, 2.5), "ConstantArray's size"),
+    (lambda v: arrays.CountingArray(3.0), "CountingArray's size"),
+    (lambda v: arrays.Function(_square, 4.0), "Function's size"),
+    (lambda v: arrays.View(v, 0.5, 2), "View's start"),
+    (lambda v: arrays.View(v, 0, 2.0), "View's size"),
+    (lambda v: arrays.Strided(v, 1.5), "Strided's stride"),
+    (lambda v: arrays.Strided(v, 2, 0.5), "Strided's offset"),
+    (lambda v: arrays.ExtractComponent(tack.zeros((2,), tack.vec3()), 0.5),
+     "ExtractComponent's component"),
+    (lambda v: arrays.UniformCoordinates((2.5, 2)), "an image's size"),
+])
+def test_indices_and_sizes_are_integers_not_truncated(make, what):
+    """A size, start, stride, offset or component given as a float was truncated by
+    int(); it is refused, naming what was meant, and NumPy integers still serve."""
+    tack.set_default_device("cpu")
+    values = tack.array(np.arange(6, dtype=np.float32))
+    with pytest.raises(TypeError, match=f"{what} is an integer"):
+        make(values)
+    assert arrays.View(values, np.int64(1), np.int32(3)).length == 3
+    assert arrays.CountingArray(np.uint32(4)).length == 4

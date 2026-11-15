@@ -138,6 +138,9 @@ def test_field_filters_add_arrays_to_a_copy_of_their_input():
     # The input's own arrays are the same arrays, not copies.
     assert (np.asarray(out.point_data["RTData"]).ctypes.data
             == np.asarray(image.point_data["RTData"]).ctypes.data)
+    differences = ta.FiniteDifferences(field="RTData", order=4, name="d")(image)
+    np.testing.assert_array_equal(differences.point_data["d"], td.finite_differences(
+        vtk_to_dataset(image, dtype=None), "RTData", order=4).values.numpy())
     elevation = ta.Elevation(high_point=(0.0, 0.0, 8.0))(image)
     assert "elevation" in elevation.point_data.keys()
     quality = ta.CellQuality()(ta.Tetrahedralize()(image))
@@ -776,8 +779,11 @@ def _cloud_pieces():
 
 
 def _tack(vtk_data):
-    """The Tack dataset (or pieces) a wrapper sees."""
-    return vtk_to_dataset(vtk_data, dtype=None)
+    """The Tack dataset (or pieces) a wrapper sees: a grid with polyhedra read with
+    every cell a polyhedron (``algorithms._converted``)."""
+    faces = vtk_data.GetPolyhedronFaces() if hasattr(vtk_data, "GetPolyhedronFaces") else None
+    polyhedral = "all" if faces is not None and faces.GetNumberOfCells() else None
+    return vtk_to_dataset(vtk_data, dtype=None, polyhedral=polyhedral)
 
 
 def _with(data, fields):
@@ -1140,6 +1146,35 @@ def test_higher_order_nodes_on_another_device_and_integers_refused():
     ids = ta.PointIds()
     ids.SetInputDataObject(0, grid)
     assert ids.Update() == 0 and "integers" in str(ids.error)
+
+
+@pytest.mark.parametrize("origin", [(0.0, 0.0, 0.0), (5.0e5, -3.0e5, 1.0e4)])
+def test_an_image_runs_on_a_device_without_f64(origin):
+    """VTK keeps an image's origin and spacing in doubles, so its geometry converts to
+    f64, which a device without f64 (Metal) refuses: there a filter takes the image's
+    geometry in f32, relative to the origin an f32 conversion takes, so an image far
+    from zero keeps its precision and goes back to VTK where it was."""
+    from test_dataset_devices import _NoF64CPU
+
+    from tack.runtime import dispatch
+
+    no_f64 = dispatch.as_device(_NoF64CPU())
+    image = _wavelet()()
+    image.SetOrigin(origin)
+    expected = ta.Contour(field="RTData", value=150.0)(image)
+    contour = ta.Contour(field="RTData", value=150.0, device=no_f64)
+    out = contour(image)
+    assert contour.error is None, contour.error
+    assert out.number_of_cells == expected.number_of_cells
+    # f32 at 5e5 is 0.03 apart: only positions relative to a near origin come this close.
+    np.testing.assert_allclose(np.asarray(out.points.data), np.asarray(expected.points.data),
+                               rtol=0, atol=1e-4)
+    elevation = ta.Elevation(low_point=origin, high_point=np.add(origin, (16, 0, 0)),
+                             name="e", device=no_f64)
+    kept = elevation(image)
+    assert elevation.error is None, elevation.error
+    assert isinstance(kept, vtk.vtkImageData) and kept.origin == image.origin
+    assert kept.spacing == image.spacing
 
 
 def test_temporal_statistics_on_higher_order_cells():

@@ -13,7 +13,7 @@ from tack.dataset import units
 from tack.dataset.carry import _point_values
 from tack.dataset.dataset import Field, is_field_key
 from tack.dataset.ghosts import Ghosts
-from tack.dataset.partitioned import PartitionedDataSet
+from tack.dataset.partitioned import PartitionedDataSet, agree
 from tack.dataset.spaces import H1, Values
 from tack.runtime.dispatch import on_inputs_device
 
@@ -195,12 +195,28 @@ def _unit(data, grid, field, reduce, per_volume, pieces=None, world=None):
     return units.derived(base, (spatial, -axes))
 
 
+def _check_piece(data, field):
+    """Refuse points ``deposit`` cannot take: positions not at an H1 geometry's
+    nodes, or ``field`` (a name, a ``Field`` or ``None``) not a scalar field on
+    the points."""
+    if not isinstance(data.geometry.space, H1):
+        raise TypeError("deposit needs the points' positions: an H1 geometry")
+    if field is None:
+        return
+    f = data.fields[field] if is_field_key(field) else field
+    on_points = (isinstance(f.space, H1) and f.space.order == 1) or (
+        isinstance(f.space, Values) and f.space.on == "points")
+    if not on_points or f.space.topology is not data.topology:
+        raise TypeError("deposit reduces a point field of the deposited points")
+    if arrays.width_of(f.values) is not None:
+        raise TypeError("deposit reduces a scalar field: deposit each component")
+
+
 def _deposited(data, grid, field, reduce, method, per_volume, skip_copies=False):
     """``deposit``'s values on ``grid`` and whether they are on its ``"cells"`` or
     ``"points"``, computed on ``data``'s device; ``skip_copies`` leaves out the
     points marked ``DUPLICATEPOINT``."""
-    if not isinstance(data.geometry.space, H1):
-        raise TypeError("deposit needs the points' positions: an H1 geometry")
+    _check_piece(data, field)
     coordinates = grid.geometry.values
     n = data.num_points
     positions = arrays.materialize(_point_values(data.geometry.values, n))
@@ -218,13 +234,7 @@ def _deposited(data, grid, field, reduce, method, per_volume, skip_copies=False)
         values = tack.zeros((max(n, 1),), data.dtype)
     else:
         f = data.fields[field] if is_field_key(field) else field
-        on_points = (isinstance(f.space, H1) and f.space.order == 1) or (
-            isinstance(f.space, Values) and f.space.on == "points")
-        if not on_points or f.space.topology is not data.topology:
-            raise TypeError("deposit reduces a point field of the deposited points")
         values = arrays.materialize(_point_values(f.values, n))
-        if getattr(values.dtype, "scalar_dtype", None) is not None:
-            raise TypeError("deposit reduces a scalar field: deposit each component")
     corners = 1 if method == "nearest" else 2 ** int((cells > 0).sum())
     entries = n * corners
     targets = tack.empty((entries,), tack.i64)
@@ -290,6 +300,9 @@ def _deposit_pieces(data, grid, field, reduce, method, per_volume):
         raise TypeError("deposit of a PartitionedDataSet takes a field's name: a Field "
                         "belongs to one partition's topology")
     pieces = list(data)
+    # A piece without the field, or with one deposit cannot reduce, fails the
+    # check on every rank, before the unit's gather.
+    agree(data.world, lambda: [_check_piece(piece, field) for piece in pieces])
     unit = _unit(None, grid, field, reduce, per_volume, pieces=pieces, world=data.world)
     blocks = tc.Blocks([piece.device for piece in pieces], data.world)
     # A mean is a sum over a count; each piece's other reductions combine as

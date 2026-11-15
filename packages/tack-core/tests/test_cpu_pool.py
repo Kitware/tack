@@ -23,8 +23,10 @@ from tack.runtime import cpu_pool
 from tack.runtime.cpu import CPUBackend
 from tack.runtime.kernel_utils import resolve_variant
 
-pytestmark = pytest.mark.skipif(platform.system() == "Windows",
-                                reason="the pool is pthreads")
+pytestmark = [
+    pytest.mark.skipif(platform.system() == "Windows", reason="the pool is pthreads"),
+    pytest.mark.quick,      # the inner-loop set; see CLAUDE.md, Tests
+]
 
 
 @pytest.fixture(autouse=True)

@@ -67,11 +67,26 @@ def _resolve_clang(cxx=False):
     raise _Unavailable(f"none of {', '.join(names)} was found on PATH")
 
 
+# Seconds a probe may take, and again after a timeout. A compiler's first run
+# on a fresh CI runner reads its binary and headers from a cold disk: on
+# 2026-11-03 all three probes, seconds each, timed out at 30 s on GitHub's
+# runners twice in an hour and passed when run again. A slow start is not an
+# unusable compiler, so a timeout is tried once more, with the files now
+# read, before it counts; a compiler that hangs still fails.
+_PROBE_TIMEOUTS = (30, 180)
+
+
 def _run_probe(command):
-    try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=30)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise _Unavailable(f"cannot run {shlex.join(command)}: {exc}") from exc
+    for timeout in _PROBE_TIMEOUTS:
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
+            break
+        except subprocess.TimeoutExpired as exc:
+            expired = exc
+        except OSError as exc:
+            raise _Unavailable(f"cannot run {shlex.join(command)}: {exc}") from exc
+    else:
+        raise _Unavailable(f"cannot run {shlex.join(command)}: {expired}") from expired
     if result.returncode:
         raise _Unavailable(
             f"{shlex.join(command)} exited {result.returncode}:\n"

@@ -194,12 +194,19 @@ def _downsample_pieces(data, size, sizes, keep, fields):
     from tack import communication as tc
     from tack.dataset.carry import _take as take_rows
 
-    common_origin(data, "voxel_downsample of a PartitionedDataSet")
     pieces = list(data)
+    names = []
+
+    def check():                             # on every rank, in the origin's gather
+        for piece in pieces:
+            if not isinstance(piece.geometry.space, H1):
+                raise TypeError("voxel_downsample needs an H1 geometry: one position per "
+                                "point")
+            names.append([name for name in selected(piece, fields)
+                          if _on_points(piece.fields[name])])
+
+    common_origin(data, "voxel_downsample of a PartitionedDataSet", check=check)
     blocks = tc.Blocks([piece.device for piece in pieces], data.world)
-    names = [selected(piece, fields) for piece in pieces]
-    names = [[name for name in chosen if _on_points(piece.fields[name])]
-             for piece, chosen in zip(pieces, names)]
     every = blocks.all_gather({g: [field_label(name) for name in chosen]
                                for g, chosen in zip(blocks.local, names)})
     if any(chosen != every[0] for chosen in every):
@@ -208,8 +215,6 @@ def _downsample_pieces(data, size, sizes, keep, fields):
     names = names[0] if names else []
     owned, positions = {}, {}
     for g, piece in zip(blocks.local, pieces):
-        if not isinstance(piece.geometry.space, H1):
-            raise TypeError("voxel_downsample needs an H1 geometry: one position per point")
         n = piece.num_points
         mine = np.ones(n, bool)
         if piece.ghosts is not None and piece.ghosts.points is not None:

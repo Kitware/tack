@@ -40,7 +40,7 @@ from tack.dataset.carry import _point_values, _take
 from tack.dataset.dataset import Field, field_label
 from tack.dataset.ghosts import Ghosts
 from tack.dataset.global_ids import GlobalIds
-from tack.dataset.partitioned import PartitionedDataSet, common_origin
+from tack.dataset.partitioned import PartitionedDataSet, common_origin, field_units
 from tack.dataset.point_locator import PointLocator, check_k, periodic_box
 from tack.dataset.sets import Set
 from tack.dataset.spaces import H1, Constant, Values
@@ -114,11 +114,16 @@ def _ghosted(data, radius, k, periodic, around, fields, world):
     if not isinstance(data, PartitionedDataSet):
         raise TypeError(f"ghost_points takes a PartitionedDataSet, not {type(data).__name__}")
     world = data.world if world is None else world
-    origin = common_origin(data, "ghost_points", world)
     pieces = list(data)
-    for i, piece in enumerate(pieces):
-        _check_cloud(i, piece)
-    names = _carried(pieces, fields, "ghost_points")
+    names = []
+
+    def check():                             # on every rank, in the origin's gather
+        for i, piece in enumerate(pieces):
+            _check_cloud(i, piece)
+        names.extend(_carried(pieces, fields, "ghost_points"))
+
+    origin, _ = common_origin(data, "ghost_points", world, check,
+                              units_of=lambda: field_units("ghost_points", pieces, names))
     blocks = tc.Blocks([piece.device for piece in pieces], world)
     if blocks.count > 1 << (63 - INDEX_BITS):
         raise ValueError(f"ghost_points handles up to {1 << (63 - INDEX_BITS)} pieces")

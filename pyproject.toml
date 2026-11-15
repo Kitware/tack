@@ -7,6 +7,7 @@ requires-python = ">=3.11"
 dependencies = [
     "tack-core",
     "tack-vis",
+    "tack-expr",
 ]
 
 [project.optional-dependencies]
@@ -58,11 +59,12 @@ docs = [
 [tool.uv.sources]
 tack-core = { workspace = true }
 tack-vis = { workspace = true }
+tack-expr = { workspace = true }
 
 [tool.uv.workspace]
 # Listed, not globbed: a package directory left behind by a move (holding
 # only ignored __pycache__ files) would otherwise stop `uv sync`.
-members = ["packages/tack-core", "packages/tack-vis"]
+members = ["packages/tack-core", "packages/tack-vis", "packages/tack-expr"]
 
 [tool.ruff]
 line-length = 100
@@ -150,10 +152,11 @@ known-first-party = ["tack"]
 addopts = "-m 'not slow'"
 markers = [
     "slow: runs every shipped example as a subprocess (see tests/test_examples.py)",
-    "timing: asserts what the CPU scheduler actually did; needs an idle host and skips itself otherwise (see test_cpu_threading.py)",
+    "timing: asserts what the CPU scheduler or the OS actually did; needs an idle host and skips itself otherwise (`require_idle`); CI runs these in a job of their own (see test_cpu_threading.py)",
     "quick: the inner-loop set, a module per area of the code, 80 s on 4 workers (`pytest -m quick -n 4`; see CLAUDE.md, Tests)",
 ]
 testpaths = [
     "packages/tack-core/tests",
     "packages/tack-vis/tests",
+    "packages/tack-expr/tests",
 ]

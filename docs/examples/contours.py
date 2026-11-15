@@ -10,6 +10,12 @@ Source: https://github.com/taichi-dev/taichi/blob/master/python/taichi/examples/
 Uses an analytic circle and paired edge crossings instead of the original noise and table.
 """
 
+# Original upstream description (verbatim):
+"""
+Marching squares algorithm in Taichi.
+See "https://en.wikipedia.org/wiki/Marching_squares"
+"""
+
 import argparse
 
 import numpy as np

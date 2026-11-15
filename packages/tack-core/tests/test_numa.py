@@ -227,6 +227,7 @@ print("ok")
 
 
 @requires_numa
+@pytest.mark.timing
 @pytest.mark.parametrize("pool", ["jit", "python"])
 def test_a_array_the_workers_write_is_spread_across_the_nodes(pool, require_idle):
     """The path a real kernel takes. A new array is not touched when it is

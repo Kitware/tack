@@ -16,7 +16,7 @@ from tack.dataset.dataset import DataSet, Field
 from tack.dataset.ghosts import Ghosts
 from tack.dataset.partitioned import PartitionedDataSet, common_origin
 from tack.dataset.spaces import Values
-from tack.dataset.topology import StructuredTopology
+from tack.dataset.topology import StructuredTopology, lines_only
 from tack.runtime.dispatch import get_backend, on_inputs_device
 
 __all__ = ["connected_components"]
@@ -53,7 +53,10 @@ def _hook(cell_of, members, ncells, hidden, labels, changed):
             b = labels[ncells + members[e]]
             if a != b:
                 tack.atomic_min(labels, max(a, b), min(a, b))
-                tack.atomic_max(changed, 0, 1)
+                # Set once a pass: an atomic on one counter from every hook was half
+                # a pass's time on a CPU's cores (0.5 of 0.6 s, AhmedML's 10.7M cells).
+                if changed[0] == 0:
+                    tack.atomic_max(changed, 0, 1)
 
 
 @tack.kernel
@@ -85,7 +88,8 @@ def _hook_near(grid, ncells, used, r, labels, changed):
                                     c = labels[ncells + p]
                                     if a != c:
                                         tack.atomic_min(labels, max(a, c), min(a, c))
-                                        tack.atomic_max(changed, 0, 1)
+                                        if changed[0] == 0:
+                                            tack.atomic_max(changed, 0, 1)
 
 
 @tack.kernel
@@ -296,12 +300,16 @@ def _components_pieces(data, least=None):
     from tack.dataset import _matching
 
     pieces = list(data)
-    common_origin(data, "connected_components of a PartitionedDataSet")
+    labels = []
+
+    def check():                             # each piece's labels, agreed on in the gather
+        for piece in pieces:
+            with piece.device:
+                labels.append(_labels(piece))
+
+    common_origin(data, "connected_components of a PartitionedDataSet", check=check)
     blocks = tc.Blocks([p.device for p in pieces], data.world)
-    local = {}
-    for g, piece in zip(blocks.local, pieces):
-        with piece.device:
-            local[g] = _labels(piece)
+    local = dict(zip(blocks.local, labels))
     counts = {g: local[g][2] for g in blocks.local}
     starts = _starts(blocks, counts)
 
@@ -310,19 +318,25 @@ def _components_pieces(data, least=None):
                                               p.global_ids.points is not None)
                                        for g, p in zip(blocks.local, pieces)}, "min")) \
         if blocks.count else False
-    duplicates = blocks.all_reduce({g: int(p.ghosts is not None and p.ghosts.points is not None
-                                           and bool((p.ghosts.points.numpy() &
-                                                     Ghosts.DUPLICATEPOINT).any()))
-                                    for g, p in zip(blocks.local, pieces)}, "max")
+    # Whether pieces have copies marked, and whether one is a mesh of lines,
+    # whose faces are not derived: every rank refuses it if the faces are needed.
+    duplicates, lines = blocks.all_reduce(
+        {g: np.array([int(p.ghosts is not None and p.ghosts.points is not None
+                          and bool((p.ghosts.points.numpy() & Ghosts.DUPLICATEPOINT).any())),
+                      int(lines_only(p.topology))])
+         for g, p in zip(blocks.local, pieces)}, "max") if blocks.count else (0, 0)
+    if lines and not (numbered or duplicates):
+        raise NotImplementedError("connected_components of pieces without global ids or "
+                                  "ghost points matches their boundaries' points, and the "
+                                  "faces of a mesh of lines are not derived")
     entries = {}
     for g, piece in zip(blocks.local, pieces):
         if numbered or duplicates:
             chosen = np.arange(piece.num_points, dtype=np.int64)
         else:
-            faces = piece.topology.faces()
-            rows = arrays.to_host(faces.rows).reshape(-1, 4)
-            chosen = np.unique(rows[arrays.to_host(faces.boundary()).astype(np.int64)])
-            chosen = chosen[chosen >= 0].astype(np.int64)
+            from tack.dataset.algorithms.generate_global_ids import _boundary_points
+
+            chosen = _boundary_points(piece.topology)
         if numbered:
             columns = [piece.global_ids.points.numpy()[chosen].astype(np.int64).view(np.uint64)]
         else:

@@ -239,8 +239,12 @@ class _PolyhedralCells(_CellsById):
     ``cell_faces[cell_offsets[c] + k]`` is cell ``c``'s facet ``k``, and
     ``cell_face_sides`` the same entry's side: 0 when the facet's stored
     direction (a face's winding, an edge's direction) points out of ``c``, 1
-    when into it. ``point_offsets``/``point_ids`` are the cell's points
-    (derived: its facets' points, sorted and unique). Every method reaches the
+    when into it. ``point_offsets``/``point_ids`` are the cell's points, each
+    once: a ``PolyhedralTopology``'s derived from its facets, sorted; a mixed
+    topology's its run of the connectivity, in the order given (VTK's). Nothing
+    relies on their order: per-cell loops take every point, corner keys and point
+    links each corner's own, and faces are matched by their own points, sorted
+    there (``_face_keys``, ``_match_rings``). Every method reaches the
     arrays through ``cell(c)``, so a subgroup can renumber its cells.
     """
 
@@ -618,6 +622,51 @@ class _SelectedPolyhedra(_PolyhedralCells):
 
 
 _PolyhedralCells._selected = _SelectedPolyhedra
+
+
+class _MixedPolyhedra(_PolyhedralCells):
+    """The polyhedra of an unstructured topology that also holds shaped cells: the
+    ``num_cells`` cells ``ids`` (global cell ids). The arrays are the topology's,
+    indexed by global cell id: ``cell_offsets`` has an entry per cell (a shaped
+    cell's range empty), and a cell's points are its run of the connectivity.
+    ``index(c)`` is the cell's position in the group, as a shaped group's is."""
+
+    def __init__(self, cell_offsets, cell_faces, cell_face_sides, face_offsets, face_points,
+                 point_offsets, point_ids, ids, num_cells):
+        super().__init__(cell_offsets, cell_faces, cell_face_sides, face_offsets, face_points,
+                         point_offsets, point_ids, num_cells)
+        self.ids = ids
+
+    @tack.func
+    def cell(self, c):
+        return self.ids[c]
+
+    @tack.func
+    def index(self, c):
+        return c
+
+
+class _SelectedMixedPolyhedra(_MixedPolyhedra):
+    """A subgroup of `_MixedPolyhedra`: ``num_cells`` of the group's positions
+    ``selected`` from ``first``."""
+
+    def __init__(self, cell_offsets, cell_faces, cell_face_sides, face_offsets, face_points,
+                 point_offsets, point_ids, ids, num_cells, selected, first):
+        super().__init__(cell_offsets, cell_faces, cell_face_sides, face_offsets, face_points,
+                         point_offsets, point_ids, ids, num_cells)
+        self.selected = selected
+        self.first = first
+
+    @tack.func
+    def cell(self, c):
+        return self.ids[self.selected[self.first + c]]
+
+    @tack.func
+    def index(self, c):
+        return self.selected[self.first + c]
+
+
+_MixedPolyhedra._selected = _SelectedMixedPolyhedra
 
 
 class _PolylineCells(_CellsById):

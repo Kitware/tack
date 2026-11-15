@@ -345,6 +345,56 @@ SPREAD_CASES = {
 }
 
 
+# ── Refusals: (pieces, run(data)) that must raise the same kind of error on every
+# rank, a rank without pieces too, however the pieces are laid out (issue #364). ──
+
+def mixed_fields():
+    """The tetrahedra, pieces 0 and 1 with field ``a``, 2 and 3 with ``b``: with every
+    field probed, the pieces give back different fields (#411)."""
+    out = []
+    for k, piece in enumerate(tetrahedra()):
+        piece = td.DataSet(piece.topology, piece.geometry, **piece._frame())
+        piece.fields["a" if k < 2 else "b"] = td.Field(td.H1(piece), tack.array(
+            np.ones(piece.num_points, np.float32)))
+        out.append(piece)
+    return out
+
+
+def mixed_units():
+    """The tetrahedra, pieces 0 and 1 with field ``q`` in m, 2 and 3 in cm (#411)."""
+    out = []
+    for k, piece in enumerate(tetrahedra()):
+        piece.fields["q"] = td.Field(td.Constant(piece), tack.array(
+            np.ones(piece.num_cells, np.float32)), "m" if k < 2 else "cm")
+        out.append(piece)
+    return out
+
+
+REFUSED = {
+    "refused/probe-fields": (mixed_fields, lambda d: td.probe(d, WHERE)),
+    "refused/probe-units": (mixed_units, lambda d: td.probe(d, WHERE, fields=["q"])),
+    "refused/integrate-units": (mixed_units, lambda d: td.integrate(d, "q")),
+    "refused/merge-units": (mixed_units, lambda d: td.merge_pieces(d, fields=["q"])),
+    "refused/ghost-units": (mixed_units, lambda d: td.ghost_cells(d, fields=["q"])),
+    "refused/streamlines": (tetrahedra, lambda d: td.streamlines(d, "RTData", SEEDS, 0.1, 10)),
+    "refused/advect": (flowing, lambda d: td.advect(d, "nope", SEEDS, 0.1, 10)),
+    "refused/probe": (tetrahedra, lambda d: td.probe(d, WHERE, fields=["nope"])),
+    "refused/ghost_cells": (tetrahedra, lambda d: td.ghost_cells(d, fields=["nope"])),
+    "refused/update_ghosts": (tetrahedra, lambda d: td.update_ghosts(td.ghost_cells(d),
+                                                                     "nope")),
+    "refused/ghost_points": (tetrahedra, lambda d: td.ghost_points(d, radius=0.5)),
+    "refused/merge_pieces": (tetrahedra, lambda d: td.merge_pieces(d, fields=["nope"])),
+    "refused/extract_surface": (tetrahedra, lambda d: td.extract_surface(d, fields=["nope"])),
+    "refused/statistics": (tetrahedra, lambda d: td.statistics(d, "nope")),
+    "refused/entropy": (tetrahedra, lambda d: td.entropy(d, "nope")),
+    "refused/integrate": (tetrahedra, lambda d: td.integrate(d, "nope")),
+    "refused/deposit": (cloud, lambda d: td.deposit(d, GRID, "nope")),
+    "refused/voxel_downsample": (cloud, lambda d: td.voxel_downsample(d, 1.0,
+                                                                      fields=["nope"])),
+    "refused/halo_catalog": (cloud, lambda d: td.halo_catalog(d, region="nope")),
+}
+
+
 def _union_regions(data):
     return {int(r) for p in data for r in np.unique(p.fields["region"].values.numpy())
             if r >= 0}
@@ -365,7 +415,7 @@ def _paths(result):
 
 def main():
     comm = MPI.COMM_WORLD
-    layout, names = sys.argv[1], sys.argv[2:] or [*CASES, *SPREAD_CASES]
+    layout, names = sys.argv[1], sys.argv[2:] or [*CASES, *SPREAD_CASES, *REFUSED]
     try:
         import vtkmodules.vtkCommonDataModel  # noqa: F401
     except ImportError:                        # the VTK cases need VTK (interop extra)
@@ -375,7 +425,11 @@ def main():
     failures = []
     for name in names:
         spread = name in SPREAD_CASES
-        make, run, combine = SPREAD_CASES[name] if spread else CASES[name]
+        if name in REFUSED:
+            make, run = REFUSED[name]
+            combine = None
+        else:
+            make, run, combine = SPREAD_CASES[name] if spread else CASES[name]
         traces = os.environ.get("TACK_EMPTY_RANKS_TRACES")
         out = open(os.path.join(traces, f"rank{comm.rank}.txt"), "w") if traces else sys.stderr
         faulthandler.dump_traceback_later(
@@ -392,7 +446,18 @@ def main():
             if os.environ.get("TACK_EMPTY_RANKS_TRACE"):
                 traceback.print_exc()
         faulthandler.cancel_dump_traceback_later()
+        if combine is None:
+            part = None                        # what a refusal gave, if nothing to refuse
         parts, errors = comm.allgather(part), comm.allgather(error)
+        if combine is None:
+            # Raised on every rank, of one kind; with no pieces anywhere, nothing
+            # to refuse, or the same everywhere.
+            kinds = {e.split(":")[0] if e else None for e in errors}
+            if len(kinds) != 1 or (layout != "none" and None in kinds):
+                if comm.rank == 0:
+                    failures.append(f"{name}: {errors}")
+                break
+            continue
         # The same error on every rank with no pieces anywhere is a refusal, and the
         # ranks go on together; any other error ends the run on every rank alike,
         # since they may disagree from there.

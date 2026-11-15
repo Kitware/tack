@@ -36,9 +36,16 @@ from tack.lang.types import INTEGER_TYPES, ScalarType, f32, f64, i32, i64, integ
 
 _FLOAT_TYPES = (f32, f64)
 
-# The join is monotone (types only widen), so it settles in a couple of
-# rounds. The cap is a backstop against a pathological IR, not a budget.
-_MAX_JOIN_ROUNDS = 8
+# The join is monotone (types only widen) over a finite set of types, so it
+# settles: each round widens some local or ends it. A round passes a widened
+# type on to the reads after it at once, so a chain of copies (the temporaries
+# of inlined functions) settles in a round or two; a type reaching a read
+# before it (around a loop) takes one round more. The cap is that many rounds
+# per local and type, which no IR reaches; reaching it is an internal error,
+# never a reason to go on with types that have not settled (#427: eight
+# rounds were too few for a chain of ten copies, and the last ones kept
+# stale f32 types, so f64 values were truncated through them).
+_ROUNDS_PER_LOCAL = 4
 
 
 def annotate_types(ir_func: ir.IRFunction):
@@ -72,7 +79,8 @@ def annotate_types(ir_func: ir.IRFunction):
     # every type assigned to it. Assignments can read other locals, so this
     # iterates until nothing widens.
     var_types = {}
-    for _ in range(_MAX_JOIN_ROUNDS):
+    rounds = _ROUNDS_PER_LOCAL * (len(_assigned_names(ir_func.body)) + 2)
+    for _ in range(rounds):
         env = dict(base_env)
         env.update(var_types)
         collected = {}
@@ -84,6 +92,9 @@ def annotate_types(ir_func: ir.IRFunction):
         if collected == var_types:
             break
         var_types = collected
+    else:
+        raise RuntimeError(f"{ir_func.name}: the locals' types did not settle in {rounds} "
+                           "rounds (an internal error in Tack's type annotation)")
 
     # Final walk with the settled types, so every read of a variable sees
     # the same type its storage slot will have.
@@ -95,6 +106,11 @@ def annotate_types(ir_func: ir.IRFunction):
     # skipped. Typed zeros stand in for their values, hence after typing.
     from tack.lang.ir_bounds import guard_accesses
     guard_accesses(ir_func)
+
+
+def _assigned_names(stmts):
+    """The names assigned anywhere in ``stmts``."""
+    return {node.target for node in walk_ir(stmts) if isinstance(node, ir.IRAssign)}
 
 
 def _literal_only_locals(stmts):
@@ -402,7 +418,15 @@ def _annotate_stmt(node, env, array_params, var_types=None, collected=None):
         declared = var_types.get(node.target) if var_types else None
         if collected is not None and resolved is not None:
             collected[node.target] = _join(collected.get(node.target), resolved)
-        if declared is not None:
+        if declared is not None and collected is not None:
+            # A join round: the reads after this one see the widest type known
+            # yet, so a widening travels down a chain of copies in this round,
+            # not one copy a round.
+            widest = _join(declared, resolved) if resolved is not None else declared
+            node._resolved_type = widest
+            env[node.target] = widest
+            _adopt(node.value, widest)
+        elif declared is not None:
             # One storage slot per variable — every assignment uses its type.
             node._resolved_type = declared
             env[node.target] = declared

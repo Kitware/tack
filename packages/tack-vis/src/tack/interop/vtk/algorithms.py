@@ -85,6 +85,7 @@ __all__ = [
     "AsPolyhedra",
     "AverageDown",
     "BoundaryFaces",
+    "Calculator",
     "CellCenters",
     "CellGeometry",
     "CellIds",
@@ -111,6 +112,7 @@ __all__ = [
     "FaceCenters",
     "FaceGeometry",
     "FeatureEdges",
+    "FiniteDifferences",
     "FlowQuantities",
     "GenerateGlobalIds",
     "GhostCells",
@@ -168,6 +170,7 @@ import inspect
 from vtkmodules.util.vtkAlgorithm import VTKPythonAlgorithmBase
 from vtkmodules.vtkCommonDataModel import (
     vtkDataObject,
+    vtkImageData,
     vtkMultiBlockDataSet,
     vtkMultiPieceDataSet,
     vtkOverlappingAMR,
@@ -288,6 +291,17 @@ def _entry(vtk_data):
     return entry if entry is not None and entry[0] == _key(vtk_data) else None
 
 
+def _converted(vtk_data):
+    """``vtk_to_dataset(vtk_data, dtype=None, copy=False)``, a grid with polyhedra read
+    with every cell a polyhedron: most filters do not take polyhedra beside shaped
+    cells yet (#307), and each wrapper keeps the reading it had."""
+    from tack.interop.vtk import vtk_to_dataset
+
+    faces = vtk_data.GetPolyhedronFaces() if hasattr(vtk_data, "GetPolyhedronFaces") else None
+    polyhedral = "all" if faces is not None and faces.GetNumberOfCells() else None
+    return vtk_to_dataset(vtk_data, dtype=None, copy=False, polyhedral=polyhedral)
+
+
 def _as_dataset(vtk_data, device=None, world=None):
     """``vtk_to_dataset(vtk_data, dtype=None, copy=False)``, the same Tack dataset for
     the same VTK dataset unchanged (each piece of a ``vtkPartitionedDataSet``);
@@ -313,15 +327,40 @@ def _as_dataset(vtk_data, device=None, world=None):
         return data
     entry = _entry(vtk_data)
     if entry is None:
-        _remember(vtk_data, vtk_to_dataset(vtk_data, dtype=None, copy=False))
+        _remember(vtk_data, _converted(vtk_data))
         entry = getattr(vtk_data, _CACHE)
     copies = entry[1]
     data = copies[None]
     if device is None or data.device == device:
         return data
     if device not in copies:
+        if (isinstance(vtk_data, vtkImageData) and data.dtype is tack.f64
+                and not device._backend.supports_f64):
+            data = _image_in_f32(vtk_data)
         copies[device] = data.to_device(device)
     return copies[device]
+
+
+def _image_in_f32(image):
+    """``image`` as a Tack dataset whose geometry is f32, for a device without f64
+    (Metal): VTK keeps an image's origin and spacing in doubles, so its geometry
+    converts to f64, which such a device refuses. Positions are relative to the
+    origin an f32 conversion takes (``_far_origin``), so a grid far from zero keeps
+    its precision and goes back to VTK where it was; the fields keep their types."""
+    import tack
+    from tack.arrays import UniformCoordinates
+    from tack.dataset import DataSet
+    from tack.interop.vtk import _far_origin, vtk_to_dataset
+
+    data = vtk_to_dataset(image, dtype=None, copy=False, origin=_far_origin(image))
+    wide = data.geometry.values
+    geometry = UniformCoordinates(wide.dims, wide._origin, wide._spacing, wide._matrix,
+                                  dtype=tack.f32)
+    narrow = DataSet(data.topology, geometry, fields=dict(data.fields), sets=dict(data.sets),
+                     dtype=tack.f32, ghosts=data.ghosts, global_ids=data.global_ids,
+                     **data._frame())
+    narrow._ghosts_lost = data._ghosts_lost
+    return narrow
 
 
 def _as_hierarchy(vtk_amr, device, world):
@@ -1599,6 +1638,21 @@ class Gradients(_FieldAlgorithm):
     name = Parameter("gradient", "the new array's name")
 
 
+class FiniteDifferences(_FieldAlgorithm):
+    """``td.finite_differences``: the gradient (or, ``derivative=2``, the second
+    derivatives) of ``field`` on an image, a rectilinear or a curvilinear grid, by
+    differences of ``order`` 2, 4 or 6, as a new array ``name``. At order 2 the
+    gradient is VTK's ``vtkGradientFilter``'s on structured data."""
+
+    FUNCTION = "finite_differences"
+    FIELDS = ("field",)
+
+    field = Parameter(None, "the field")
+    order = Parameter(2, "the differences' order of accuracy: 2, 4 or 6")
+    derivative = Parameter(1, "1 for the gradient, 2 for the second derivatives")
+    name = Parameter("gradient", "the new array's name")
+
+
 class Elevation(_FieldAlgorithm):
     """``td.point_elevation``: each point's place along ``low_point`` to ``high_point``,
     scaled to ``range``, as a point array ``name``. VTK's ``vtkElevationFilter``."""
@@ -2056,6 +2110,30 @@ class Interpolate(_FieldAlgorithm):
         result = self._function()(data, values.pop("function"), _space(data, self.to),
                                   **values)
         return {self.name: result}
+
+
+class Calculator(_FieldAlgorithm):
+    """``tack_expr.evaluate``: ``expression``, in ``vtkArrayCalculator``'s syntax, over the
+    input's fields, at the points or the cells, as an array ``name``. Fields of any order
+    and curved cells are evaluated through each cell's own map, derivatives exactly.
+    VTK's ``vtkArrayCalculator``; it needs the ``tack-expr`` package."""
+
+    expression = Parameter(None, "the expression, as vtkArrayCalculator writes it "
+                                 "(required)")
+    at = Parameter("points", "where it is evaluated: points or cells")
+    name = Parameter("Result", "the new array's name")
+    replace_invalid = Parameter(None, "a number for NaN and infinite results, as "
+                                      "vtkArrayCalculator's ReplaceInvalidValues")
+
+    def new_fields(self, data):
+        try:
+            import tack_expr
+        except ImportError as error:
+            raise ImportError("Calculator needs the tack-expr package") from error
+        if not self.expression:
+            raise ValueError("Calculator needs an expression")
+        return {self.name: tack_expr.evaluate(self.expression, data, at=self.at,
+                                              replace_invalid=self.replace_invalid)}
 
 
 class Magnitude(_FieldAlgorithm):

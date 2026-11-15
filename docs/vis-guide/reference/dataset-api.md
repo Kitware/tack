@@ -1418,7 +1418,7 @@ so the paths are the whole mesh's, up to rounding, wherever a step
 a particle crosses by the short step to the boundary and the push out, so
 it differs by about a step. Pieces whose shared faces are not one surface
 (a hexahedron's bilinear face against a polyhedron's fanned one, in a
-`polyhedral="split"` reading) leave slivers that no piece holds: a particle
+deprecated `polyhedral="split"` reading) leave slivers that no piece holds: a particle
 pushed into one goes on from where the push would have ended going the way
 to the boundary again, if a piece holds that, the move counted in its time
 and length and drawn in its stretch. `advect` returns a `PartitionedDataSet` of the
@@ -1463,7 +1463,7 @@ surfaces search the bins as before, and polyhedra after their last cell.
 
 | Function | |
 |---|---|
-| `tack.interop.vtk.vtk_to_dataset(grid, dtype=tack.f32, polyhedral=None, orient=False, id_dtype=None, merge_points=None)` | a `vtkUnstructuredGrid`, `vtkPolyData` (as the unstructured grid of its cells; strips as their triangles), rectilinear grid or image (`vtkImageData`, as `UniformCoordinates`). Point data becomes `H1`, cell data `Constant`. A grid with polyhedra becomes polyhedral (`polyhedral=True` forces it); `orient` repairs inconsistent winding; `merge_points` (`True` or a tolerance) merges an unstructured grid's coincident points first |
+| `tack.interop.vtk.vtk_to_dataset(grid, dtype=tack.f32, polyhedral=None, orient=False, id_dtype=None, merge_points=None)` | a `vtkUnstructuredGrid`, `vtkPolyData` (as the unstructured grid of its cells; strips as their triangles), rectilinear grid or image (`vtkImageData`, as `UniformCoordinates`). Point data becomes `H1`, cell data `Constant`. A grid with polyhedra holds them beside its shaped cells, and polygons stand beside triangles and quads, in one `UnstructuredTopology` (`polyhedral="all"` makes every cell a polyhedron or polygon); `orient` repairs inconsistent winding; `merge_points` (`True` or a tolerance) merges an unstructured grid's coincident points first |
 | `tack.interop.vtk.dataset_to_vtk(data)` | back to VTK, polyhedra and polygons included |
 | (both) | a `vtkPartitionedDataSet` and a `PartitionedDataSet` convert piece by piece (null pieces skipped); a `vtkPartitionedDataSetCollection` and a `dict` of names to `PartitionedDataSet`s convert by `vtkCompositeDataSet.NAME()` (`"block<i>"` without one, `"<name>#<i>"` for a name taken) |
 | `tack.interop.mfem.mfem_to_dataset(mesh, fields=None, dtype=tack.f32, id_dtype=None)` | an MFEM mesh, curved at order 2 too, with its grid functions |

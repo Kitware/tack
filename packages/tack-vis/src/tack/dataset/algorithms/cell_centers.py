@@ -31,11 +31,17 @@ def cell_centers(data):
     its faces from. That is not the centroid either, unless the points are
     spread evenly."""
     out = _vectors(data.num_cells, data.dtype)
-    if not getattr(data.topology, "reference_cells", True):
-        from tack.dataset.algorithms.project import _distinct_point_means
-
-        for_each(_distinct_point_means, data, "cells", materialize(data.geometry.values), out,
-                 float("nan"))
-    else:
+    if getattr(data.topology, "reference_cells", True):
         for_each(_centers, data, "cells", out)
+        return Field(Values(data, "cells"), out, data.unit)
+    from tack.dataset.algorithms.project import _distinct_point_means
+
+    positions = materialize(data.geometry.values)
+    for group in data.launch_groups("cells"):
+        if group.count:
+            view = data.domain_view("cells", group)
+            if group.shape.REFERENCE:          # a shape beside polyhedra
+                _centers(view, out)
+            else:
+                _distinct_point_means(view, positions, out, float("nan"))
     return Field(Values(data, "cells"), out, data.unit)

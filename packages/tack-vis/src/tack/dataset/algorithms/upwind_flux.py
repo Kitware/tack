@@ -41,6 +41,17 @@ def _cell_upwind(faces, values, normals, areas, vx, vy, vz, out):
         out[e] = vn * areas[e] * values[cell]
 
 
+@tack.kernel
+def _mean_upwind(faces, values, normals, areas, vx, vy, vz, out):
+    for f in faces:
+        e = faces.entity_id(f)
+        n = faces.num_points(f)
+        u = values[faces.point_id(f, 0)]
+        for j in range(1, n):
+            u += values[faces.point_id(f, j)]
+        out[e] = normals[e].dot(tack.vec3(vx, vy, vz)) * areas[e] * (u / n)
+
+
 @on_inputs_device
 def upwind_flux(data, field, velocity):
     """The flux of ``field`` carried by a constant ``velocity`` through each face, out
@@ -55,6 +66,12 @@ def upwind_flux(data, field, velocity):
     vx, vy, vz = (float(v) for v in velocity)
     if _on_cells(data, field):
         for_each(_cell_upwind, data, "faces", materialize(field.values), normals.values,
+                 areas.values, vx, vy, vz, out)
+    elif data.topology.mixed:
+        # Point data beside polyhedra is order-1 H1, continuous: the upwind side's
+        # value at a face's center is either side's, the mean of the face's points
+        # (a polygon's fan meets there), so no traces, which hold no polygons.
+        for_each(_mean_upwind, data, "faces", materialize(field.values), normals.values,
                  areas.values, vx, vy, vz, out)
     else:
         for_each(_upwind, data, "faces", traces(data, field), normals.values, areas.values,

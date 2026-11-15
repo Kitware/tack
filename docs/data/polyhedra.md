@@ -170,7 +170,7 @@ directions (see [Derive](../visualization/derive.md)).
 
 ## What a cell must be
 
-Tack checks what it can, and refuses cells it cannot work in. Three
+Tack checks what it can, and refuses cells it cannot work in. Four
 conditions matter.
 
 **Faces are wound outward.** Each face's points run counterclockwise seen
@@ -190,6 +190,12 @@ inside out and overlap the others. Concave cells are fine as long as this
 holds, as the dented cube shows. A C-shaped prism, whose points' mean lies
 in its notch, is not. The cell locator refuses such cells, and so do
 `probe` and advection, which use it.
+
+**A face belongs to at most two cells.** A face (an edge, in 2D) shared by
+three cells or more is refused when the faces are derived, whatever the
+cells are: polyhedra, polygons, shaped cells, or shaped cells beside
+polyhedra or polygons. So is a face two cells claim the same side of. VTK
+allows such non-manifold faces; Tack has no use for them yet (#308).
 
 **A warped face is its fan.** A face whose points do not lie in one plane is
 taken as the fan of triangles from its face point. Volumes, normals and
@@ -296,9 +302,8 @@ the same moved hexahedra cost this many times their time as hexahedra
 | `streamlines` | 1.3× | 1.6× |
 
 So keep shaped cells as shapes where you can. A VTK grid that mixes shapes
-and polyhedra can be read as two pieces over the same points with
-`vtk_to_dataset(grid, polyhedral="split")`: the shaped cells in one piece,
-the polyhedra in the other, each on its fastest path.
+and polyhedra reads that way by default: the polyhedra beside the shaped cells
+in one `UnstructuredTopology`, each cell on its fastest path.
 
 ### Limits
 

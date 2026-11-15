@@ -194,7 +194,7 @@ array accesses.
 | Space | Values | Interpolated | Topologies |
 |---|---|---|---|
 | `H1(data, order=1)` | one per point, shared by the cells around it; order 2 adds one per edge and quad face; order `p` (`basis=`) `p - 1` per edge, `(p - 1)^2` per quad face, `(p - 1)^d` per cell | yes, continuous | order 1 on all; order 2 on tetrahedra, hexahedra, voxels, wedges, triangles, quads and pixels; any order on segments, quads, pixels, hexahedra and voxels, and on triangles, tetrahedra and wedges with `nodes="equispaced"` (`(p - 1)(p - 2)/2` per triangle face, `(p - 1)(p - 2)(p - 3)/6` per tetrahedron, `(p - 1)^2 (p - 2)/2` per wedge) |
-| `L2(data, order=1)` | each cell's own copies: order 1 one per corner, order 0 one per cell; `order` may be an array, one order per cell; a tensor basis' values in blocks or cell-fastest (`layout=`, by device by default) | yes, discontinuous | shape-based |
+| `L2(data, order=1)` | each cell's own copies: order 1 one per corner, order 0 one per cell; `order` may be an array, one order per cell (0 to 15, in one `basis`, values in blocks); a tensor basis' values in blocks or cell-fastest (`layout=`, by device by default) | yes, discontinuous | shape-based |
 | `Constant(data)` | one per cell | yes, constant in the cell | all |
 | `Values(data, on, oriented=False)` | one per point, edge, face or cell: data about the entity, with no basis | no | all |
 | `SideTraces(data)` | per face, per side, per face point; made by `project` into it | through the face's shape | shape-based, 3D |
@@ -242,7 +242,8 @@ and `Constant`, as source and as target.
 |---|---|---|
 | `H1` (order 1 or 2) | the mean, over the cells around the node, of the source evaluated there | the source is continuous: a lower order comes across exactly |
 | `Constant`, order-0 `L2` | the source's average over the cell: its integral over the measure (`average="nodes"`: the mean of its nodes, as vtkPointDataToCellData) | the source is constant in the cell |
-| order-1 `L2` (or an order per cell) | the source's value at each corner (the cell's average at order 0) | the source's order is at most 1 |
+| order-1 `L2` | the source's value at each corner | the source's order is at most 1 |
+| `L2` of an order per cell | the source's value at each cell's nodes of its order (its average at order 0) | the source's order in the cell is at most the cell's |
 | `SideTraces` | each side's value from its cell | always |
 
 Where cells disagree -- cell data, DG data -- the `H1` mean is VTK's
@@ -1417,7 +1418,7 @@ so the paths are the whole mesh's, up to rounding, wherever a step
 a particle crosses by the short step to the boundary and the push out, so
 it differs by about a step. Pieces whose shared faces are not one surface
 (a hexahedron's bilinear face against a polyhedron's fanned one, in a
-`polyhedral="split"` reading) leave slivers that no piece holds: a particle
+deprecated `polyhedral="split"` reading) leave slivers that no piece holds: a particle
 pushed into one goes on from where the push would have ended going the way
 to the boundary again, if a piece holds that, the move counted in its time
 and length and drawn in its stretch. `advect` returns a `PartitionedDataSet` of the
@@ -1462,7 +1463,7 @@ surfaces search the bins as before, and polyhedra after their last cell.
 
 | Function | |
 |---|---|
-| `tack.interop.vtk.vtk_to_dataset(grid, dtype=tack.f32, polyhedral=None, orient=False, id_dtype=None, merge_points=None)` | a `vtkUnstructuredGrid`, `vtkPolyData` (as the unstructured grid of its cells; strips as their triangles), rectilinear grid or image (`vtkImageData`, as `UniformCoordinates`). Point data becomes `H1`, cell data `Constant`. A grid with polyhedra becomes polyhedral (`polyhedral=True` forces it); `orient` repairs inconsistent winding; `merge_points` (`True` or a tolerance) merges an unstructured grid's coincident points first |
+| `tack.interop.vtk.vtk_to_dataset(grid, dtype=tack.f32, polyhedral=None, orient=False, id_dtype=None, merge_points=None)` | a `vtkUnstructuredGrid`, `vtkPolyData` (as the unstructured grid of its cells; strips as their triangles), rectilinear grid or image (`vtkImageData`, as `UniformCoordinates`). Point data becomes `H1`, cell data `Constant`. A grid with polyhedra holds them beside its shaped cells, and polygons stand beside triangles and quads, in one `UnstructuredTopology` (`polyhedral="all"` makes every cell a polyhedron or polygon); `orient` repairs inconsistent winding; `merge_points` (`True` or a tolerance) merges an unstructured grid's coincident points first |
 | `tack.interop.vtk.dataset_to_vtk(data)` | back to VTK, polyhedra and polygons included |
 | (both) | a `vtkPartitionedDataSet` and a `PartitionedDataSet` convert piece by piece (null pieces skipped); a `vtkPartitionedDataSetCollection` and a `dict` of names to `PartitionedDataSet`s convert by `vtkCompositeDataSet.NAME()` (`"block<i>"` without one, `"<name>#<i>"` for a name taken) |
 | `tack.interop.mfem.mfem_to_dataset(mesh, fields=None, dtype=tack.f32, id_dtype=None)` | an MFEM mesh, curved at order 2 too, with its grid functions |

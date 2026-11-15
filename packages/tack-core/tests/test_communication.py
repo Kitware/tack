@@ -400,6 +400,82 @@ def test_routing_prefers_the_higher_rank_then_the_lower_block(cpu, second):
     assert routing.destination[0].tolist() == [1, 2, -1]
 
 
+def _brute_in_boxes(x, boxes):
+    from tack.communication._route import _widened
+
+    found = {}
+    for d, box in enumerate(boxes):
+        if box is not None:
+            lower, upper = _widened(tuple(np.asarray(c, np.float64) for c in box))
+            rows = np.flatnonzero(np.all((x >= lower) & (x <= upper), axis=1))
+            if len(rows):
+                found[d] = rows
+    return found
+
+
+def test_binned_box_tests_find_what_testing_every_box_finds():
+    """Past a few boxes, a point is tested only against the boxes of its cell on a
+    grid over them (``_route._in_boxes``): the same points in each box as testing
+    every point against every box, for boxes that overlap, nest, are flat or a
+    point, points on their faces and corners, and NaNs."""
+    from tack.communication._route import _in_boxes
+
+    rng = np.random.default_rng(0)
+    for trial in range(200):
+        dim = int(rng.choice([1, 2, 3]))
+        boxes = []
+        for _ in range(int(rng.integers(0, 40))):
+            if rng.random() < 0.1:
+                boxes.append(None)
+                continue
+            lower = rng.uniform(-5.0, 5.0, dim)
+            upper = lower if rng.random() < 0.1 else lower + rng.uniform(0.0, 4.0, dim)
+            boxes.append((lower, upper))
+        x = rng.uniform(-7.0, 7.0, (int(rng.integers(0, 2000)), dim))
+        corners = [b[i] for b in boxes if b is not None for i in (0, 1)]
+        if corners:
+            x = np.concatenate([x, np.array(corners)])
+        if len(x) and rng.random() < 0.3:
+            x[rng.integers(len(x))] = np.nan
+        binned = _in_boxes(x, [None if b is None else (np.asarray(b[0]), np.asarray(b[1]))
+                               for b in boxes])
+        brute = _brute_in_boxes(x, boxes)
+        assert binned.keys() == brute.keys(), trial
+        for d in brute:
+            assert np.array_equal(np.sort(binned[d]), brute[d]), (trial, d)
+
+
+def test_routing_over_many_blocks_in_one_process(cpu):
+    # 27 blocks tiling a cube, their boxes touching: each point to the lowest
+    # block holding it, as testing every box gives.
+    blocks = tc.Blocks([cpu] * 27)
+    boxes = {g: ((g % 3, g // 3 % 3, g // 9), (g % 3 + 1, g // 3 % 3 + 1, g // 9 + 1))
+             for g in range(27)}
+    rng = np.random.default_rng(1)
+    x = {g: np.zeros((0, 3)) for g in range(27)}
+    x[0] = np.concatenate([rng.uniform(-0.5, 3.5, (5000, 3)),
+                           rng.integers(0, 4, (200, 3)).astype(float)])   # grid corners
+    routing = tc.Routing(blocks, x, boxes, lambda g, p: np.ones(len(p), np.int32))
+    brute = _brute_in_boxes(x[0], [boxes[g] for g in range(27)])
+    expected = np.full(len(x[0]), -1)
+    for d in sorted(brute, reverse=True):
+        expected[brute[d]] = d
+    assert np.array_equal(routing.destination[0], expected)
+    arrived = routing.send()
+    for g in range(27):
+        assert np.array_equal(arrived[g][0], x[0][np.flatnonzero(expected == g)])
+
+
+def test_points_group_by_destination_in_order():
+    from tack.communication._route import _by_destination
+
+    destination = np.array([2, -1, 0, 2, 5, 0, -1, 2])
+    groups = _by_destination(destination)
+    assert [d for d, _ in groups] == [0, 2, 5]
+    assert [rows.tolist() for _, rows in groups] == [[2, 5], [0, 3, 7], [4]]
+    assert _by_destination(np.full(3, -1)) == []
+
+
 def test_gpu_aware_sends_copy_what_mpi_cannot_take(cpu, second):
     """``_direct``: an array whose memory the backend says MPI may not take as it
     is (HIP's stream-ordered pool) goes as a device copy in

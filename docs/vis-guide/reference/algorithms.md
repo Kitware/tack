@@ -290,6 +290,7 @@ New fields computed from a dataset's fields.
 | Algorithm | Gives | Takes | VTK | Viskores |
 |---|---|---|---|---|
 | [`gradients`](#tack.dataset.algorithms.gradients.gradients) | the gradient of a scalar or vector field, at cells or points | dataset | vtkGradientFilter | Gradient |
+| [`finite_differences`](#tack.dataset.algorithms.finite_differences.finite_differences) | the gradient or second derivatives of a field on an image, a rectilinear or a curvilinear grid, by differences of order 2, 4 or 6 | dataset | vtkGradientFilter (structured data) | — |
 | [`flow_quantities`](#tack.dataset.algorithms.flow_quantities.flow_quantities) | divergence, vorticity and Q-criterion from a velocity gradient | dataset | vtkGradientFilter | Gradient |
 | [`project`](#tack.dataset.algorithms.project.project) | a field moved into another space (cells to points, points to cells, ...) | dataset | vtkCellDataToPointData, vtkPointDataToCellData | PointAverage, CellAverage |
 | [`values_at_centers`](#tack.dataset.algorithms.values_at_centers.values_at_centers) | a field at each cell's parametric center | dataset | — | — |
@@ -302,6 +303,9 @@ New fields computed from a dataset's fields.
 | [`convert`](#tack.dataset.algorithms.convert.convert) | a field, or a dataset's field or geometry, in another unit | field, dataset | — | — |
 
 ::: tack.dataset.algorithms.gradients.gradients
+    options: {show_root_full_path: false}
+
+::: tack.dataset.algorithms.finite_differences.finite_differences
     options: {show_root_full_path: false}
 
 ::: tack.dataset.algorithms.flow_quantities.flow_quantities

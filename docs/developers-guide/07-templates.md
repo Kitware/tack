@@ -91,6 +91,33 @@ runtime_scalars = {"width": 512, "height": 512}  # instance scalars → runtime 
 This distinction avoids unnecessary JIT recompilation when only runtime
 values (like image dimensions) change between calls.
 
+### Inspecting an Object
+
+`tack.inspect_template` (`lang/inspect_template.py`) reports what
+classification finds, through the same functions, called so that they leave
+nothing behind:
+
+- `_classify_own(obj, read, remember)` and `_classify_tree` take the reader of
+  instance attributes. Lowering passes `getattr`; inspection passes one that
+  reads `vars(obj)` and returns `UNREAD` where a class property hides the
+  attribute, which is then left out.
+- `_class_constants(cls, remember=False)` uses the class's kept constant names
+  if lowering kept them, and otherwise finds them (`_scan_constant_names`)
+  without keeping them: a numeric attribute added to a class after its first
+  launch is not a constant, so keeping the names early would change what a
+  later compile sees.
+- `template_func_owners(cls)` is `template_func_methods` with each method's
+  defining class and whether it is static.
+- `CallBindings.lookup(node)` resolves a name by `resolve`'s rules without
+  reporting to the disk cache's recorder (`resolve` recurses through itself
+  and records each part, `module.f`'s module included).
+
+Inspection enters no `template_scope`, so the per-object memo is untouched.
+`tests/test_inspect_template.py` checks its classification against
+`classify_template_attrs` and that nothing is run or kept. A new kind of
+attribute belongs in both: classify it in `_classify_own`, and describe it in
+the report.
+
 ### Nested Templates
 
 A template may hold templates as instance attributes. `template_tree(obj)`

@@ -25,6 +25,7 @@ except _NotInstalled:          # a source tree that was never installed
     __version__ = "0+unknown"
 del _NotInstalled, _installed_version
 
+from tack._deprecation import TackDeprecationWarning
 from tack.lang.array import (
     Array,
     ExportedMemory,
@@ -52,6 +53,7 @@ from tack.lang.constant import constant
 from tack.lang.device_class import device_class
 from tack.lang.func import func
 from tack.lang.inspect_kernel import inspect
+from tack.lang.inspect_template import inspect_template
 from tack.lang.kernel import kernel
 from tack.lang.types import (
     ElementType,
@@ -225,6 +227,7 @@ __all__ = [
     "ExportedMemory",
     "ScalarType",
     "SoaArray",
+    "TackDeprecationWarning",
     "Texture3D",
     "arange",
     "array",
@@ -259,6 +262,7 @@ __all__ = [
     "i64",
     "identity",
     "inspect",
+    "inspect_template",
     "kernel",
     "local_array",
     "local_array_like",

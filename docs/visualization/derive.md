@@ -76,6 +76,53 @@ gradient, per point from a point gradient. See the reference for
 [`gradients`](../vis-guide/reference/algorithms.md#tack.dataset.algorithms.gradients.gradients)
 and [`flow_quantities`](../vis-guide/reference/algorithms.md#tack.dataset.algorithms.flow_quantities.flow_quantities).
 
+### Finite differences on grids
+
+On an image, a rectilinear or a curvilinear grid, `finite_differences(data,
+field)` takes the gradient by differences along the grid's index axes instead,
+of the field and of the positions alike, turned to world axes by the grid's own
+differences. At `order=2` that is what VTK's `vtkGradientFilter` does on
+structured data, and it gives VTK's values. It is much cheaper than
+`gradients(at="points")`, about 15 times on 17.6 million points of a
+curvilinear grid, and the right method for data sampled on a grid; `gradients`
+stays the one for finite element data. `order=4` and `order=6` take wider
+stencils, of five and seven points, and the error on a smooth field falls as the
+spacing to that power, edges included. `derivative=2` gives the second
+derivatives, the Hessian, 9 values per component.
+
+<!-- tack-check: finite-differences -->
+```python
+import numpy as np
+
+import tack
+import tack.dataset as td
+
+tack.set_default_device("cpu")
+
+data = td.uniform_grid((21, 21, 21), origin=(-1, -1, -1), spacing=(0.1, 0.1, 0.1),
+                       dtype=tack.f64, unit="m")
+x = data.positions()
+data.fields["T"] = td.Field(td.H1(data), tack.array(np.sin(x[:, 0]) * x[:, 1]), unit="K")
+
+grad_T = td.finite_differences(data, "T", order=4)        # one 3-vector per point
+hessian = td.finite_differences(data, "T", order=4, derivative=2)
+
+expected = np.c_[np.cos(x[:, 0]) * x[:, 1], np.sin(x[:, 0]), 0 * x[:, 0]]
+print(np.abs(grad_T.values.numpy() - expected).max() < 1e-4, grad_T.unit)  # True K/m
+print(hessian.unit)                                                         # K/m**2
+assert np.allclose(hessian.values.numpy()[:, 1], np.cos(x[:, 0]), atol=1e-4)
+```
+
+The differences assume a grid whose spacing varies smoothly. On spacing that
+jumps from one cell to the next, orders 4 and 6 amplify the jumps; order 2 is
+the safe choice there. A grid of two dimensions gives gradients in its plane.
+Point data is differenced over the points and cell data over the cells'
+centres. Hidden points (for point data) and hidden cells (for cell data) hold
+no values: the stencils stop at them as at the grid's edges, one-sided beside
+them, and their own derivatives are NaN. The cells of an AMR box that a finer
+level covers hold values and are differenced like the rest. See the reference for
+[`finite_differences`](../vis-guide/reference/algorithms.md#tack.dataset.algorithms.finite_differences.finite_differences).
+
 ### Other fields from fields
 
 Smaller filters compute a field from fields pointwise. Each returns a field in
@@ -90,9 +137,9 @@ its input's space, with a derived unit.
 | `log_values(data, field)` | the logarithm, in any base | `LogValues` |
 | `convert(data, unit, field)` | a field, or the geometry, in another unit | |
 
-`dot`, `cross` and `composite` need fields of one value type. VTK's
-`vtkArrayCalculator` has no counterpart: a formula of your own is a short
-kernel, as [write a mesh algorithm](write-a-mesh-algorithm.md) shows.
+`dot`, `cross` and `composite` need fields of one value type. A formula of
+your own, as VTK's `vtkArrayCalculator` writes one, is an expression of the
+`tack-expr` package: see [compute with expressions](expressions.md).
 
 ## Measure cells
 

@@ -61,3 +61,23 @@ def test_surface_normals_are_the_same_kept_or_not(backend):
         kept.fields["normals"].values
     with pytest.raises(ValueError):
         td.surface_normals(_solid())
+
+
+@pytest.mark.parametrize("volume", ["uniform", "tetrahedra with faces"])
+def test_a_boundary_from_the_faces_is_kept_too(backend, volume):
+    grid = td.uniform_grid((4, 3, 3), spacing=(0.5, 0.5, 0.5))
+    if volume == "uniform":
+        solid = grid
+    else:
+        solid = _solid()
+        td.face_geometry(solid)                      # its faces derived
+    solid.fields["f"] = td.Field(td.Values(solid, "faces"),
+                                 tack.array(np.arange(solid.topology.faces().num_faces,
+                                                      dtype=np.float32)))
+    first = td.extract_surface(solid)
+    again = td.extract_surface(solid)
+    assert again.geometry is first.geometry
+    assert td.surface_normals(again).fields["cell_normals"].values is \
+        td.surface_normals(first).fields["cell_normals"].values
+    np.testing.assert_array_equal(again.fields["f"].values.numpy(), first.fields["f"].values.numpy())
+    assert td.integrate(again).measure == pytest.approx(td.integrate(first).measure)

@@ -237,7 +237,7 @@ def test_the_loop_launches_while_a_read_waits(backend):
 
 
 @pytest.mark.usefixtures("no_debug")
-def test_sync_async_does_not_wait_for_later_launches(backend):
+def test_sync_async_does_not_wait_for_later_launches(backend, monkeypatch):
     """The mark is made when sync_async is called: a long launch another
     task queues while it waits is not waited for."""
     if not _queues(backend):
@@ -249,24 +249,42 @@ def test_sync_async_does_not_wait_for_later_launches(backend):
         pytest.skip("no launch long enough to measure here")
     iters, count = found
 
+    # Each wait's end as the worker that waited saw it. The loop learns of
+    # the early wait's end only after `_busy` returns, so timed on the loop
+    # it counted the queuing of every later launch too: on CI's hosted Mac
+    # it came out at 51-60% of the whole whatever the whole's length (30 of
+    # 50 ms, 38 of 62, 89 of 175; 2026-11-09 to 11-12).
+    returned = []
+    off_loop = aio._off_loop
+
+    async def timed(fn):
+        def wait():
+            try:
+                return fn()
+            finally:
+                returned.append(time.perf_counter())
+        return await off_loop(wait)
+
+    monkeypatch.setattr(aio, "_off_loop", timed)
+
     async def main(count):
+        returned.clear()
         _ramp(short, 1.0)
         waiter = asyncio.create_task(tack.sync_async())
         await asyncio.sleep(0)               # the waiter runs up to its await: marked
         t0 = time.perf_counter()
         _busy(out, iters, count)             # queued after the mark
         await waiter
-        early = time.perf_counter() - t0
         await tack.sync_async()
-        return early, time.perf_counter() - t0
+        early, whole = returned
+        return early - t0, whole - t0
 
     def once(count):
         early, whole = asyncio.run(main(count))
         return (early, whole), (whole,)
 
     # The later launches lasted 62 ms in all on CI's hosted Mac, against the
-    # 150 ms calibrated, and the early wait's 38 ms of overhead was then over
-    # half of them (2026-11-09): they are made to last `_MIN_WAIT` first.
+    # 150 ms calibrated (2026-11-09): they are made to last `_MIN_WAIT` first.
     early, whole = _long_enough(once, count)
     assert early < 0.5 * whole, (early, whole)
 

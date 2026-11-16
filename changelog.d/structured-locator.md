@@ -11,3 +11,9 @@
   `neighbors=True` changes nothing, as the search is as cheap as the walk.
   `levels=1` or `levels=2` still bins the cells; `levels` now defaults to
   `None` (#371).
+
+### Added
+
+- `UniformCoordinates.index_to_world`: an image's origin and its index axes'
+  steps (its direction times its spacing), in f64 on the host, for code that
+  maps between positions and index coordinates.

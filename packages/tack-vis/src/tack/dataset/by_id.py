@@ -584,6 +584,23 @@ class _MeshSearch:
 
     def __init__(self, cells, present, positions, locator, tolerance, neighbors=None,
                  curved=None):
+        self._hold_cells(cells, present, positions, locator, tolerance, neighbors, curved)
+        locator._boxes()
+        self.lo = locator.lo
+        self.hi = locator.hi
+        self.bin_offsets, self.bin_cells = locator.cell_bins()
+        self.leaf_dims, self.leaf_starts = locator.leaves()
+        (self.ox, self.oy, self.oz, self.ix, self.iy, self.iz,
+         self.nx, self.ny, self.nz) = locator._coarse_grid()
+        self.slack = float(locator.slack)
+        if isinstance(cells, _PolyhedralMesh):
+            self.FANNED = 1
+
+    def _hold_cells(self, cells, present, positions, locator, tolerance, neighbors,
+                    curved=None):
+        """What every search holds however it finds its candidates: the cells,
+        their kinds, the shapes' functions, the positions, the tolerance and the
+        face neighbours. A new shape goes here, for both searches."""
         self.cells = cells
         self.curved = curved if curved is not None else _NoCurves()
         if curved is not None:
@@ -598,21 +615,11 @@ class _MeshSearch:
         self.quad = shapes.Quad()
         self.pixel = shapes.Pixel()
         self.positions = positions
-        locator._boxes()
-        self.lo = locator.lo
-        self.hi = locator.hi
-        self.bin_offsets, self.bin_cells = locator.cell_bins()
-        self.leaf_dims, self.leaf_starts = locator.leaves()
-        (self.ox, self.oy, self.oz, self.ix, self.iy, self.iz,
-         self.nx, self.ny, self.nz) = locator._coarse_grid()
-        self.slack = float(locator.slack)
         self.tolerance = float(tolerance)
         self.ncells = locator.data.num_cells
         self.neighbors = neighbors if neighbors is not None else tack.zeros((1,), tack.i32)
         if neighbors is not None:
             self.NEIGHBORS = 1
-        if isinstance(cells, _PolyhedralMesh):
-            self.FANNED = 1
 
     @tack.func
     def find(self, p):
@@ -924,26 +931,10 @@ class _GridSearch(_MeshSearch):
 
     def __init__(self, cells, present, positions, locator, tolerance, neighbors=None):
         grid = locator.structured
-        self.cells = cells
-        self.curved = _NoCurves()
-        self.kinds = _kinds(present)
-        self.tetra = shapes.Tetra()
-        self.hexa = shapes.Hexahedron()
-        self.wedge = shapes.Wedge()
-        self.pyramid = shapes.Pyramid()
-        self.voxel = shapes.Voxel()
-        self.triangle = shapes.Triangle()
-        self.quad = shapes.Quad()
-        self.pixel = shapes.Pixel()
-        self.positions = positions
+        self._hold_cells(cells, present, positions, locator, tolerance, neighbors)
         # The element type of the corners' local array (and _MeshSearch's boxes).
         self.lo = tack.zeros((1,), tack.vec(3, locator.data.dtype))
         self.hi = self.lo
-        self.tolerance = float(tolerance)
-        self.ncells = locator.data.num_cells
-        self.neighbors = neighbors if neighbors is not None else tack.zeros((1,), tack.i32)
-        if neighbors is not None:
-            self.NEIGHBORS = 1
         self.cx, self.cy, self.cz = grid.cells
         if len(locator.data.topology.point_dims) == 2:
             self.DIMENSION = 2

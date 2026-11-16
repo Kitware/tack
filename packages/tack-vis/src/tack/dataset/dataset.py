@@ -38,7 +38,7 @@ import tack
 from tack import arrays
 from tack.algorithms.sort import _run_offsets, argsort, gather
 from tack.arrays import CartesianProduct, UniformCoordinates
-from tack.dataset import bases, shapes, units, views
+from tack.dataset import bases, kinds, shapes, units, views
 from tack.dataset.sets import Sets
 from tack.dataset.spaces import H1, L2, Space
 from tack.runtime.dispatch import as_device, backend_of, get_backend, on_inputs_device, same_device
@@ -56,6 +56,11 @@ class Field:
     meaning, which kernels never see. Filters that keep a quantity keep its
     unit; anything else gives ``None`` rather than a guess.
 
+    ``kind`` is what the values are (``tack.dataset.Kind``, or a registered name
+    such as ``"Pressure"``; ``tack.dataset.kinds``), ``None`` for unknown. The unit
+    must have its dimensions, and the space's values its rank. No filter reads a
+    kind yet.
+
     ``gradient``, a field on the same topology, is its world gradient where something
     other than its basis gives it, such as a solver's own reconstruction: 3 values
     each for a scalar, 3k row by row for a vector of k components (``gradients``'
@@ -63,7 +68,7 @@ class Field:
     at the point asked for as that field's view evaluates it; the Hessian, which a
     gradient does not determine, is NaN."""
 
-    def __init__(self, space, values, unit=None, gradient=None):
+    def __init__(self, space, values, unit=None, gradient=None, kind=None):
         if not isinstance(space, Space):
             raise TypeError(f"a field's space is a Space on a topology, not {space!r}")
         views.storage(values)                       # refuses what is not an array
@@ -84,11 +89,17 @@ class Field:
                 raise ValueError(f"a field of {width} components has a gradient of {3 * width}, "
                                  f"not {arrays.width_of(gradient.values) or 1}")
         self.gradient = gradient
+        self._kind = _checked_kind(kinds.coerce(kind), space, values, self._unit)
 
     @property
     def unit(self):
         """The values' unit, a string, or ``None`` if unknown."""
         return self._unit
+
+    @property
+    def kind(self):
+        """What the values are, a ``tack.dataset.Kind``, or ``None`` if unknown."""
+        return self._kind
 
     @property
     def _device(self):
@@ -114,7 +125,26 @@ class Field:
         stored = repr(values) if isinstance(values, arrays._Implicit) else "stored"
         unit = "" if self._unit is None else f", in {self._unit}"
         given = "" if self.gradient is None else ", with its gradient"
-        return f"Field({self.space!r}, {arrays.size_of(values)} values, {stored}{unit}{given})"
+        kind = "" if self._kind is None else f", a {self._kind!r}"
+        return (f"Field({self.space!r}, {arrays.size_of(values)} values, {stored}{unit}{kind}"
+                f"{given})")
+
+
+def _checked_kind(kind, space, values, unit):
+    """``kind``, checked against the field's unit (its dimensions) and its values
+    (its rank: a vector in ``HDiv`` or ``HCurl`` whatever their width)."""
+    if kind is None:
+        return None
+    if not units.same_dimensions(unit, kind.reference_unit):
+        raise ValueError(f"a {kind.name} is in units like {kind.reference_unit!r}, not "
+                         f"{unit!r}")
+    from tack.dataset.vector_spaces import HCurl, HDiv
+
+    width = arrays.width_of(values) or 1
+    if not kinds.width_fits(kind.rank, width, isinstance(space, (HDiv, HCurl))):
+        raise ValueError(f"a {kind!r} cannot have values of {width} component"
+                         f"{'s' if width != 1 else ''} in {space!r}")
+    return kind
 
 
 def _is_cells(group):
@@ -839,7 +869,7 @@ class DataSet:
             if isinstance(space, L2) and space.layout != field.space.layout:
                 values = _relaid(values, field.space, space)      # "auto" chose another
             gradient = None if field.gradient is None else moved(field.gradient)
-            return Field(space, values, field.unit, gradient=gradient)
+            return Field(space, values, field.unit, gradient=gradient, kind=field.kind)
 
         sets = {name: Set._from_sorted_ids(topology, s.on, s.ids.to_device(target))
                 for name, s in self.sets.items()}

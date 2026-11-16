@@ -22,6 +22,7 @@ algorithms that work on them are in [Algorithms](algorithms.md).
 - [Filters of your own](#filters-of-your-own): `carry` and its maps, ghost
   marks, hidden cells, owned values
 - [Units](#units): parameters as quantities, units of what a filter computes
+- [Kinds](#kinds): what a field's values are, beside their unit
 - [Interoperability](#interoperability): VTK, MFEM, Warp
 
 ## Datasets and fields
@@ -225,6 +226,19 @@ of powers, `units.named` for the SI name. Unknown in, unknown out: `None`,
 never a guess.
 
 ::: tack.dataset.units
+
+## Kinds
+
+A field's kind says what its values are, beside the unit they are in: the
+quantity's name, its rank, whether it is intensive or extensive, its parity
+and how it turns under a linear map. Every part is optional; a name fills the
+rest from the registry (CGNS's data names), and a field checks its kind
+against its unit and values. No filter reads a kind yet: the plan for what
+each will do is `docs/design/plans/field-quantities.md`.
+
+::: tack.dataset.Kind
+
+::: tack.dataset.kinds
 
 ## Interoperability
 

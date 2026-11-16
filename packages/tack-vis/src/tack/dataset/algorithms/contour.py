@@ -659,8 +659,12 @@ def _triangle_parts(data, field, levels, nlevels, merge_points):
                         counts)
     starts, triangles = _scanned(counts, n_cells, odt)
     # Points named by their edge (a continuous field numbered by point, on an H1
-    # geometry): each corner keeps its name alone.
-    if not per_cell and (not isinstance(space, H1) or space.dofs is None):
+    # geometry): each corner keeps its name alone, and each point is computed from
+    # the field's and the geometry's values at the points. Only H1 without a table
+    # stores those, first: an evaluated space's values are placeholders, and a
+    # table numbers the values by cell.
+    if (not per_cell and isinstance(space, H1) and space.dofs is None
+            and data.geometry.space.dofs is None):
         keys = tack.empty((3 * triangles,), tack.vec(2, kdt))
         triangle_cells = tack.empty((triangles,), idt)
         triangle_levels = tack.empty((triangles,), tack.i32)

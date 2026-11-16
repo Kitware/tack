@@ -115,14 +115,24 @@ carry it component by component.
 *Recommended*, as the answer to #459. Other: keep #459's unit per component
 and leave quantities whole-field only.
 
-### D4. Frame and component basis: assumed, not stored
+### D4. Frames: the geometry's and a field's, later
 
-Every vector and tensor is in the dataset's global Cartesian frame, as today.
-A field in another frame (a rotating frame's relative velocity, cylindrical
-components) is converted on the way in. The record leaves room for a `frame`
-later.
+Every vector and tensor is in the dataset's global Cartesian frame for now,
+and a field in another frame (a rotating frame's relative velocity,
+cylindrical components) is converted on the way in. A frame, when it comes,
+is its own object: a parent, a transform to it and a kind (Cartesian,
+cylindrical, spherical), so frames nest (a blade's in a rotor's in the
+lab's). The geometry has one, which `DataSet.origin` and an image's direction
+matrix begin; a vector or tensor field has one, the geometry's unless given.
+`transform` is then a change of frame, by D2's rank and parity.
 
-*Recommended: assume and document now; store later if a reader needs it.*
+A frame is not part of a quantity, but a moving frame needs both: between a
+rotating frame and the lab, a velocity gains the frame's
+angular velocity crossed with the position, and a force or a stress only
+turns. The kind says how a value changes; the frame says which frame it is in.
+
+*Recommended: assume global Cartesian now, and place frames as above for a
+later plan.*
 
 ### D5. The registry
 

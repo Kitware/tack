@@ -16596,7 +16596,9 @@ velocity's speed is at or below it, before another step, the seed included
 <code>neighbors=True</code> tries the face neighbours of the cell a particle was last
 found in before searching the locator's bins: the same particles, bit for
 bit, in about half the time on large meshes, for a table of six ids a cell
-kept with the locator (<code>CellLocator.cell_neighbors</code>).</p>
+kept with the locator (<code>CellLocator.cell_neighbors</code>). On an image or a
+rectilinear grid it changes nothing: the locator finds cells by
+arithmetic there, as cheaply, and builds no table.</p>
 <p><code>seeds</code> may also be what <code>advect</code> returned: the particles go on from
 where they stopped, with their times and the steps they took (<code>steps</code>
 counts those too), and a particle that stopped -- its steps done, at zero
@@ -16684,7 +16686,9 @@ a CPU core: below a few thousand seeds a CPU copy of the mesh is faster
 <span class="normal">86</span>
 <span class="normal">87</span>
 <span class="normal">88</span>
-<span class="normal">89</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">89</span>
+<span class="normal">90</span>
+<span class="normal">91</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">advect</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">,</span> <span class="n">seeds</span><span class="p">,</span> <span class="n">step_size</span><span class="p">,</span> <span class="n">steps</span><span class="p">,</span> <span class="n">integrator</span><span class="o">=</span><span class="s2">&quot;rk4&quot;</span><span class="p">,</span> <span class="n">locator</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
            <span class="n">step_unit</span><span class="o">=</span><span class="s2">&quot;time&quot;</span><span class="p">,</span> <span class="n">tolerance</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">min_step</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">max_step</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">max_length</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
            <span class="n">neighbors</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">terminal_speed</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
@@ -16706,7 +16710,9 @@ a CPU core: below a few thousand seeds a CPU copy of the mesh is faster
 <span class="sd">    ``neighbors=True`` tries the face neighbours of the cell a particle was last</span>
 <span class="sd">    found in before searching the locator&#39;s bins: the same particles, bit for</span>
 <span class="sd">    bit, in about half the time on large meshes, for a table of six ids a cell</span>
-<span class="sd">    kept with the locator (``CellLocator.cell_neighbors``).</span>
+<span class="sd">    kept with the locator (``CellLocator.cell_neighbors``). On an image or a</span>
+<span class="sd">    rectilinear grid it changes nothing: the locator finds cells by</span>
+<span class="sd">    arithmetic there, as cheaply, and builds no table.</span>
 
 <span class="sd">    ``seeds`` may also be what ``advect`` returned: the particles go on from</span>
 <span class="sd">    where they stopped, with their times and the steps they took (``steps``</span>

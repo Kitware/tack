@@ -3,7 +3,7 @@
 **Status: proposed.** Issue [#323](https://github.com/Kitware/tack/issues/323),
 2026-11-10. Berk Geveci has said yes to every recommendation (D1–D6); this
 is for review by the others. Revised 2026-11-16 after Jeff Lee's review, for
-in-situ use: a caller's own structure is no longer sealed (D2), writes Tack
+in-situ use: a caller's own structure is handed over, not sealed (D2), writes Tack
 cannot see have an explicit call (D4), a sender may keep its buffer (D5), and
 the seal's limit at DLPack is stated (D1).
 
@@ -11,8 +11,10 @@ the seal's limit at DLPack is stated (D1).
 
 The structure Tack builds (a topology's derived faces, edges and links, its
 spaces' tables) becomes read-only once it is built, for every array over that
-memory, not just one. Structure a caller passes in stays the caller's to
-write, through its own arrays, and the topology notices when it changes.
+memory, not just one. Arrays a caller passes to a constructor are handed
+over: read-only to whoever holds them, unless the caller passed a read-only
+view and kept the original, as a solver does in situ; the topology then
+notices the owner's writes.
 Values (positions, field values, ghost marks) stay writable, and every cache
 derived from them notices when they change. An array sent through
 `tack.communication` becomes read-only to its sender unless it asks to keep
@@ -109,29 +111,50 @@ Sealed when built, the structure Tack itself makes:
 - **Implicit arrays** have no buffer; sealing one seals the stored arrays it
   holds.
 
-**A caller's arrays are not sealed.** Constructors keep the arrays they are
-given, without a copy, and in situ those are often a solver's own (its mesh
-in Tack arrays, wrapped as a topology for analysis and remeshed or refined
-in place between steps). A seal is one-way, so sealing them would lock the
-solver out of its own memory for good, even after the topology is dropped,
-and copying would cost the GPU memory in situ cannot spare. Instead:
+**A caller's arrays are handed over, not sealed.** Constructors keep the
+arrays they are given, without a copy, and in situ those are often a
+solver's own (its mesh in Tack arrays, wrapped as a topology for analysis and
+remeshed or refined in place between steps). A seal is one-way and holds the
+memory, so sealing them would lock the solver out of its own memory for
+good, even after the topology is dropped, and copying would cost the GPU
+memory in situ cannot spare. The per-array flag (`_writable`) is the right
+tool instead: it belongs to one `Array` object, so it marks who holds the
+memory, not the memory itself.
 
-- the topology holds its own **read-only view** of each array it is given
-  (the per-array `_writable`), so no filter writes through it, while the
-  caller's array object stays writable;
-- the topology records the **revision** (`arrays._revision`) of the arrays it
-  was given, and every structural cache it keeps checks it on use: one check
-  for the topology, not one per cache. When it has moved, the topology drops
-  its derived structure (sealed arrays included, which are rebuilt, not
-  written) and rebuilds on demand, as D4's value caches do.
+- **`Array.read_only()`**, public: a view over the same memory that cannot
+  write, nor can any view made from it. No copy. Today only
+  `array_from_ptr` and read-only DLPack imports make such arrays.
+- **Giving an array to a constructor hands it over**, as D5's sending does:
+  the object given becomes read-only to its caller. So the bug above is
+  still caught at the write: `connectivity.fill(0)` after building the
+  topology is refused, with a message to copy the array, or to pass
+  `connectivity.read_only()` and keep the original.
+- **In situ, the solver keeps the only writable handle.** It passes
+  `conn.read_only()` and keeps `conn`, writing it to remesh in place. Every
+  array Tack gives out (`topology.connectivity`, groups' rows, point links'
+  keys, which are views of it) is read-only, so analysis code cannot write
+  the simulation's mesh by mistake.
+- **The topology notices the owner's writes.** It records the revision
+  (`arrays._revision`) of the arrays it was given, and every structural
+  cache it keeps checks it on use: one check for the topology, not one per
+  cache. When it has moved, the topology drops its derived structure and
+  rebuilds it on demand, as D4's value caches do. Writes the owner makes
+  outside Tack's view need D4's explicit call.
 
-So the bug above gives the right answer instead of a refusal: after
-`connectivity.fill(0)`, `extract_surface` rebuilds the faces. A store to the
-derived faces' rows, which Tack made, is still refused. Writes the caller
-makes outside Tack's view need D4's explicit call.
+Derived arrays that are views of a given array (a single-shape group's rows,
+`point_links`' keys, an `L2` space's offsets) take its read-only view; only
+memory Tack allocated for them is sealed, so a seal never reaches a caller's
+buffer. A store to derived structure Tack made is still refused at the
+write.
 
-A write to derived structure is a **breaking change**, for the changelog,
-though nothing in Tack, its tests or its guides makes one (the prototype).
+The handing over limits itself as D5's does: other objects over the same
+memory made before it (a `reshape` kept from earlier, a DLPack export) can
+still write.
+
+Both are **breaking changes**, for the changelog: writing an array after
+building a topology from it, and writing derived structure. Nothing in Tack,
+its tests or its guides does either (the prototype, which sealed the
+caller's arrays outright).
 
 *Recommended.*
 
@@ -176,6 +199,13 @@ buffer as Tack's own writes are counted, so every revision-tracked cache, and
 D2's topology check, notices. The in-situ documentation says to call it on
 each array written outside Tack, each step. D6's checks are the safety net
 for a forgotten call.
+
+**Protecting a simulation's values.** Values stay writable in stage 1, but
+D2's `read_only()` lets an in-situ adaptor protect them with no copy: it
+wraps the solver's arrays as `Field(space, u.read_only())` (and positions
+alike), so a filter or a script cannot `fill` the simulation's velocity by
+mistake, while the solver writes `u` each step and the caches notice. The
+in-situ documentation shows this as the pattern.
 
 *Recommended.*
 
@@ -289,16 +319,17 @@ smaller than the inventory suggested.
   some value (geometry first) should be sealed before stage 3 is open.
 - **CuPy.** Whether it honours, ignores or refuses DLPack's read-only flag is
   unchecked (it needs a CUDA machine). D1 holds whichever it does.
-- **Not prototyped:** D2's split between Tack's structure and a caller's
-  (the prototype sealed the caller's arrays too), `Array.modified()` and
+- **Not prototyped:** D2's handing over and `Array.read_only()` (the
+  prototype sealed the caller's arrays outright), `Array.modified()` and
   `exchange(keep=True)`.
 
 ## Order
 
 Each step is its own pull request, linking this plan:
 
-1. D1 and D2, the seal and where it applies, the topology's check of the
-   arrays it was given, and D3's properties.
+1. D1 and D2, the seal and where it applies, `Array.read_only()` and the
+   handing over, the topology's check of the arrays it was given, and D3's
+   properties.
 2. D4, the value caches' revisions, with a test per cache, and
    `Array.modified()`.
 3. D5, sent arrays, with `keep=True`.

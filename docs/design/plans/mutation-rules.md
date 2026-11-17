@@ -2,16 +2,21 @@
 
 **Status: proposed.** Issue [#323](https://github.com/Kitware/tack/issues/323),
 2026-11-10. Berk Geveci has said yes to every recommendation (D1–D6); this
-is for review by the others.
+is for review by the others. Revised 2026-11-16 after Jeff Lee's review, for
+in-situ use: a caller's own structure is no longer sealed (D2), writes Tack
+cannot see have an explicit call (D4), a sender may keep its buffer (D5), and
+the seal's limit at DLPack is stated (D1).
 
 ## Summary
 
-A dataset's structure (its topology's ids, its spaces' tables) becomes
-read-only once it is built, for every array over that memory, not just one.
+The structure Tack builds (a topology's derived faces, edges and links, its
+spaces' tables) becomes read-only once it is built, for every array over that
+memory, not just one. Structure a caller passes in stays the caller's to
+write, through its own arrays, and the topology notices when it changes.
 Values (positions, field values, ghost marks) stay writable, and every cache
 derived from them notices when they change. An array sent through
-`tack.communication` becomes read-only to its sender. Nothing is copied:
-sharing memory with other libraries stays as it is.
+`tack.communication` becomes read-only to its sender unless it asks to keep
+it. Nothing is copied: sharing memory with other libraries stays as it is.
 
 This is the first stage of a longer direction: a completed dataset immutable
 until it is explicitly reset. Stage 1 does not make values immutable, does not
@@ -71,6 +76,15 @@ it. A copy is writable. DLPack exports of sealed memory are flagged read-only.
 Writes Tack does not make (VTK writing memory it shares with Tack) are not
 refused: they remain under the interop protocol, as today.
 
+**The seal stops at DLPack.** The flag reaches only a consumer that asks for
+DLPack 1.0 (`max_version`); the legacy protocol cannot carry it, so such a
+consumer gets the memory as writable. Consumers that get the flag differ:
+NumPy 2.4 makes a read-only array, while PyTorch 2.15 accepts the capsule
+and ignores the flag, so a write through the tensor reaches the sealed memory
+(checked 2026-11-16). No consumer refuses it. Exporting sealed structure stays
+zero-copy; what a consumer then writes is its own violation, outside D1, for
+D6's checks.
+
 The cost is one attribute read per array a kernel may store to, per call, on
 the dispatch fast path.
 
@@ -78,11 +92,12 @@ the dispatch fast path.
 
 ### D2. What is sealed, and when
 
-Sealed when built:
+Sealed when built, the structure Tack itself makes:
 
-- **Topologies' stored arrays**, at the end of their constructors: types,
-  offsets, connectivity; polyhedra's face and cell arrays; polygons' loops;
-  polylines' lines.
+- **Topologies' stored arrays that Tack allocated**, at the end of their
+  constructors: a topology a filter or reader makes (types, offsets,
+  connectivity; polyhedra's face and cell arrays; polygons' loops; polylines'
+  lines), and arrays a constructor converts or copies.
 - **Derived structural arrays**, after their last construction write: faces
   and edges and their sides, point links, cell points, groups' rows, matched
   polygon facets, polyline ends, contour's sides, the boundary surface's
@@ -94,13 +109,29 @@ Sealed when built:
 - **Implicit arrays** have no buffer; sealing one seals the stored arrays it
   holds.
 
-Constructors keep the caller's arrays, so **the caller's arrays are sealed
-too**: code that builds a topology from an array and then writes that array
-must copy it first. Copying in the constructor instead would cost memory and
-break zero-copy sharing with VTK; refusing the write is what catches the bug
-above.
+**A caller's arrays are not sealed.** Constructors keep the arrays they are
+given, without a copy, and in situ those are often a solver's own (its mesh
+in Tack arrays, wrapped as a topology for analysis and remeshed or refined
+in place between steps). A seal is one-way, so sealing them would lock the
+solver out of its own memory for good, even after the topology is dropped,
+and copying would cost the GPU memory in situ cannot spare. Instead:
 
-This is a **breaking change**, for the changelog.
+- the topology holds its own **read-only view** of each array it is given
+  (the per-array `_writable`), so no filter writes through it, while the
+  caller's array object stays writable;
+- the topology records the **revision** (`arrays._revision`) of the arrays it
+  was given, and every structural cache it keeps checks it on use: one check
+  for the topology, not one per cache. When it has moved, the topology drops
+  its derived structure (sealed arrays included, which are rebuilt, not
+  written) and rebuilds on demand, as D4's value caches do.
+
+So the bug above gives the right answer instead of a refusal: after
+`connectivity.fill(0)`, `extract_surface` rebuilds the faces. A store to the
+derived faces' rows, which Tack made, is still refused. Writes the caller
+makes outside Tack's view need D4's explicit call.
+
+A write to derived structure is a **breaking change**, for the changelog,
+though nothing in Tack, its tests or its guides makes one (the prototype).
 
 *Recommended.*
 
@@ -137,6 +168,15 @@ out. An octree's host copies of its tree are structure, sealed under D2.
 And one the other way: a locator's cell neighbours depend on structure only,
 but are rebuilt whenever the values change; they move to the topology.
 
+**Writes Tack cannot see** (a solver or a Catalyst adaptor writing positions
+or fields through DLPack or `wrap_ptr`, every step) move no revision, so a
+cached locator would serve the old points. Stage 1 adds an explicit call,
+`Array.modified()` (VTK's `Modified()`), which counts a write to the array's
+buffer as Tack's own writes are counted, so every revision-tracked cache, and
+D2's topology check, notices. The in-situ documentation says to call it on
+each array written outside Tack, each step. D6's checks are the safety net
+for a forgotten call.
+
 *Recommended.*
 
 ### D5. Sent arrays are read-only to the sender
@@ -150,9 +190,19 @@ ownership moving, not immutability, so it is the per-array flag
 (`_writable`), not D1's buffer seal, which would lock the receiver too. Its
 limit: views of the sent array made before sending can still write.
 
-A sender that reuses one send buffer step after step now gets an error: a
-**breaking change**. Nothing in Tack does (`Plan.run` gathers into a fresh
-array per send).
+Reusing one send buffer step after step is the normal pattern for a
+solver's halo exchange, and the hazard is narrower than the whole of
+`exchange`: across ranks, `exchange` waits for every request before it
+returns, so the receiver holds its own copy and the sender may write its
+buffer again. Only a same-rank receiver (and the threaded test world) gets
+the sender's memory. So `exchange` takes **`keep=True`**: the sender keeps
+its arrays writable, and a same-rank receiver gets a copy instead of the
+sender's memory. That is the supported pattern for reused send buffers, at
+the cost of a copy on the same rank only.
+
+Without `keep`, a sender that writes a sent array gets an error naming
+`keep=True`: a **breaking change**. Nothing in Tack reuses one (`Plan.run`
+gathers into a fresh array per send).
 
 *Recommended.*
 
@@ -237,12 +287,19 @@ smaller than the inventory suggested.
   a set's ids instead would be simpler, but forbids editing a set in place.
 - **Geometry.** Stage 1 leaves positions writable, as every value. Whether
   some value (geometry first) should be sealed before stage 3 is open.
+- **CuPy.** Whether it honours, ignores or refuses DLPack's read-only flag is
+  unchecked (it needs a CUDA machine). D1 holds whichever it does.
+- **Not prototyped:** D2's split between Tack's structure and a caller's
+  (the prototype sealed the caller's arrays too), `Array.modified()` and
+  `exchange(keep=True)`.
 
 ## Order
 
 Each step is its own pull request, linking this plan:
 
-1. D1 and D2, the seal and where it applies, with D3's properties.
-2. D4, the value caches' revisions, with a test per cache.
-3. D5, sent arrays.
+1. D1 and D2, the seal and where it applies, the topology's check of the
+   arrays it was given, and D3's properties.
+2. D4, the value caches' revisions, with a test per cache, and
+   `Array.modified()`.
+3. D5, sent arrays, with `keep=True`.
 4. This plan's status: done, with what changed on the way.

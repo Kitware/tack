@@ -95,6 +95,10 @@ class _NoPolyhedra:
         return -1, p - p, 0
 
     @tack.func
+    def locate_held(self, e, p, slack, near):
+        return -1, p - p, 0
+
+    @tack.func
     def tet_value_of(self, field, e, t, pc):
         return field.values[0]
 
@@ -113,6 +117,13 @@ class _FannedCells:
     @tack.func
     def fanned(self, e):
         return 1
+
+    @tack.func
+    def locate_held(self, c, x, slack, near):
+        """``locate``, where the nearest piece is wanted only if ``near`` is 1: a
+        polygon or polyline seeks both at once, so it gives both always."""
+        t, pc, inside = self.locate(c, x, slack)
+        return t, pc, inside
 
     @tack.func
     def point_position(self, p):
@@ -169,7 +180,14 @@ class _PolyhedralMesh(_FannedCells, views._PolyhedralLocation, views._Polyhedral
     def locate(self, c, x, slack):
         """``_PolyhedralLocation.locate`` from its cell point; a cell the locator found
         no kernel for (``moved_cell_points``' -2) holds nothing."""
-        t, pc, inside = self.locate_from(c, self.cell_point(c), x, slack)
+        t, pc, inside = self.locate_held(c, x, slack, 1)
+        return t, pc, inside
+
+    @tack.func
+    def locate_held(self, c, x, slack, near):
+        """``locate``, seeking the nearest sub-tetrahedron only where ``near`` is 1
+        (``_PolyhedralLocation.locate_held_from``)."""
+        t, pc, inside = self.locate_held_from(c, self.cell_point(c), x, slack, near)
         skipped = self.moved_starts[c] if self.MOVED == 1 else -1
         if skipped == -2:
             t = -1
@@ -295,6 +313,12 @@ class _PolylineMesh(views._PolylineLocation, views._PolyhedralWalk, views._Polyl
     @tack.func
     def fanned(self, e):
         return 1
+
+    @tack.func
+    def locate_held(self, c, x, slack, near):
+        """``locate``, as ``_FannedCells.locate_held``."""
+        t, pc, inside = self.locate(c, x, slack)
+        return t, pc, inside
 
     @tack.func
     def point_position(self, p):
@@ -680,7 +704,7 @@ class _MeshSearch:
         a = self.lo[e]
         c = self.hi[e]
         s = self.tolerance * (c - a).norm()
-        tet, tpc, held = self.cells.locate(e, p, s)
+        tet, tpc, held = self.cells.locate_held(e, p, s, 0)
         found = self.ncells
         kind = 0
         pc = p - p
@@ -771,7 +795,10 @@ class _MeshSearch:
                         # No parametric coordinates: a piece of the cell's fan (a
                         # polyline's segment) and the point's place in it, within
                         # the cell's tolerance.
-                        tet, tpc, held = self.cells.locate(e, p, s)
+                        # The nearest piece only where it could rank: not
+                        # once a cell holding p is found.
+                        near = 1 if e + self.ncells < best_rank else 0
+                        tet, tpc, held = self.cells.locate_held(e, p, s, near)
                         if tet >= 0:
                             rank = e if held == 1 else e + self.ncells
                             if rank < best_rank:

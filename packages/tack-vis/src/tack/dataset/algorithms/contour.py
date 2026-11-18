@@ -483,16 +483,12 @@ def contour(data, field, value, merge_points=True, fields=None, dimension=None,
     each came from.
     """
     value = _in_unit_of(_field(data, field), value, "contour's value")
-    from tack.dataset.algorithms import _flying_edges
     from tack.dataset.ghosts import visible
 
     # Flying edges leaves hidden and refined cells out in place; elsewhere the
     # rest are extracted, a structured grid's into unstructured cells.
-    # (A sheet's lines share their points whatever merge_points says.)
-    top = data.topology.dimension
-    if not ((merge_points or top == 2) and dimension in (None, top) and subdivision is None
-            and tolerance is None
-            and _flying_edges.serves(data, _with_basis(data, _field(data, field)))):
+    flying = _by_flying_edges(data, field, merge_points, dimension, subdivision, tolerance)
+    if not flying:
         data, field = visible(data, field)
     field = _field(data, field)
     space = field.space
@@ -524,6 +520,9 @@ def contour(data, field, value, merge_points=True, fields=None, dimension=None,
     _scalar_floating("contour", field)
     levels, nlevels, several = _levels(value, field)
     top = data.topology.dimension
+    if flying:
+        return _structured_contour(data, _with_basis(data, field), levels, nlevels, several,
+                                   fields, shape=shapes.LINE if top == 2 else shapes.TRIANGLE)
     if dimension is None:
         dimension = top if top >= 1 else 3       # no cells (or vertices): no surface
     if dimension not in (1, 2, 3):
@@ -533,11 +532,6 @@ def contour(data, field, value, merge_points=True, fields=None, dimension=None,
     if mixed or dimension > top:
         data, field = _cells_of_dimension(data, field, dimension)
     if dimension == 2:
-        from tack.dataset.algorithms import _flying_edges
-
-        if _flying_edges.serves(data, _with_basis(data, field)):
-            return _structured_contour(data, _with_basis(data, field), levels, nlevels,
-                                       several, fields, shape=shapes.LINE)
         return _contour_lines(data, field, levels, nlevels, several, fields)
     if dimension == 1:
         return _contour_vertices(data, field, levels, nlevels, several, merge_points, fields)
@@ -546,10 +540,6 @@ def contour(data, field, value, merge_points=True, fields=None, dimension=None,
     if not getattr(data.topology, "reference_cells", True):
         return _polyhedral_contour(data, field, levels, nlevels, several, fields)
     field = _with_basis(data, field)
-    from tack.dataset.algorithms import _flying_edges
-
-    if merge_points and _flying_edges.serves(data, field) and top == 3:
-        return _structured_contour(data, field, levels, nlevels, several, fields)
     (rows, count, edges, weights, points, triangle_cells, triangle_levels,
      triangles) = _triangle_parts(data, field, levels, nlevels, merge_points)
     # Every cell a triangle, three points each: the types and offsets are
@@ -663,6 +653,21 @@ def plane_cut(data, function, value, fields=None):
     return _with_levels(carry(data, surface, points=Interpolate(edges, weights),
                               cells=Pieces(sources), geometry=Field(H1(surface), points),
                               fields=fields), levels, which, several, None)
+
+
+def _by_flying_edges(data, field, merge_points, dimension, subdivision, tolerance):
+    """Whether ``contour`` goes by flying edges (``_structured_contour``): a
+    structured grid's cells of its own dimension, a point field of order 1, no
+    subdivision or tolerance, and merged points (a sheet's lines share their
+    points whatever ``merge_points`` says). Decided once, before hidden cells
+    are extracted, since flying edges leaves them out in place and every other
+    path needs them gone."""
+    from tack.dataset.algorithms import _flying_edges
+
+    top = data.topology.dimension
+    return bool((merge_points or top == 2) and dimension in (None, top)
+                and subdivision is None and tolerance is None
+                and _flying_edges.serves(data, _with_basis(data, _field(data, field))))
 
 
 def _structured_contour(data, field, levels, nlevels, several, fields, shape=shapes.TRIANGLE):

@@ -229,6 +229,32 @@ def test_planes_cut_rotated_far_and_rectilinear_grids_alike(backend, monkeypatch
         _check_cut(monkeypatch, grid, (0.0, axes[1][4], 0.0), (0.0, 1.0, 0.0))
 
 
+@pytest.mark.parametrize("reversed_axes", [(0,), (1,), (2,), (0, 1, 2)])
+def test_a_rectilinear_grid_with_decreasing_axes_cuts_and_contours_alike(
+        backend, monkeypatch, reversed_axes):
+    # A decreasing axis has no windows (their binary searches need it increasing):
+    # its rows are taken whole, and nothing is lost.
+    rng = np.random.default_rng(8)
+    axes = [np.cumsum(rng.uniform(0.1, 1.0, n)) for n in (12, 12, 12)]
+    for k in reversed_axes:
+        axes[k] = axes[k][::-1].copy()
+    for dtype in _dtypes():
+        grid = td.rectilinear_grid(*axes, dtype=dtype)
+        assert not _flying_edges._windowed(grid)
+        middle = [float(np.mean(a)) for a in axes]
+        assert _check_cut(monkeypatch, grid, middle, (0.4, -0.3, 0.8)).num_cells > 0
+        assert _check_cut(monkeypatch, grid, middle, (1.0, 0.0, 0.0)).num_cells > 0
+        x = grid.geometry.values.numpy().astype(float)
+        _check(monkeypatch, _with(grid, x[:, 0] + x[:, 1] ** 2 - x[:, 2], dtype), [4.0, 9.0])
+    assert _flying_edges._windowed(td.rectilinear_grid(*[np.sort(a) for a in axes]))
+    # An image's windows are by its steps' signs: a flipped image keeps them.
+    flipped = td.uniform_grid((12, 11, 10), spacing=(0.5, 0.4, 0.3),
+                              direction=np.diag([-1.0, 1.0, -1.0]), origin=(6.0, 0.0, 3.0))
+    assert _flying_edges._windowed(flipped)
+    middle = flipped.geometry.values.numpy().mean(axis=0)
+    assert _check_cut(monkeypatch, flipped, middle, (0.4, -0.3, 0.8)).num_cells > 0
+
+
 def test_parallel_planes_in_one_pass_and_a_plane_missing_the_grid(backend, monkeypatch):
     image = td.uniform_grid((20, 17, 15), spacing=(0.5, 0.4, 0.3))
     several = _check_cut(monkeypatch, image, (4.3, 3.1, 2.2), (0.2, 0.3, 1.0),

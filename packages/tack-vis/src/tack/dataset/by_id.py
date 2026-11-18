@@ -101,6 +101,10 @@ class _NoPolyhedra:
         return -1, p - p, 0
 
     @tack.func
+    def locate_held(self, e, p, slack, near):
+        return -1, p - p, 0
+
+    @tack.func
     def tet_value_of(self, field, e, t, pc):
         return field.values[0]
 
@@ -119,6 +123,13 @@ class _FannedCells:
     @tack.func
     def fanned(self, e):
         return 1
+
+    @tack.func
+    def locate_held(self, c, x, slack, near):
+        """``locate``, where the nearest piece is wanted only if ``near`` is 1: a
+        polygon or polyline seeks both at once, so it gives both always."""
+        t, pc, inside = self.locate(c, x, slack)
+        return t, pc, inside
 
     @tack.func
     def point_position(self, p):
@@ -175,7 +186,14 @@ class _PolyhedralMesh(_FannedCells, views._PolyhedralLocation, views._Polyhedral
     def locate(self, c, x, slack):
         """``_PolyhedralLocation.locate`` from its cell point; a cell the locator found
         no kernel for (``moved_cell_points``' -2) holds nothing."""
-        t, pc, inside = self.locate_from(c, self.cell_point(c), x, slack)
+        t, pc, inside = self.locate_held(c, x, slack, 1)
+        return t, pc, inside
+
+    @tack.func
+    def locate_held(self, c, x, slack, near):
+        """``locate``, seeking the nearest sub-tetrahedron only where ``near`` is 1
+        (``_PolyhedralLocation.locate_held_from``)."""
+        t, pc, inside = self.locate_held_from(c, self.cell_point(c), x, slack, near)
         skipped = self.moved_starts[c] if self.MOVED == 1 else -1
         if skipped == -2:
             t = -1
@@ -301,6 +319,12 @@ class _PolylineMesh(views._PolylineLocation, views._PolyhedralWalk, views._Polyl
     @tack.func
     def fanned(self, e):
         return 1
+
+    @tack.func
+    def locate_held(self, c, x, slack, near):
+        """``locate``, as ``_FannedCells.locate_held``."""
+        t, pc, inside = self.locate(c, x, slack)
+        return t, pc, inside
 
     @tack.func
     def point_position(self, p):
@@ -594,6 +618,23 @@ class _MeshSearch:
 
     def __init__(self, cells, present, positions, locator, tolerance, neighbors=None,
                  curved=None):
+        self._hold_cells(cells, present, positions, locator, tolerance, neighbors, curved)
+        locator._boxes()
+        self.lo = locator.lo
+        self.hi = locator.hi
+        self.bin_offsets, self.bin_cells = locator.cell_bins()
+        self.leaf_dims, self.leaf_starts = locator.leaves()
+        (self.ox, self.oy, self.oz, self.ix, self.iy, self.iz,
+         self.nx, self.ny, self.nz) = locator._coarse_grid()
+        self.slack = float(locator.slack)
+        if isinstance(cells, _PolyhedralMesh):
+            self.FANNED = 1
+
+    def _hold_cells(self, cells, present, positions, locator, tolerance, neighbors,
+                    curved=None):
+        """What every search holds however it finds its candidates: the cells,
+        their kinds, the shapes' functions, the positions, the tolerance and the
+        face neighbours. A new shape goes here, for both searches."""
         self.cells = cells
         self.curved = curved if curved is not None else _NoCurves()
         if curved is not None:
@@ -609,21 +650,11 @@ class _MeshSearch:
         self.pixel = shapes.Pixel()
         self.positions = positions
         self.marks = tack.zeros((1,), tack.u8, device=locator._device)
-        locator._boxes()
-        self.lo = locator.lo
-        self.hi = locator.hi
-        self.bin_offsets, self.bin_cells = locator.cell_bins()
-        self.leaf_dims, self.leaf_starts = locator.leaves()
-        (self.ox, self.oy, self.oz, self.ix, self.iy, self.iz,
-         self.nx, self.ny, self.nz) = locator._coarse_grid()
-        self.slack = float(locator.slack)
         self.tolerance = float(tolerance)
         self.ncells = locator.data.num_cells
         self.neighbors = neighbors if neighbors is not None else tack.zeros((1,), tack.i32)
         if neighbors is not None:
             self.NEIGHBORS = 1
-        if isinstance(cells, _PolyhedralMesh):
-            self.FANNED = 1
 
     @tack.func
     def find(self, p):
@@ -701,7 +732,7 @@ class _MeshSearch:
         a = self.lo[e]
         c = self.hi[e]
         s = self.tolerance * (c - a).norm()
-        tet, tpc, held = self.cells.locate(e, p, s)
+        tet, tpc, held = self.cells.locate_held(e, p, s, 0)
         found = self.ncells
         kind = 0
         pc = p - p
@@ -793,7 +824,10 @@ class _MeshSearch:
                         # No parametric coordinates: a piece of the cell's fan (a
                         # polyline's segment) and the point's place in it, within
                         # the cell's tolerance.
-                        tet, tpc, held = self.cells.locate(e, p, s)
+                        # The nearest piece only where it could rank: not
+                        # once a cell holding p is found.
+                        near = 1 if e + self.ncells < best_rank else 0
+                        tet, tpc, held = self.cells.locate_held(e, p, s, near)
                         if tet >= 0:
                             rank = e if held == 1 else e + self.ncells
                             if rank < best_rank:
@@ -953,27 +987,10 @@ class _GridSearch(_MeshSearch):
 
     def __init__(self, cells, present, positions, locator, tolerance, neighbors=None):
         grid = locator.structured
-        self.cells = cells
-        self.curved = _NoCurves()
-        self.kinds = _kinds(present)
-        self.tetra = shapes.Tetra()
-        self.hexa = shapes.Hexahedron()
-        self.wedge = shapes.Wedge()
-        self.pyramid = shapes.Pyramid()
-        self.voxel = shapes.Voxel()
-        self.triangle = shapes.Triangle()
-        self.quad = shapes.Quad()
-        self.pixel = shapes.Pixel()
-        self.positions = positions
+        self._hold_cells(cells, present, positions, locator, tolerance, neighbors)
         # The element type of the corners' local array (and _MeshSearch's boxes).
         self.lo = tack.zeros((1,), tack.vec(3, locator.data.dtype))
         self.hi = self.lo
-        self.tolerance = float(tolerance)
-        self.ncells = locator.data.num_cells
-        self.marks = tack.zeros((1,), tack.u8, device=locator._device)
-        self.neighbors = neighbors if neighbors is not None else tack.zeros((1,), tack.i32)
-        if neighbors is not None:
-            self.NEIGHBORS = 1
         self.cx, self.cy, self.cz = grid.cells
         if len(locator.data.topology.point_dims) == 2:
             self.DIMENSION = 2

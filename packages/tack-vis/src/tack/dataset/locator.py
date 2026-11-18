@@ -1085,12 +1085,11 @@ def _structured(data):
     if type(values) is arrays.UniformCoordinates and tuple(values.dims) == dims:
         # Index axis a's step is column a of ``edges``; its inverse takes a
         # position to index coordinates.
-        edges = values._matrix @ np.diag(values._spacing)
+        origin, edges = values.index_to_world
         try:
             to_index = np.linalg.inv(edges)
         except np.linalg.LinAlgError:
             return None
-        origin = np.asarray(values._origin, float)
         ends = np.array([[0, 0, 0], [1, 1, 1]]) * (np.asarray(dims) - 1)
         corners = np.array([[ends[a][0], ends[b][1], ends[c][2]] for a in (0, 1)
                             for b in (0, 1) for c in (0, 1)], float)

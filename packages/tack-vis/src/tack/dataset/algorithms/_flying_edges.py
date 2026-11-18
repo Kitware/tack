@@ -836,9 +836,10 @@ class _PlaneValuesByIJK(_PlaneValues):
 def cuts(data, function):
     """Whether ``slice`` of ``data`` by ``function`` can go by the plane cutter: a
     ``Plane`` through a structured grid of solid cells. On an image or a
-    rectilinear grid only the rows' stretches near the plane are visited
-    (``_plane_windows``); on a curvilinear grid every row, the distance computed
-    where read all the same. Hidden and refined cells are left out."""
+    rectilinear grid whose axes increase only the rows' stretches near the plane
+    are visited (``_plane_windows``); on another rectilinear grid or a curvilinear
+    one every row, the distance computed where read all the same. Hidden and
+    refined cells are left out."""
     from tack.dataset.implicit import Plane
 
     return isinstance(function, Plane) and _solid_grid(data)
@@ -848,6 +849,25 @@ def _by_arithmetic(data):
     from tack.arrays import CartesianProduct, UniformCoordinates
 
     return type(data.geometry.values) in (UniformCoordinates, CartesianProduct)
+
+
+def _windowed(data):
+    """Whether ``_plane_windows`` can bound each row's stretch near the plane: an
+    image, or a rectilinear grid whose axes of more than one point strictly
+    increase (``_grid_windows``' binary searches need it), as the locator's
+    arithmetic search asks (``locator._structured``). Another rectilinear grid
+    takes every row whole."""
+    import numpy as np
+
+    from tack.arrays import CartesianProduct, UniformCoordinates
+
+    values = data.geometry.values
+    if type(values) is UniformCoordinates:
+        return True
+    if type(values) is not CartesianProduct:
+        return False
+    axes = (arrays.to_host(a).reshape(-1) for a in (values.xs, values.ys, values.zs))
+    return all(len(a) < 2 or bool(np.all(np.diff(a) > 0)) for a in axes)
 
 
 @tack.func
@@ -895,7 +915,7 @@ def _image_windows(start, sx, sy, sz, reach, levels, nlevels, nx, ny, windows, l
 def _grid_windows(xs, ys, zs, ox, oy, oz, nx_, ny_, nz_, reach, levels, nlevels, nx, ny,
                   windows, lengths):
     # A rectilinear grid's rows: the distance at point i of row (j, k) is
-    # nx_ (xs[i] - ox) + nx_ (ys[j] - oy) + nz_ (zs[k] - oz), monotone in xs[i], so
+    # nx_ (xs[i] - ox) + ny_ (ys[j] - oy) + nz_ (zs[k] - oz), monotone in xs[i], so
     # its points within ``reach`` of a value are an interval, found by two
     # binary searches and widened by a point each way.
     for q in range(lengths.shape[0]):
@@ -956,9 +976,9 @@ def _plane_windows(data, plane, levels, nlevels):
     else:
         xs, ys, zs = (arrays.to_host(a).astype(float).reshape(-1)
                       for a in (values.xs, values.ys, values.zs))
-        steps = [abs(normal[0]) * np.diff(xs).max(),
-                 abs(normal[1]) * (np.diff(ys).max() if ny > 1 else 0.0),
-                 abs(normal[2]) * (np.diff(zs).max() if nz > 1 else 0.0)]
+        steps = [abs(normal[0]) * np.abs(np.diff(xs)).max(),
+                 abs(normal[1]) * (np.abs(np.diff(ys)).max() if ny > 1 else 0.0),
+                 abs(normal[2]) * (np.abs(np.diff(zs)).max() if nz > 1 else 0.0)]
         size = float(max(np.abs(a).max() for a in (xs, ys, zs)) + np.abs(origin).max())
         reach = float(max(steps)) * (1.0 + 1e-6) + 64.0 * eps * size
         _grid_windows(values.xs, values.ys, values.zs, *map(float, origin), *map(float, normal),
@@ -978,9 +998,10 @@ def cut(data, function, levels, nlevels):
     plane = relative_to(function, data.origin)
     kind = _PlaneValuesByIJK if _by_arithmetic(data) else _PlaneValues
     values = kind(data.geometry.values, plane, nx, ny)
-    if not _by_arithmetic(data):
-        # A curvilinear grid's points may lie anywhere: every row, its values
-        # computed where read, nothing stored for every point but its edges' byte.
+    if not _windowed(data):
+        # A curvilinear grid's points may lie anywhere, and a rectilinear grid's
+        # windows need its axes increasing: every row, its values computed where
+        # read, nothing stored for every point but its edges' byte.
         windows = tack.empty((ny * nz * nlevels,), tack.vec(3, tack.i64))
         _whole_rows(nx, windows)
         return _surface(data, values, values, levels, nlevels, data.dtype, windows,

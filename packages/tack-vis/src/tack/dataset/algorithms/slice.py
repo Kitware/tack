@@ -34,7 +34,8 @@ def slice(data, function, merge_points=True, fields=None, value=0.0, subdivision
     curvilinear grid's rows are all visited, its points lying anywhere, the
     distance still computed where read. Hidden and refined cells are left out in
     place. The triangles, points and values are the general path's, up to their
-    order."""
+    order. (``exact`` does not keep a plane from the cutter: it matters only when
+    cells are subdivided, and the cutter's cells are linear.)"""
     from tack.dataset.algorithms import _flying_edges
 
     if (merge_points and subdivision is None and tolerance is None

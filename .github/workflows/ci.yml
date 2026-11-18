@@ -703,7 +703,9 @@ jobs:
   # ghost refresh over split's pieces and ghost generation on 2 and 3 ranks
   # (with the rest of those files, which need no MPI). Open MPI from apt;
   # mpi4py builds against it. TACK_REQUIRE_MPI makes a missing MPI fail the
-  # job rather than skip, and oversubscription lets 3 ranks run on any runner.
+  # job rather than skip, and oversubscription lets 3 ranks run on any runner:
+  # Open MPI 4's parameter, and Open MPI 5's (PRRTE's mapping policy), which
+  # Ubuntu 26.04's openmpi-bin is and which ignores the other.
   mpi:
     name: mpi
     needs: changes
@@ -713,6 +715,7 @@ jobs:
     env:
       TACK_REQUIRE_MPI: "1"
       OMPI_MCA_rmaps_base_oversubscribe: "1"
+      PRTE_MCA_rmaps_default_mapping_policy: ":oversubscribe"
     steps:
       - uses: actions/checkout@v7
 

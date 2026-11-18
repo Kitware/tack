@@ -21,6 +21,11 @@ pool, HIP's buffer cache and Metal's pool) cannot do. What is counted:
   caches);
 - the few bytes of a compiled kernel's scalar packs are not counted.
 
+The count is always on: there is no switch. Counting an allocation is a weak
+reference with a callback, a dict entry and a locked add, about 0.7 us, beside
+about 5.6 us for the smallest ``tack.empty`` on the CPU (an M1 Max), and a
+switch would leave the arrays made before it was turned on uncounted.
+
 `reset_peak` makes the peak what is live, so a test measures one call:
 ``reset_peak(d); start = live(d); f(); peak(d) - start``. Each function takes a
 `tack.Device`, a spec (``"cuda:1"``), a backend, or None for the default
@@ -62,6 +67,9 @@ def _count_of(backend):
 
 
 def _released(ref):
+    # The pop is outside the lock, as `counted`'s insert is: one dict operation,
+    # atomic under the GIL, each reference popped once. Free-threaded Python would
+    # need both inside it.
     count, nbytes = _held.pop(ref)
     with _lock:
         count.live -= nbytes

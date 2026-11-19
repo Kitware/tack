@@ -6,4 +6,5 @@
   above order 1 is cut through subdivision, as `clip` cuts it, into
   `PartitionedDataSet([whole, part])`, and the crossings at both ends are at
   the field's roots: the second end's are found along the sub-cells' edges the
-  first clip left (#419).
+  first clip left (#419). A mesh of polyhedra beside shapes is cut as `clip`
+  cuts one: every cut cell a polyhedron, whole cells as they are.

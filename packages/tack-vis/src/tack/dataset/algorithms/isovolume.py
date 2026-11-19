@@ -51,8 +51,10 @@ def isovolume(data, by, lower, upper, fields=None, subdivision=None, tolerance=N
     from tack.dataset.ghosts import visible
     from tack.dataset.polyhedra import PolygonalTopology, PolyhedralTopology
 
-    polyhedral = isinstance(data.topology, PolyhedralTopology) and \
-        not isinstance(data.topology, PolygonalTopology)
+    # Polyhedra beside shapes (a mixed topology) are clipped as clip clips them.
+    polyhedral = getattr(data.topology, "has_polyhedra", False) or (
+        isinstance(data.topology, PolyhedralTopology)
+        and not isinstance(data.topology, PolygonalTopology))
     if not polyhedral and not getattr(data.topology, "reference_cells", True):
         raise NotImplementedError("isovolume takes cells of the linear shapes or polyhedra, "
                                   "not polygons or polylines")

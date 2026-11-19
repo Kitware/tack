@@ -19,7 +19,15 @@ pool, HIP's buffer cache and Metal's pool) cannot do. What is counted:
 - a block a backend's cache hands to a new array is counted while that array
   holds it, not while it waits in the cache (``release_memory`` empties the
   caches);
-- the few bytes of a compiled kernel's scalar packs are not counted.
+- the few bytes of a compiled kernel's scalar packs are not counted;
+- a texture's hardware image (``create_texture_image``: CUDA, Metal, HIP and
+  Level Zero where they sample in hardware) is not counted; a texture sampled
+  in software keeps an f32 array, which is.
+
+The count is per backend, not per memory: a device made with options
+(``tack.device("cpu", num_threads=2)``) is a backend of its own, so its arrays
+are on its count and not the default CPU device's, though both use the same
+memory. Ask the device the arrays were made on.
 
 The count is always on: there is no switch. Counting an allocation is a weak
 reference with a callback, a dict entry and a locked add, about 0.7 us, beside

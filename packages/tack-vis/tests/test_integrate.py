@@ -6,6 +6,8 @@ each cell's own map, held to closed forms -- polynomials over straight and curve
 cells of every shape, fields of any order -- and over pieces; and ``cell_geometry``
 of curved cells, which it measures."""
 
+import sys
+
 import numpy as np
 import pytest
 
@@ -90,6 +92,92 @@ def test_a_cubic_over_straight_and_curved_cubes(kind):
     assert td.integrate(curved).measure == pytest.approx(1.15, rel=1e-13)
     measures = td.cell_geometry(curved).measure.values.numpy()
     assert measures.sum() == pytest.approx(1.15, rel=1e-13)
+
+
+@tack.func
+def _full_bend(x):
+    # Every coordinate of degree 2 along each axis: an order-2 map whose volume
+    # element |det J| has degree 5 along each axis.
+    return [x[0] + 0.08 * x[0] * x[0] * x[1] * x[1] * x[2] * x[2],
+            x[1] + 0.06 * x[0] * x[0] * x[1] * x[2] * x[2],
+            x[2] + 0.07 * x[0] * x[1] * x[1] * x[2] * x[2]]
+
+
+def test_hexahedra_take_the_fewest_exact_points():
+    """On hexahedra integrate takes the fewest Gauss points that are exact: an order-4
+    DG field over a curved order-2 map has degree 4 + 5 along an axis, which 5
+    points integrate exactly -- the same, to rounding, as 9 -- and 4 do not."""
+    from tack.dataset.algorithms.integrate import (
+        _cell_integrals,
+        _per_axis,
+        _points_per_axis,
+        _tables,
+    )
+
+    data = _cube("hexahedra", n=2)
+    data = td.DataSet(data.topology, data.geometry.values)
+    data.geometry = td.interpolate(data, _full_bend, td.H1(data, order=2),
+                                   dtype=tack.vec3(tack.f64))
+    space = td.L2(data, order=4, basis="gauss_legendre")
+    rng = np.random.default_rng(7)
+    data.fields["u"] = td.Field(space, tack.array(rng.uniform(-1.0, 1.0, space.size)))
+    assert _per_axis(shapes.Hexahedron, _points_per_axis(data, 4, shapes.Hexahedron)) == 5
+
+    def by_rule(n):
+        out = tack.zeros((data.num_cells,), tack.f64)
+        group = next(g for g in data.launch_groups("cells", [data.fields["u"]]) if g.count)
+        _cell_integrals(data.domain_view("cells", group), data.fields["u"].view(group),
+                        *_tables(data, group.shape, n), out)
+        return out.numpy().sum()
+
+    value = td.integrate(data, fields=["u"]).values["u"]
+    assert value == pytest.approx(by_rule(9), rel=1e-13, abs=1e-14)
+    assert abs(by_rule(4) - by_rule(9)) > 1e-8
+
+
+@pytest.mark.parametrize("space", [("L2", 2, "gauss_legendre"), ("L2", 3, None),
+                                   ("L2", 5, "bernstein"), ("H1", 3, None),
+                                   ("H1", 4, "bernstein")])
+@pytest.mark.parametrize("width", [0, 3])
+@pytest.mark.parametrize("curved", [True, False])
+def test_sum_factorization_is_the_point_by_point_sum(space, width, curved, monkeypatch):
+    """A field in a tensor basis on hexahedra (a scalar, a vector) is integrated by sum
+    factorization, and on a curved geometry its measure element too: the same
+    integrals, to rounding, as evaluating the field and the Jacobian at each
+    point."""
+    from tack.dataset.algorithms.integrate import (
+        _cell_integrals,
+        _points_per_axis,
+        _tables,
+        _tensor_integrals,
+        _tensor_vector_integrals,
+    )
+
+    kind, order, basis = space
+    data = _cube("hexahedra", n=2)
+    data = td.DataSet(data.topology, data.geometry.values)
+    if curved:
+        data.geometry = td.interpolate(data, _full_bend, td.H1(data, order=2),
+                                       dtype=tack.vec3(tack.f64))
+    make = td.L2 if kind == "L2" else td.H1
+    s = make(data, order=order, **({"basis": basis} if basis else {}))
+    rng = np.random.default_rng(order)
+    values = rng.uniform(-1.0, 1.0, (s.size, width) if width else s.size)
+    data.fields["u"] = td.Field(s, tack.array(values, tack.vec3(tack.f64) if width
+                                              else tack.f64))
+    group = next(g for g in data.launch_groups("cells", [data.fields["u"]]) if g.count)
+    n = _points_per_axis(data, order, shapes.Hexahedron)
+    pointwise = tack.zeros((data.num_cells,), tack.vec3(tack.f64) if width else tack.f64)
+    _cell_integrals(data.domain_view("cells", group), data.fields["u"].view(group),
+                    *_tables(data, group.shape, n), pointwise)
+    calls = []
+    name, kernel = (("_tensor_vector_integrals", _tensor_vector_integrals) if width
+                    else ("_tensor_integrals", _tensor_integrals))
+    monkeypatch.setattr(sys.modules["tack.dataset.algorithms.integrate"], name,
+                        lambda *a: (calls.append(type(a[3]).__name__), kernel(*a))[1])
+    value = td.integrate(data, fields=["u"]).values["u"]
+    assert calls == ["_TensorElements" if curved else "_PointElements"]
+    np.testing.assert_allclose(value, pointwise.numpy().sum(axis=0), rtol=1e-13, atol=1e-14)
 
 
 def test_a_curved_surface_and_cell_data():
@@ -307,3 +395,59 @@ def test_integrate_over_pieces_takes_names(backend):
         td.integrate(data, "x").values["x"])
     with pytest.raises(TypeError, match="partition"):
         td.integrate(pieces, {"g": td.Field(td.Constant(data), tack.array(x))})
+
+
+@pytest.mark.parametrize("mixed", [False, True])
+def test_point_and_cell_data_integrate_as_the_cells_quadratures_sum(mixed):
+    """Point data (order 1) and cell data integrate as weighted sums of their values --
+    each point's shape function's integral, each cell's measure, made once for every
+    field -- and give what each cell's own quadrature summed gives: on a distorted
+    mesh of hexahedra, with polyhedra beside them, and with ghost cells left out."""
+    import importlib
+
+    from test_mixed_cells import _located
+
+    from tack.dataset.ghosts import Ghosts
+
+    module = importlib.import_module("tack.dataset.algorithms.integrate")
+
+    shaped, polyhedral, _, _, _ = _located(distorted=True)
+    data = polyhedral if mixed else shaped
+    marks = np.zeros(data.num_cells, np.uint8)
+    marks[::7] = Ghosts.DUPLICATECELL
+    data.ghosts = td.Ghosts(cells=tack.array(marks), points=None)
+    x = data.positions()
+    data.fields["v"] = td.Field(td.H1(data), tack.array(np.c_[x[:, 0] ** 2, np.cos(x[:, 1]),
+                                                             x[:, 2]], tack.vec3(tack.f64)))
+    got = td.integrate(data)
+    owned = marks == 0
+    measures = module._top_cells(data, tack.arrays.materialize(
+        td.cell_geometry(data).measure.values))
+    for name in ("f", "c", "v"):
+        field = data.fields[name]
+        per_cell = (module._mixed_cell_values(data, field, measures) if mixed
+                    else module._cell_values(data, field)
+                    if name != "c" else None)
+        if per_cell is None:                       # cell data: value times measure
+            expected = (field.values.numpy() * measures.numpy())[owned].sum()
+        else:
+            expected = np.asarray(per_cell.numpy(), np.float64)[owned].sum(axis=0)
+        np.testing.assert_allclose(got.values[name], expected, rtol=1e-12)
+    assert got.measure == pytest.approx(measures.numpy()[owned].sum(), rel=1e-12)
+
+
+def test_values_left_out_add_nothing_even_when_not_finite():
+    """A hidden cell's value, or a point's that only hidden cells use, weighs 0, and a
+    NaN or an infinity there must not turn the sum NaN (value times 0 is NaN; Berk's
+    review of #439). Two unit hexahedra, the second hidden."""
+    data = td.uniform_grid((3, 2, 2))
+    marks = np.array([0, td.Ghosts.HIDDENCELL], np.uint8)
+    data.ghosts = td.Ghosts(cells=tack.array(marks, tack.u8))
+    data.fields["c"] = td.Field(td.Constant(data), tack.array(np.array([1.0, np.nan])))
+    x = data.positions()
+    u = np.where(x[:, 0] > 1.5, np.inf, 2.0)       # the far points are the hidden cell's
+    data.fields["u"] = td.Field(td.H1(data), tack.array(u))
+    out = td.integrate(data)
+    assert out.measure == pytest.approx(1.0)
+    assert out.values["c"] == pytest.approx(1.0)
+    assert out.values["u"] == pytest.approx(2.0)

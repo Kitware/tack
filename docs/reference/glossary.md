@@ -445,7 +445,8 @@ points near a point (`PointLocator`). A topology keeps the locator it builds,
 so later searches reuse it.
 
 *VTK:* `vtkCellLocator`, `vtkStaticCellLocator`, `vtkStaticPointLocator` ·
-*ParaView:* — · *Viskores:* `CellLocatorTwoLevel`, `PointLocatorSparseGrid`
+*ParaView:* — · *Viskores:* `CellLocatorTwoLevel`, `CellLocatorUniformGrid`,
+`CellLocatorRectilinearGrid`, `PointLocatorSparseGrid`
 
 Explained in [sample and trace](../visualization/sample-and-trace.md).
 

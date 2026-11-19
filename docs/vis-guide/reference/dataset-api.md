@@ -194,7 +194,7 @@ array accesses.
 | Space | Values | Interpolated | Topologies |
 |---|---|---|---|
 | `H1(data, order=1)` | one per point, shared by the cells around it; order 2 adds one per edge and quad face; order `p` (`basis=`) `p - 1` per edge, `(p - 1)^2` per quad face, `(p - 1)^d` per cell | yes, continuous | order 1 on all; order 2 on tetrahedra, hexahedra, voxels, wedges, triangles, quads and pixels; any order on segments, quads, pixels, hexahedra and voxels, and on triangles, tetrahedra and wedges with `nodes="equispaced"` (`(p - 1)(p - 2)/2` per triangle face, `(p - 1)(p - 2)(p - 3)/6` per tetrahedron, `(p - 1)^2 (p - 2)/2` per wedge) |
-| `L2(data, order=1)` | each cell's own copies: order 1 one per corner, order 0 one per cell; `order` may be an array, one order per cell; a tensor basis' values in blocks or cell-fastest (`layout=`, by device by default) | yes, discontinuous | shape-based |
+| `L2(data, order=1)` | each cell's own copies: order 1 one per corner, order 0 one per cell; `order` may be an array, one order per cell (0 to 15, in one `basis`, values in blocks); a tensor basis' values in blocks or cell-fastest (`layout=`, by device by default) | yes, discontinuous | shape-based |
 | `Constant(data)` | one per cell | yes, constant in the cell | all |
 | `Values(data, on, oriented=False)` | one per point, edge, face or cell: data about the entity, with no basis | no | all |
 | `SideTraces(data)` | per face, per side, per face point; made by `project` into it | through the face's shape | shape-based, 3D |
@@ -242,7 +242,8 @@ and `Constant`, as source and as target.
 |---|---|---|
 | `H1` (order 1 or 2) | the mean, over the cells around the node, of the source evaluated there | the source is continuous: a lower order comes across exactly |
 | `Constant`, order-0 `L2` | the source's average over the cell: its integral over the measure (`average="nodes"`: the mean of its nodes, as vtkPointDataToCellData) | the source is constant in the cell |
-| order-1 `L2` (or an order per cell) | the source's value at each corner (the cell's average at order 0) | the source's order is at most 1 |
+| order-1 `L2` | the source's value at each corner | the source's order is at most 1 |
+| `L2` of an order per cell | the source's value at each cell's nodes of its order (its average at order 0) | the source's order in the cell is at most the cell's |
 | `SideTraces` | each side's value from its cell | always |
 
 Where cells disagree -- cell data, DG data -- the `H1` mean is VTK's
@@ -852,8 +853,11 @@ cells out (`Ghosts.MASKED_CELLS`); reductions leave out every skipped bit
   `extract_geometry`, `mask`, `extract_surface`, `extract_edges`,
   `triangulate`, `tetrahedralize`) and the source of `probe`, `advect` and
   `streamlines` leave them out, as if they were not there. Faces or edges
-  chosen by id, and a reused `CellLocator`, are refused on data with hidden
-  cells. Outputs on the same cells keep their values there, marked.
+  chosen by id are refused on data with hidden cells. The cell search leaves
+  hidden and refined cells out itself (`CellLocator.find(points,
+  hidden=data.ghosts.cells)`), so `probe` and advection keep the dataset's
+  locator, and take one given. Outputs on the same cells keep their values
+  there, marked.
 - **`remove_ghosts(data)`** takes out the duplicate and hidden cells and the
   points no remaining cell uses, as VTK's `vtkRemoveGhosts`: the last step
   before rendering, writing one file, or code that does not know ghost
@@ -1276,7 +1280,16 @@ each field's mean over it, as cell data, by `samples` probes a side per voxel
 `HIDDENCELL`. It takes what `probe` takes (datasets, pieces, AMR hierarchies,
 octrees); with one sample it is the probe at the voxel centres.
 
-`CellLocator(data, density=1.0, levels=2)` bins the cells' bounding boxes on a
+`CellLocator(data, density=1.0, levels=None)` of an image (`UniformCoordinates`)
+or a rectilinear grid (`CartesianProduct`, its axes increasing) builds nothing:
+a point's candidate cells come from its index coordinates, or a binary search
+of each axis, as VTK's `vtkImageData::FindCell` and Viskores'
+`CellLocatorUniformGrid` and `CellLocatorRectilinearGrid` find them, and each is
+tested and ranked as a binned locator's candidates are, so the cells and
+coordinates are the same bit for bit (`locator.structured` says which). At 1M
+points a warm `find` took 17 ms on 64^3 and 256^3 images, against 34 and 113 ms
+through the bins, which also took 0.4 to 1 s to build (CPU, M1 Max). Of any
+other dataset, or given `levels`, it bins the cells' bounding boxes on a
 two-level grid over the dataset, as Viskores' `CellLocatorTwoLevel` does: a
 coarse uniform grid of about 32 cells a bin, each bin split into a uniform
 grid of leaves sized by its count, about 8 cells a leaf. A point is searched

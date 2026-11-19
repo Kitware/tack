@@ -112,6 +112,7 @@ __all__ = [
     "FaceCenters",
     "FaceGeometry",
     "FeatureEdges",
+    "FiniteDifferences",
     "FlowQuantities",
     "GenerateGlobalIds",
     "GhostCells",
@@ -1634,6 +1635,21 @@ class Gradients(_FieldAlgorithm):
 
     field = Parameter(None, "the field")
     at = Parameter("cells", "cells or points")
+    name = Parameter("gradient", "the new array's name")
+
+
+class FiniteDifferences(_FieldAlgorithm):
+    """``td.finite_differences``: the gradient (or, ``derivative=2``, the second
+    derivatives) of ``field`` on an image, a rectilinear or a curvilinear grid, by
+    differences of ``order`` 2, 4 or 6, as a new array ``name``. At order 2 the
+    gradient is VTK's ``vtkGradientFilter``'s on structured data."""
+
+    FUNCTION = "finite_differences"
+    FIELDS = ("field",)
+
+    field = Parameter(None, "the field")
+    order = Parameter(2, "the differences' order of accuracy: 2, 4 or 6")
+    derivative = Parameter(1, "1 for the gradient, 2 for the second derivatives")
     name = Parameter("gradient", "the new array's name")
 
 

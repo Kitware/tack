@@ -185,6 +185,7 @@ nav:
           - Filters by task:
               - Extract: visualization/extract.md
               - Derive: visualization/derive.md
+              - Compute with expressions: visualization/expressions.md
               - Sample and trace: visualization/sample-and-trace.md
               - Reduce: visualization/reduce.md
               - Points and particles: visualization/points-and-particles.md
@@ -246,6 +247,10 @@ nav:
       - Backend implementations: design/backend-implementations.md
       - Vendor workarounds: design/vendor-workarounds.md
       - Interoperability: design/interoperability.md
+      - Plans:
+          - design/plans/index.md
+          - Cut filters' memory: design/plans/cut-filters-memory.md
+          - Inspecting device-class objects: design/plans/inspect-template.md
       - Contracts: contracts/index.md
       - Dataset API design: vis-guide/design/dataset-api.md
       - Polyhedra: vis-guide/design/polyhedra.md

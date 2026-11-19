@@ -456,24 +456,49 @@ class _PolyhedralLocation:
     @tack.func
     def locate_from(self, c, p, x, slack):
         """``locate``, given the cell point ``p``: for a caller testing many points
-        against one cell. The search stops at the first sub-tetrahedron holding
-        ``x``; coordinates are ratios of triple products (Cramer's rule)."""
+        against one cell."""
+        t, pc, inside = self.locate_held_from(c, p, x, slack, 1)
+        return t, pc, inside
+
+    @tack.func
+    def locate_held_from(self, c, p, x, slack, near):
+        """``locate_from``, seeking the nearest sub-tetrahedron only where ``near`` is
+        1 (else ``t`` is -1 where none holds ``x``): a caller that has a cell
+        holding the point, or wants only one that does, asks for no more.
+
+        Two sweeps: the first tests whether each sub-tetrahedron holds ``x`` and
+        stops at the first that does; the second, only where none does, finds the
+        one whose face triangle is nearest. The nearest is wanted only then, so a
+        point inside the cell pays for no nearest-point tests (on Metal they were
+        most of a polyhedron's location, #451)."""
+        tet, pc = self._sweep(c, p, x, slack, 0)
+        inside = 1 if tet >= 0 else 0
+        if tet < 0 and near == 1:
+            tet, pc = self._sweep(c, p, x, slack, 1)
+        return tet, pc, inside
+
+    @tack.func
+    def _sweep(self, c, p, x, slack, nearest):
+        """One sweep over the sub-tetrahedra: with ``nearest`` 0, the first holding
+        ``x`` and its coordinates there (``t`` -1 for none); with ``nearest`` 1, the
+        one whose face triangle is nearest ``x``, within ``slack``, and the
+        coordinates of ``x`` extrapolated in it (so a linear field stays exact).
+        Coordinates are ratios of triple products (Cramer's rule)."""
         d = x - p
         tet = -1
         pc = tack.vec3(0.0, 0.0, 0.0)
-        near = -1
-        near_pc = tack.vec3(0.0, 0.0, 0.0)
         best = slack * slack
         base = 0
+        stop = 0
         nf = self.num_faces(c)
         k = 0
-        while k < nf and tet < 0:
+        while k < nf and stop == 0:
             n = self.side_num_points(c, k)
             f = self.face_point(c, k) - p
             first = self.side_position(c, k, 0) - p
             a = first
             j = 0
-            while j < n and tet < 0:
+            while j < n and stop == 0:
                 b = first
                 if j + 1 < n:
                     b = self.side_position(c, k, j + 1) - p
@@ -481,27 +506,24 @@ class _PolyhedralLocation:
                 det = f.dot(ab)
                 if det > 0.0:
                     w = tack.vec3(d.dot(ab), f.dot(d.cross(b)), f.dot(a.cross(d))) / det
-                    if min(w[0], w[1], w[2]) >= -HOLD_TOLERANCE and w[0] + w[1] + w[2] <= 1.0 + HOLD_TOLERANCE:
-                        tet = base + j
-                        pc = w
+                    if nearest == 0:
+                        if (min(w[0], w[1], w[2]) >= -HOLD_TOLERANCE
+                                and w[0] + w[1] + w[2] <= 1.0 + HOLD_TOLERANCE):
+                            tet = base + j
+                            pc = w
+                            stop = 1
                     else:
-                        # Outside: near if its face triangle is, and then
-                        # extrapolated, as the shapes' coordinates are.
                         r = _closest_on_triangle(d, f, a, b)
                         e = r[0] * f + r[1] * a + r[2] * b - d
                         if e.dot(e) <= best:
                             best = e.dot(e)
-                            near = base + j
-                            near_pc = w
+                            tet = base + j
+                            pc = w
                 a = b
                 j += 1
             base += n
             k += 1
-        inside = 1 if tet >= 0 else 0
-        if tet < 0 and near >= 0:
-            tet = near
-            pc = near_pc
-        return tet, pc, inside
+        return tet, pc
 
 
 class _PolygonLocation:
@@ -4022,8 +4044,10 @@ def view_class(kind, shape, *mixins):
     if key not in _view_classes:
         _check_names(*mixins, kind, shape)
         name = "".join(m.__name__.strip("_") for m in mixins) + kind.__name__ + shape.__name__
+        # The key, on the class (not its views), for tack.inspect_template.
+        attributes = {**_node_count(mixins, shape), "_tack_composition": key}
         _view_classes[key] = tack.device_class(type(name, (*mixins, kind, shape),
-                                                    _node_count(mixins, shape)))
+                                                    attributes))
     return _view_classes[key]
 
 

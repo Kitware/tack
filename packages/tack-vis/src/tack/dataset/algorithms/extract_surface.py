@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) Kitware Inc.
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""``extract_surface``: the faces of set ``name`` as a surface dataset: triangles and quads on the points they use, each in its side 0's outward order. Fields on faces become the surface's cell fields, and so do cell fields (``Constant``, values on cells), each face taking its side 0 cell's value; point fields (``H1``, values on points) come with the points. A solid's order-2 field or geometry stays order 2 on its surface, gathered by entity: the faces' points, edges and quad centers are the surface's. The geometry must be ``H1``: an ``L2`` one has no shared points for the faces to stand on."""
+"""``extract_surface``: the faces of set ``name`` as a surface dataset: triangles and quads on the points they use, each in its side 0's outward order. Fields on faces become the surface's cell fields, and so do cell fields (``Constant``, values on cells), each face taking its side 0 cell's value; point fields (``H1``, values on points) come with the points, and ``L2`` fields as each face's trace. A solid's order-2 field or geometry stays order 2 on its surface, gathered by entity: the faces' points, edges and quad centers are the surface's. The geometry must be ``H1``: an ``L2`` one has no shared points for the faces to stand on."""
 
 import itertools
 
@@ -10,13 +10,14 @@ import numpy as np
 import tack
 from tack import arrays
 from tack.algorithms.scan import exclusive_scan
+from tack.arrays import CountingArray
 from tack.dataset import ids as id_types
 from tack.dataset import shapes
 from tack.dataset.algorithms._common import _close
-from tack.dataset.carry import Pieces, Same, Take, _take, carry, selected
+from tack.dataset.carry import Pieces, Same, Take, _like, _take, carry, selected
 from tack.dataset.dataset import Field
 from tack.dataset.sets import Set
-from tack.dataset.spaces import H1
+from tack.dataset.spaces import H1, L2
 from tack.dataset.topology import UnstructuredTopology, _face_row, _same_key
 from tack.runtime.dispatch import on_inputs_device
 
@@ -136,8 +137,9 @@ def _masked_surface(data, marks, fields):
     _close(offsets, count, length)
     used, points = _used_points(connectivity, data.num_points, idt)
     surface = UnstructuredTopology(types, offsets, connectivity, num_points=used)
-    return carry(data, surface, points=Take(points), cells=Pieces(owners),
-                 faces_to_cells=Take(chosen), fields=fields)
+    out = carry(data, surface, points=Take(points), cells=Pieces(owners),
+                faces_to_cells=Take(chosen), fields=fields)
+    return _keep_traces(data, out, owners, points, fields)
 
 
 @tack.kernel
@@ -223,8 +225,8 @@ def _fresh_boundary(data, fields):
     faces), fields or a geometry above order 1 (whose surface nodes come
     through the faces), or buckets too crowded to sort a thread each
     (``topology._face_buckets_affordable``). The topology keeps what it found
-    (``_boundary``), so a repeated call costs only the carry, as it did when
-    the first call derived the faces. The surface is on the points it uses
+    (``_boundary``), so a repeated call costs only the carry; the boundary found
+    from the derived faces is kept there in the same way. The surface is on the points it uses
     (``_used_points``), renumbered once."""
     from tack.dataset.topology import (
         _face_bucket_counts,
@@ -239,7 +241,7 @@ def _fresh_boundary(data, fields):
             or any(isinstance(f.space, H1) and f.space.order != 1
                    for f in (data.geometry, *data.fields.values()))):
         return None
-    if topology._boundary is not None:
+    if topology._boundary is not None and topology._boundary[0] == "cells":
         return _on_boundary(data, fields)
     groups = [g for g in topology.groups() if g.shape.NUM_FACES and g.shape.DIMENSION == 3]
     starts = np.concatenate([[0], np.cumsum([g.count * g.shape.NUM_FACES
@@ -301,26 +303,28 @@ def _fresh_boundary(data, fields):
                                connectivity, cells)
     count, points = _used_points(connectivity, data.num_points, idt)
     surface = UnstructuredTopology(types, offsets, connectivity, num_points=count)
-    topology._boundary = (surface, cells, points, None)
+    topology._boundary = ("cells", surface, {"points": Take(points), "cells": Pieces(cells)},
+                          None)
     return _on_boundary(data, fields)
 
 
 def _on_boundary(data, fields):
     """The boundary ``data.topology._boundary`` holds, with ``data``'s fields carried
-    to it. The surface's geometry is kept there too, with the geometry and the
-    positions' revision it was taken from, so a repeated call on the same mesh
-    gives the same surface geometry, and what is kept with that (``mesh_kept``:
-    its normals) is computed once."""
+    to it by its maps. It was found from the cells alone (``"cells"``,
+    ``_fresh_boundary``) or from the derived faces (``"faces"``, which carries face
+    fields too). The surface's geometry is kept there as well, with the geometry
+    and the positions' revision it was taken from, so a repeated call on the same
+    mesh gives the same surface geometry, and what is kept with that
+    (``mesh_kept``: its normals) is computed once."""
     topology = data.topology
-    surface, cells, points, kept = topology._boundary
+    kind, surface, maps, kept = topology._boundary
     source = (data.geometry, arrays._revision(data.geometry.values))
     geometry = None
     if kept is not None and kept[0][0] is source[0] and kept[0][1] == source[1]:
         geometry = kept[1]
-    out = carry(data, surface, points=Take(points), cells=Pieces(cells), geometry=geometry,
-                fields=fields)
-    topology._boundary = (surface, cells, points, (source, out.geometry))
-    return out
+    out = carry(data, surface, geometry=geometry, fields=fields, **maps)
+    topology._boundary = (kind, surface, maps, (source, out.geometry))
+    return _keep_traces(data, out, maps["cells"].ids, maps["points"].ids, fields)
 
 
 @on_inputs_device
@@ -341,8 +345,14 @@ def extract_surface(data, faces=None, fields=None):
     on the surface, the trace of the solid's: each face's corners, edge middles
     and (a quad's) center are the surface cell's, so their values are gathered,
     not evaluated. A 2D mesh's boundary lines take an order-2 field's values at
-    the points. The geometry must be ``H1``: an ``L2`` one has no shared points
-    for the faces to stand on.
+    the points. ``L2`` (DG) fields of one order stay in the same space on the
+    surface, each face holding its side 0 cell's trace (the cell's field at the
+    face's nodes, through the cell's parametric coordinates, exact for every
+    basis); an order-0 one takes its cell's value, as cell fields do, and on no
+    faces each is there with no values. Polyhedra have no ``L2`` fields (``L2``
+    needs reference cells): a value a cell on them is a ``Constant`` field,
+    which comes to the surface as cell fields do. The geometry must be ``H1``: an
+    ``L2`` one has no shared points for the faces to stand on.
 
     Given a ``PartitionedDataSet``, the whole's surface, a piece each: each
     piece's boundary, less the faces two pieces share. Pieces without ghost
@@ -384,8 +394,15 @@ def extract_surface(data, faces=None, fields=None):
         fresh = _fresh_boundary(data, fields)
         if fresh is not None:
             return fresh
+        kept = data.topology._boundary
+        if kept is not None and kept[0] == "faces" and not (
+                data.topology.dimension == 3 and _has_order_two(data, fields)):
+            return _on_boundary(data, fields)
         from tack.dataset.algorithms.boundary_faces import boundary_faces
         faces = boundary_faces(data)
+        boundary = True
+    else:
+        boundary = False
     ids = _face_ids(data, faces)
     topology = data.topology
     if not getattr(topology, "reference_cells", True) and not topology.mixed:
@@ -421,11 +438,16 @@ def extract_surface(data, faces=None, fields=None):
         out = carry(data, surface, points=Same(), cells=Pieces(cells), faces_to_cells=Take(ids),
                     fields=fields)
         _keep_order_two(data, out, ids, fields)
-        return _on_used_points(out)
+        return _on_used_points(_keep_traces(data, out, cells, None, fields))
     count, points = _used_points(connectivity, data.num_points, idt)
     surface = UnstructuredTopology(types, offsets, connectivity, num_points=count)
-    return carry(data, surface, points=Take(points), cells=Pieces(cells),
-                 faces_to_cells=Take(ids), fields=fields)
+    maps = {"points": Take(points), "cells": Pieces(cells), "faces_to_cells": Take(ids)}
+    if boundary:
+        # The boundary is the topology's own: kept with it, as the fresh one is.
+        data.topology._boundary = ("faces", surface, maps, None)
+        return _on_boundary(data, fields)
+    return _keep_traces(data, carry(data, surface, fields=fields, **maps), cells,
+                        points, fields)
 
 
 @tack.kernel
@@ -521,6 +543,137 @@ def _order_two(field):
     return isinstance(field.space, H1) and field.space.order == 2
 
 
+# ── L2 fields: each face's trace ───────────────────────────────────
+
+@tack.kernel
+def _solid_keys(surface, cells, keys):
+    for s in surface:
+        keys[s] = cells[surface.entity_id(s)]
+
+
+@tack.func
+def _solid_corner(solid, c, point):
+    # The parametric point of solid cell c's corner at input point `point`: a
+    # face's corners are its cell's.
+    pc = solid.parametric_point(0)
+    for m in range(1, solid.NUM_POINTS):
+        if solid.point_id(c, m) == point:
+            pc = solid.parametric_point(m)
+    return pc
+
+
+@tack.kernel
+def _face_traces(solid, u, surface, t, points, starts, faces, out):
+    # Each surface cell's L2 nodes from the solid cell it is a face of: a node's
+    # parametric point on the face, taken to the solid's by the face's corners
+    # (the surface shape's corner functions weighing the solid corners'
+    # parametric points), where the solid's field is evaluated. The trace of an
+    # order-p polynomial on a face is in the face's order-p space, so the
+    # surface field is the solid's there. A face is a 3D cell's triangle or quad,
+    # or a 2D cell's edge (a line): only its own corners are read.
+    for c in solid:
+        e = solid.entity_id(c)
+        for k in range(starts[e], starts[e + 1]):
+            s = faces[k]
+            p0 = _solid_corner(solid, c, points[surface.point_id(s, 0)])
+            p1 = _solid_corner(solid, c, points[surface.point_id(s, 1)])
+            p2 = p1
+            p3 = p1
+            if surface.NUM_POINTS >= 3:
+                p2 = _solid_corner(solid, c, points[surface.point_id(s, 2)])
+            if surface.NUM_POINTS == 4:
+                p3 = _solid_corner(solid, c, points[surface.point_id(s, 3)])
+            for n in range(t.NODES):
+                f = t.node_parametric(n)
+                pc = surface.shape_function(0, f) * p0 + surface.shape_function(1, f) * p1
+                if surface.NUM_POINTS >= 3:
+                    pc = pc + surface.shape_function(2, f) * p2
+                if surface.NUM_POINTS == 4:
+                    pc = pc + surface.shape_function(3, f) * p3
+                out[t.dof_index(s, n)] = u.value(c, pc)
+
+
+def _traced(data, field):
+    """Whether ``extract_surface`` gives ``field`` its faces' trace: an ``L2``
+    field of one order, stored, of floating-point values (an order-0 one of any
+    type, taken by cell), with no gradient of its own to carry."""
+    space = field.space
+    return (isinstance(space, L2) and not space.varies and not space.evaluated
+            and field.gradient is None
+            and (space.order == 0 or arrays.dtype_of(field.values) in (tack.f32, tack.f64)))
+
+
+def _keep_traces(data, out, cells, points, fields):
+    """``out``, the surface of ``data`` whose cell ``s`` is a face of cell
+    ``cells[s]`` and whose point ``p`` is ``data``'s ``points[p]`` (``None``: the
+    same), with ``data``'s ``L2`` fields as ``L2`` fields of the same order and
+    basis on it, each face holding its cell's trace. ``carry`` leaves them
+    behind, since a face is a piece of its cell."""
+    from tack.dataset import _bernstein
+    from tack.dataset.buckets import bucket_groups
+    from tack.dataset.dataset import field_name
+
+    # L2 needs reference cells (no field of it is made on polyhedra), and a
+    # mesh of them has faces of them; a polygonal surface takes order 0 alone.
+    shaped = getattr(out.topology, "reference_cells", True)
+    names = [name for name in selected(data, fields) if _traced(data, data.fields[name])
+             and (shaped or data.fields[name].space.order == 0)]
+    if not names:
+        return out
+    if points is None:
+        points = CountingArray(out.num_points, dtype=data.id_dtype)
+    links = {}
+    for name in names:
+        field = data.fields[name]
+        space = field.space
+        # The same space on the surface: order, basis and a layout asked for. Put
+        # by its own space where fields share the name, as out's fields are keyed.
+        kept = {k: v for k, v in space.params.items() if k in ("basis", "layout")}
+        target_space = L2(out, order=space.order, **kept)
+        key = name if isinstance(name, str) else (field_name(name), target_space)
+        if space.order == 0 or not out.num_cells:
+            # A value a cell, its cell's; on no faces, no values, but the field still.
+            out.fields[key] = Field(target_space, _take(field.values, cells)
+                                    if out.num_cells else _like(field.values, 0), field.unit)
+            continue
+        nodal_space = (_bernstein.lagrange_companion(target_space)
+                       if _bernstein.is_bernstein(target_space) else target_space)
+        target = Field(nodal_space, _like(field.values, nodal_space.size))
+        for h in out.launch_groups("cells", [target]):
+            if not h.count:
+                continue
+            surface = out.domain_view("cells", h)
+            if h.shape not in links:
+                # This group's faces by the solid cell they bound.
+                keys = tack.empty((h.count,), cells.dtype)
+                _solid_keys(surface, cells, keys)
+                links[h.shape] = bucket_groups(keys, data.num_cells,
+                                               id_types.at_least(data.id_dtype, h.count))
+            faces, starts = links[h.shape]
+            for g in data.launch_groups("cells", [field]):
+                if g.count:
+                    _face_traces(data.domain_view("cells", g), field.view(g), surface,
+                                 target.view(h), points, starts, faces, target.values)
+        traced = Field(nodal_space, target.values, field.unit)
+        if nodal_space is not target_space:
+            traced = _bernstein.from_lagrange(out, traced, target_space)
+        out.fields[key] = Field(target_space, traced.values, field.unit)
+    return out
+
+
+def _by_entity(data, field):
+    """``field`` with its values numbered by entity, as ``_keep_order_two`` gathers
+    them: one numbered by a table (``H1(dofs=...)``, as MFEM and VTK's cell grids
+    number theirs) projected into the space numbered by entity (the same functions)."""
+    space = field.space
+    if space.dofs is None:
+        return field
+    from tack.dataset.algorithms.project import project
+
+    return project(data, field, H1(data, order=space.order,
+                                   **({"basis": space.basis} if space.basis else {})))
+
+
 def _keep_order_two(data, out, ids, fields):
     """``out``'s fields and geometry that are order 2 in ``data``, made order 2 on the
     surface ``out`` of ``data``'s faces ``ids``: the surface's nodes are the
@@ -544,10 +697,11 @@ def _keep_order_two(data, out, ids, fields):
     if ids.shape[0]:
         _center_sources(ids, data.topology.faces().kinds, solid_face_dofs, cell_dofs, sources)
     for name in names:
-        out.fields[name] = Field(space, _take(data.fields[name].values, sources),
-                                 data.fields[name].unit)
+        out.fields[name] = Field(space, _take(_by_entity(data, data.fields[name]).values,
+                                              sources), data.fields[name].unit)
     if curved:
-        out.geometry = Field(space, _take(data.geometry.values, sources), data.unit)
+        out.geometry = Field(space, _take(_by_entity(data, data.geometry).values, sources),
+                             data.unit)
 
 
 @tack.kernel
@@ -618,8 +772,9 @@ def _polygon_surface(data, ids, fields=None):
     cells = tack.empty((n,), idt)
     if n:
         _face_cells(ids, faces.sides, cells)
-    return carry(data, surface, points=Take(points), cells=Pieces(cells),
-                 faces_to_cells=Take(ids), fields=fields)
+    out = carry(data, surface, points=Take(points), cells=Pieces(cells),
+                faces_to_cells=Take(ids), fields=fields)
+    return _keep_traces(data, out, cells, points, fields)
 
 
 def _boundary_of(piece):

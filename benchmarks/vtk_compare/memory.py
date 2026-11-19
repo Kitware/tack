@@ -15,7 +15,10 @@ process's memory every 2 ms through one call on the large one. It reports
   before it (temporaries and output);
 - ``kept``: what it holds after the call while the output is alive (the
   output, and whatever the filter derived and kept on the input);
-- the call's time.
+- the call's time;
+- for Tack, ``counted``: the most its arrays held during the call beyond what
+  they held before (`tack.runtime.memory_stats`, the count of every array Tack
+  makes), which sees any device and none of NumPy's or the allocator's own.
 
 The memory measured is what the allocator has handed out and not taken back
 (``malloc_zone_statistics`` on macOS, ``mallinfo2`` on Linux): every live
@@ -180,17 +183,25 @@ def measure_one(mesh_name, size, filter_name, system, threads):
     mesh = build(m.SIZES[size])
     source, input_bytes = prepare(mesh)
     _release_free_memory()
+    counted = None
+    if system == "tack":
+        from tack.runtime import memory_stats
+
+        counted = memory_stats.reset_peak()
     before = read()
     with _Sampler(read) as sampler:
         start = time.perf_counter()
         result = run(source, mesh)
         seconds = time.perf_counter() - start
+    if counted is not None:
+        counted = memory_stats.peak() - counted
     _release_free_memory()
     kept = read() - before
     del result
     return {"mesh": mesh_name, "size": size, "cells": mesh.num_cells, "filter": filter_name,
             "system": system, "threads": threads, "input": input_bytes,
-            "peak": sampler.peak - before, "kept": kept, "seconds": seconds}
+            "peak": sampler.peak - before, "kept": kept, "seconds": seconds,
+            "counted": counted}
 
 
 def _child(args):
@@ -228,7 +239,7 @@ def main():
     names = [q.name for q in p.PAIRS if not args.filters or q.name in args.filters.split(",")]
     records = []
     print(f"{'mesh':>4} {'size':>5} {'filter':<15} {'system':<5} {'input MB':>8} "
-          f"{'peak MB':>8} {'kept MB':>8} {'s':>7}  peak/input", flush=True)
+          f"{'peak MB':>8} {'kept MB':>8} {'s':>7}  peak/input  counted MB", flush=True)
     for mesh in args.meshes.split(","):
         for size in args.sizes.split(","):
             for name in names:
@@ -242,7 +253,9 @@ def main():
                         continue
                     print(f"{mesh:>4} {size:>5} {name:<15} {system:<5} {_gb(r['input'])}  "
                           f"{_gb(r['peak'])}  {_gb(r['kept'])} {r['seconds']:7.3f}  "
-                          f"{r['peak'] / max(r['input'], 1):5.2f}", flush=True)
+                          f"{r['peak'] / max(r['input'], 1):5.2f}"
+                          + (f"  {_gb(r['counted'])}" if r.get("counted") is not None else ""),
+                          flush=True)
                     if args.output:
                         with open(args.output, "w") as f:
                             json.dump(records, f, indent=1)

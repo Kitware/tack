@@ -136,6 +136,42 @@ def test_clip_by_integer_point_data(backend):
         assert np.isclose(td.cell_geometry(out).measure.values.numpy().sum(), 0.5)
 
 
+@pytest.mark.parametrize("inside", [False, True])
+def test_a_clip_through_mesh_points_keeps_and_drops_whole_cells(backend, inside):
+    """A cut meant through a plane of mesh points, which round-off puts on either
+    side of the value (a node placed with cos(pi/2), 6e-17 off a plane through
+    the axis), keeps the cells on one side whole and drops the others: no piece
+    of no volume between them, no point twice (the tables cut a cell through a
+    corner a hair on the dropped side, at the corner)."""
+    data = td.uniform_grid((5, 3, 3))                    # x from 0 to 4
+    d = data.positions()[:, 0] - 2.0
+    on = np.flatnonzero(d == 0)
+    d[on] = np.array([0.0, 2e-7, -2e-7])[np.arange(len(on)) % 3]    # f32's round-off
+    out = td.clip(data, td.Field(td.H1(data), _scalars(d)), 0.0, inside=inside)
+    assert out.num_cells == 8
+    assert td.cell_geometry(out).measure.values.numpy().sum() == pytest.approx(8.0)
+    x = out.positions()
+    assert len(np.unique(x, axis=0)) == len(x) == 27
+    assert (x[:, 0] <= 2 + 1e-6).all() if inside else (x[:, 0] >= 2 - 1e-6).all()
+
+
+@pytest.mark.parametrize("inside", [False, True])
+def test_a_clip_drops_cells_that_touch_the_value(backend, inside):
+    """Two cells along x, the values -1, 0, 1 at x = 0, 1, 2: each cell has a face at
+    the value, and the one on the dropped side only touches it, so it is dropped
+    whole (the tables kept a piece of it of no volume, on that face). A cell whose
+    corners are all at the value is kept, either way."""
+    data = td.uniform_grid((3, 2, 2))
+    x = data.positions()[:, 0]
+    out = td.clip(data, td.Field(td.H1(data), _scalars(x - 1.0)), 0.0, inside=inside)
+    assert out.num_cells == 1
+    assert td.cell_geometry(out).measure.values.numpy().sum() == pytest.approx(1.0)
+    kept = out.positions()[:, 0]
+    assert (kept <= 1).all() if inside else (kept >= 1).all()
+    flat = td.Field(td.H1(data), _scalars(np.zeros(data.num_points)))
+    assert td.clip(data, flat, 0.0, inside=inside).num_cells == 2
+
+
 def test_clip_refuses_an_l2_geometry(backend):
     """Clip merges its points across cells, one position each: an L2 geometry is
     refused up front, as for a clip by a function."""

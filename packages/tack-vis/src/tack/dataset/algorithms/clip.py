@@ -52,6 +52,49 @@ _MOST = 64
 _SERIAL_KINDS = 2048
 
 
+# A corner this close to the value, as a fraction of the farthest of its cell's
+# corners, is at the value: round-off (a node meant to lie on a plane, 1e-16 off it)
+# does not cut its cell through it.
+_AT_VALUE = tack.constant(1e-6)
+
+
+@tack.func
+def _cell_case(cells, c, values, value, invert, remap):
+    """The cell's case: bit ``k`` set where corner ``k`` is at or above ``value``. A
+    corner at the value (within ``_AT_VALUE``) counts as on the kept side; a cell with
+    no corner strictly on the kept side but one strictly on the other is dropped (it
+    only touches the value), so a clip through mesh points keeps whole cells and
+    drops whole cells, with no pieces of no volume between them."""
+    full = (1 << cells.NUM_POINTS) - 1
+    # The span of the finite distances: an infinite or NaN value is above or below
+    # by its sign (a NaN below, as the case index always had it), never at the value.
+    span = abs(values[cells.point_id(c, remap[0])] - value) * 0
+    for k in range(cells.NUM_POINTS):
+        a = abs(values[cells.point_id(c, remap[k])] - value)
+        if a - a == 0:
+            span = max(span, a)
+    near = span * _AT_VALUE
+    case = 0
+    kept = 0
+    other = 0
+    for k in range(cells.NUM_POINTS):
+        d = values[cells.point_id(c, remap[k])] - value
+        above = 0
+        if abs(d) <= near:
+            above = 1 if invert == 0 else 0
+        else:
+            above = 1 if d > 0 else 0
+            if above == 1 - invert:
+                kept += 1
+            else:
+                other += 1
+        if above == 1:
+            case = case | (1 << k)
+    if kept == 0 and other > 0:
+        case = 0 if invert == 0 else full
+    return case
+
+
 @tack.kernel
 def _scan_kinds(counts, starts, sums, n):
     # Each kind's exclusive scan of the cells' counts, in one thread, as a
@@ -97,10 +140,7 @@ _OFFSET_BATCH = 256
 @tack.func
 def _case(cells, c, e, values, value, invert, remap, marks, hidden):
     full = (1 << cells.NUM_POINTS) - 1
-    case = 0
-    for k in range(cells.NUM_POINTS):
-        if values[cells.point_id(c, remap[k])] >= value:
-            case = case | (1 << k)
+    case = _cell_case(cells, c, values, value, invert, remap)
     if _left_out(marks, hidden, e):
         case = 0 if invert == 0 else full          # hidden or refined: dropped
     return case
@@ -462,16 +502,24 @@ def clip(data, by, value=0.0, inside=False, fields=None, subdivision=None, toler
     corners, the crossings on cut edges (merged across cells) and centroid
     points; point data is interpolated onto them, cell data goes to each piece.
 
-    Crossings are named by their edges, as VTK's ``vtkTableBasedClipDataSet``
-    names them, so a clip exactly through mesh points (a plane through a face
-    of cells, or a hair from points, as a symmetry plane's at y = 1e-45) leaves
-    a crossing on top of the corner it lies at and cells of no volume between
-    them, as VTK's does. ``merge_points`` merges the coincident points (VTK's
-    ``vtkCleanGrid``), leaving those cells naming a point more than once;
-    ``generate_global_ids`` of clipped pieces needs them merged first, since it
-    matches points by position. ``contour`` and ``slice`` instead make such a
-    crossing the point (``edge_crossing``) and drop what loses its area; clip
-    cannot drop what it keeps, since some of those cells keep their volume.
+    A corner within a millionth of its cell's span of the value (the farthest
+    corner's distance from it) is at the value, and at the value is kept on
+    either side; a cell with no corner strictly on the kept side but one on the
+    other only touches the value and is dropped. So a clip through a plane of
+    mesh points -- a symmetry plane, whose nodes round-off puts 1e-16 to either
+    side -- keeps whole cells on one side and drops those on the other, where
+    VTK's ``vtkTableBasedClipDataSet`` cuts a cell through a corner a hair on
+    the dropped side and keeps pieces of no volume, with points twice.
+
+    Crossings are named by their edges, as VTK's names them, so a cut through a
+    cell's corner (a plane through mesh points but oblique to the cells) leaves
+    a crossing on top of the corner it lies at, as VTK's does. ``merge_points``
+    merges the coincident points (VTK's ``vtkCleanGrid``), leaving cells naming
+    a point more than once; ``generate_global_ids`` of clipped pieces needs them
+    merged first, since it matches points by position. ``contour`` and
+    ``slice`` instead make such a crossing the point (``edge_crossing``) and
+    drop what loses its area; clip cannot drop what it keeps, since some of
+    those cells keep their volume.
 
     A polyhedral topology is clipped cell by cell into polyhedra: each cut cell
     becomes the polyhedron of its kept part, its faces clipped (each face once,
@@ -482,11 +530,10 @@ def clip(data, by, value=0.0, inside=False, fields=None, subdivision=None, toler
     clipped yet. Polyhedra beside shapes (a mixed ``UnstructuredTopology``) are
     clipped the same way, and so is every cut shape beside them, since a shape's
     pieces would split faces a polyhedron holds whole; a shape kept whole stays
-    as it is, so the output is mixed too, its whole shapes first. There a cell is
-    kept only if a point is strictly above ``value`` (below, with ``inside``): a
-    cell that touches it from the other side is dropped, where the shapes' tables
-    (and VTK's) keep a piece of it of no volume, so a clip through a plane of mesh
-    points has fewer cells than VTK's, all of its volume.
+    as it is, so the output is mixed too, its whole shapes first. There too a cell
+    is kept only if a point is strictly above ``value`` (below, with ``inside``):
+    a cell that touches it from the other side is dropped, as the shapes' are
+    (VTK's keep a piece of it of no volume).
 
     A curved geometry, a field above order 1 or any ``L2`` field (or ``subdivision``
     above 1, or a ``tolerance``) is clipped through subdivision, as ``contour`` cuts it,

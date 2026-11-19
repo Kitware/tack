@@ -393,7 +393,10 @@ are not valid there. Every filter that makes cells or points leaves them out,
 and so do `probe`, `advect` and `streamlines` in their source dataset.
 Algorithms whose output is on the same cells, such as gradients and
 projections, still compute there, and the marks stay. Faces or edges chosen
-by id and a reused `CellLocator` are refused on data with hidden cells.
+by id are refused on data with hidden cells. `probe`, `advect` and
+`streamlines` leave hidden and refined cells out in their search, so the
+dataset keeps its locator from call to call, and a `CellLocator` given is
+taken.
 
 **Fields the marks cannot place.** An `L2` field goes by its cells' marks.
 A field on faces or edges, or of order 2, is refused by reductions on a

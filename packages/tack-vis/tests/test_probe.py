@@ -636,15 +636,16 @@ def test_a_point_just_outside_beside_a_pyramids_apex_is_near_it(backend):
 def test_a_first_query_of_few_points_runs_from_the_cells():
     """The search from the points needs the cell bins, about eight entries a cell:
     a fresh locator's first query of few points runs from the cells, and builds
-    them only from its second query on, or for many points."""
+    them only from its second query on, or for many points. (An image's locator
+    needs no bins: ``test_structured_locator.py``.)"""
     tack.set_default_device("cpu")
     data = td.wavelet(6)
-    locator = td.CellLocator(data)
+    locator = td.CellLocator(data, levels=2)
     locator.find([[0.0, 0.0, 0.0]])
     assert "_cell_bins" not in locator.__dict__
     locator.find([[0.0, 0.0, 0.0]])
     assert "_cell_bins" in locator.__dict__
-    many = td.CellLocator(data)
+    many = td.CellLocator(data, levels=2)
     many.find(np.zeros((data.num_cells, 3)))
     assert "_cell_bins" in many.__dict__
 

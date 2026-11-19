@@ -448,6 +448,14 @@ class UniformCoordinates(_Implicit):
     def point_dims(self):
         return _point_dims(self.dims)
 
+    @property
+    def index_to_world(self):
+        """``(origin, steps)`` in f64 on the host: the point at index coordinates
+        ``(i, j, k)`` is ``origin + steps @ (i, j, k)``, column ``a`` of ``steps``
+        (3 x 3, ``direction`` times ``diag(spacing)``) one step along index axis ``a``."""
+        return (np.array(self._origin, float),
+                np.asarray(self._matrix, float) @ np.diag(np.asarray(self._spacing, float)))
+
     def __repr__(self):
         return f"UniformCoordinates of {' x '.join(map(str, self.dims))} points"
 

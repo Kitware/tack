@@ -9,6 +9,7 @@ import numpy as np
 import tack
 from tack import arrays
 from tack.algorithms.scan import exclusive_scan
+from tack.dataset import _clip_snap_tables as snap_tables
 from tack.dataset import _clip_tables as tables
 from tack.dataset import ids, shapes
 from tack.dataset.algorithms._common import (
@@ -28,7 +29,8 @@ from tack.dataset.carry import Interpolate, Pieces, _point_values, carry
 from tack.dataset.dataset import Field
 from tack.dataset.spaces import H1, L2, Values
 from tack.dataset.topology import UnstructuredTopology
-from tack.runtime.dispatch import on_inputs_device
+from tack.lang.template_rewrite import iteration_space
+from tack.runtime.dispatch import get_backend, on_inputs_device
 
 __all__ = ['clip']
 
@@ -41,7 +43,7 @@ _TABLE_OF = {int(shapes.PIXEL): (9, [0, 1, 3, 2]),
              int(shapes.WEDGE): (13, [0, 2, 1, 3, 5, 4])}
 
 
-_KINDS = 5            # cells, connectivity, records, centroids, centroid members
+_KINDS = 5            # cells, connectivity, crossings, centroids, centroid members
 
 
 # Entries of any kind one cell can make, at most: a bound for the output's ids.
@@ -49,6 +51,61 @@ _MOST = 64
 
 # Cells up to which one thread scans every kind's counts (``_scan_kinds``).
 _SERIAL_KINDS = 2048
+
+
+# A corner this close to the value, as a fraction of the farthest of its cell's
+# corners, is at the value: round-off (a node meant to lie on a plane, 1e-16 off it)
+# does not cut its cell through it.
+_AT_VALUE = tack.constant(1e-6)
+
+
+@tack.func
+def _cell_case(cells, c, values, value, invert, remap):
+    """The cell's case, bit ``k`` set where corner ``k`` is at or above ``value``,
+    and its corners at the value, bit ``k`` set where corner ``k`` is.
+
+    A corner within ``_AT_VALUE`` of the value is exactly at it: above, on both
+    sides of a clip (``inside`` or not), so the two sides take complementary cases
+    and fill the cell between them, and the crossings on its edges are the corner
+    itself (``_shape_tables``' records for corners at the value), so a cell whose
+    other corners are all on the kept side is kept whole, in the pieces its case
+    makes, as its neighbours cut their faces. A cell with a corner strictly on the
+    other side and none strictly on the kept side is dropped (it only touches the
+    value), and one all at the value is kept either way: a clip through a plane of
+    mesh points keeps the cells on one side whole and drops the others, with no
+    pieces of no volume between them."""
+    full = (1 << cells.NUM_POINTS) - 1
+    # The span of the finite distances: an infinite or NaN value is above or below
+    # by its sign (a NaN below, as the case index always had it), never at the value.
+    span = abs(values[cells.point_id(c, remap[0])] - value) * 0
+    for k in range(cells.NUM_POINTS):
+        a = abs(values[cells.point_id(c, remap[k])] - value)
+        if a - a == 0:
+            span = max(span, a)
+    near = span * _AT_VALUE
+    case = 0
+    at = 0
+    kept = 0
+    other = 0
+    for k in range(cells.NUM_POINTS):
+        d = values[cells.point_id(c, remap[k])] - value
+        above = 0
+        if abs(d) <= near:
+            above = 1
+            at = at | (1 << k)
+        else:
+            above = 1 if d > 0 else 0
+            if above == 1 - invert:
+                kept += 1
+            else:
+                other += 1
+        if above == 1:
+            case = case | (1 << k)
+    if kept == 0 and other == 0:
+        case = full if invert == 0 else 0                # all at the value: whole
+    elif kept == 0:
+        case = 0 if invert == 0 else full                # dropped: it only touches
+    return case, at
 
 
 @tack.kernel
@@ -63,176 +120,394 @@ def _scan_kinds(counts, starts, sums, n):
         sums[0] = running
 
 
+def _data(invert):
+    """The case tables' records, then the records of cut cells with corners at the
+    value (``_clip_snap_tables``)."""
+    return np.concatenate([np.asarray(tables.DATA[invert], np.int32),
+                           snap_tables.data(invert).astype(np.int32)])
+
+
+def _cases(invert, table, n):
+    """Each case's record in ``_data``, then one entry per case and set of corners at
+    the value (``case << n | at``, after the ``2**n`` cases): the record its pieces
+    are once the crossings at those corners are the corners, or -1 where that is
+    the case's own record."""
+    snapped = np.full(1 << (2 * n), -1, np.int64)
+    pairs = snap_tables.cases(invert, table).reshape(-1, 2).astype(np.int64)
+    snapped[pairs[:, 0]] = pairs[:, 1] + len(tables.DATA[invert])
+    return np.concatenate([np.asarray(tables.CASES[invert][table], np.int64), snapped])
+
+
 def _shape_tables(shape_id, invert):
     """``(data, cases, edges, remap, whole_type, whole_order)`` for one shape: the
-    tables, the corner order to read them through, and the type and corner order
-    of a cell kept whole -- a pixel or voxel kept as a quad or hexahedron, as
-    VTK's clip keeps them; a wedge in its own (VTK's) order."""
+    tables (``_data``, ``_cases``), the corner order to read them through, and the
+    type and corner order of a cell kept whole -- a pixel or voxel kept as a quad or
+    hexahedron, as VTK's clip keeps them; a wedge in its own (VTK's) order."""
     table, remap = _TABLE_OF.get(shape_id, (shape_id, None))
     if table not in tables.EDGES:
         return None
     n = len(remap) if remap else {1: 1, 3: 2, 5: 3, 9: 4, 10: 4, 12: 8, 13: 6, 14: 5}[table]
     remap = remap or list(range(n))
     whole_order = list(range(n)) if shape_id == int(shapes.WEDGE) else remap
-    return (_table(("clip data", invert), tables.DATA[invert]),
-            _table(("clip cases", invert, table), tables.CASES[invert][table]),
+    return (_table(("clip data", invert), lambda: _data(invert)),
+            _table(("clip cases", invert, table), lambda: _cases(invert, table, n)),
             _table(("clip edges", table), tables.EDGES[table] or [0, 0]),
             _table(("clip remap", shape_id), remap), table,
             _table(("clip whole", shape_id), whole_order))
 
 
+# Cells counted and written together, in id order (the cut filters' memory plan,
+# D3, as VTK's vtkBatch): their outputs' totals are kept per batch, not per cell.
+# On a device with workgroups a batch is one workgroup's 256 cells.
+_GROUP = 256
+_CPU_BATCH = 256          # 64, 256 and 1024 within 1 ms on 5M cells (M1 Max)
+# False sends every mesh through the per-cell form (a test compares the two).
+_BATCHES = True
+# Cells a batch's offsets are kept for, within the batch, on a mesh of several
+# shapes (u16 offsets: up to 255 cells of `_MOST` entries before a cell).
+_OFFSET_BATCH = 256
+
+
+@tack.func
+def _case(cells, c, e, values, value, invert, cases, remap, marks, hidden):
+    # The cell's case and its record in ``data``: the case table's, or, a cut cell
+    # with corners at the value, the record of its pieces as they are once the
+    # crossings at those corners are the corners (``_shape_tables``).
+    full = (1 << cells.NUM_POINTS) - 1
+    case, at = _cell_case(cells, c, values, value, invert, remap)
+    if _left_out(marks, hidden, e):
+        case = 0 if invert == 0 else full          # hidden or refined: dropped
+        at = 0
+    record = cases[case]
+    if at != 0:
+        snapped = cases[(1 << cells.NUM_POINTS) + ((case << cells.NUM_POINTS) | at)]
+        if snapped >= 0:
+            record = snapped
+    return case, record
+
+
+@tack.func
+def _cell_counts(cells, c, e, values, value, invert, data, cases, remap, marks, hidden):
+    # One cell's outputs of each kind: cells, connectivity, crossings, centroids,
+    # centroid members.
+    full = (1 << cells.NUM_POINTS) - 1
+    case, at = _case(cells, c, e, values, value, invert, cases, remap, marks, hidden)
+    n_cells = 0
+    n_conn = 0
+    n_records = 0
+    n_centroids = 0
+    n_members = 0
+    whole = case == full if invert == 0 else case == 0
+    dropped = case == 0 if invert == 0 else case == full
+    if whole:
+        n_cells = 1
+        n_conn = cells.NUM_POINTS
+    elif not dropped:
+        shapes_left = data[at]
+        at += 1
+        for s in range(shapes_left):
+            kind = data[at]
+            count = data[at + 1]
+            at += 2
+            if kind == 0:
+                n_centroids += 1
+                n_members += count
+                for k in range(count):
+                    if data[at + k] >= 8:
+                        n_records += 1
+            else:
+                n_cells += 1
+                n_conn += count
+                for k in range(count):
+                    if data[at + k] >= 8 and data[at + k] != 20:
+                        n_records += 1
+            at += count
+    return [n_cells, n_conn, n_records, n_centroids, n_members]
+
+
+@tack.func
+def _emit_cell(cells, c, e, first, values, value, invert, data, cases, edges, remap,
+               whole_type, whole_order, types, offsets, connectivity, sources, keys, slots,
+               centroid_offsets, centroid_cells, members, used, crossing, marks, hidden):
+    # One cell's outputs from ``first``, its start of each kind. An input point a
+    # cell keeps is written as its id and marked used; a crossing gets a record
+    # (its edge, and the slot that takes its point) and `crossing` in its slot
+    # until the records are merged.
+    full = (1 << cells.NUM_POINTS) - 1
+    case, at = _case(cells, c, e, values, value, invert, cases, remap, marks, hidden)
+    cell = first[0]
+    conn = first[1]
+    record = first[2]
+    centroid = first[3]
+    member = first[4]
+    whole = case == full if invert == 0 else case == 0
+    dropped = case == 0 if invert == 0 else case == full
+    if whole:
+        types[cell] = tack.u8(whole_type)
+        offsets[cell] = conn
+        sources[cell] = e
+        for k in range(cells.NUM_POINTS):
+            p = cells.point_id(c, whole_order[k])
+            connectivity[conn] = p
+            tack.atomic_max(used, p, 1)
+            conn += 1
+    elif not dropped:
+        shapes_left = data[at]
+        at += 1
+        for s in range(shapes_left):
+            kind = data[at]
+            count = data[at + 1]
+            at += 2
+            if kind == 0:
+                centroid_offsets[centroid] = member
+                centroid_cells[centroid] = e
+                for k in range(count):
+                    entry = data[at + k]
+                    if entry < 8:
+                        p = cells.point_id(c, remap[entry])
+                        members[member] = p
+                        tack.atomic_max(used, p, 1)
+                    else:
+                        pa = cells.point_id(c, remap[edges[2 * (entry - 8)]])
+                        pb = cells.point_id(c, remap[edges[2 * (entry - 8) + 1]])
+                        keys[record] = [min(pa, pb), max(pa, pb)]
+                        slots[record] = -(member + 1)
+                        members[member] = crossing
+                        record += 1
+                    member += 1
+            else:
+                types[cell] = tack.u8(kind)
+                offsets[cell] = conn
+                sources[cell] = e
+                cell += 1
+                for kk in range(count):
+                    # The tables (VisIt's) wind wedges the other way from VTK's
+                    # order: each triangle is taken reversed, 0 2 1 3 5 4.
+                    k = kk
+                    if kind == 13:
+                        k = 3 * (kk // 3) + (3 - kk % 3) % 3
+                    if data[at + k] == 20:
+                        connectivity[conn] = -(centroid + 1)     # resolved later
+                    else:
+                        entry = data[at + k]
+                        if entry < 8:
+                            p = cells.point_id(c, remap[entry])
+                            connectivity[conn] = p
+                            tack.atomic_max(used, p, 1)
+                        else:
+                            pa = cells.point_id(c, remap[edges[2 * (entry - 8)]])
+                            pb = cells.point_id(c, remap[edges[2 * (entry - 8) + 1]])
+                            keys[record] = [min(pa, pb), max(pa, pb)]
+                            slots[record] = conn
+                            connectivity[conn] = crossing
+                            record += 1
+                    conn += 1
+            at += count
+
+
+# ── One shape: batches of cells, nothing kept per cell ─────────────
+
+@tack.kernel
+def _batch_totals(cells, values, value, invert, data, cases, remap, n, batch, totals, marks,
+                  hidden):
+    # Without workgroups: a batch is one thread's, its cells in order.
+    for b in range(totals.shape[0]):
+        total = [0, 0, 0, 0, 0]
+        for c in range(b * batch, min(n, b * batch + batch)):
+            total = total + _cell_counts(cells, c, cells.entity_id(c), values, value, invert,
+                                         data, cases, remap, marks, hidden)
+        totals[b] = total
+
+
+@tack.kernel
+def _batch_emit(cells, values, value, invert, data, cases, edges, remap, whole_type,
+                whole_order, n, batch, batch_starts, types, offsets, connectivity, sources,
+                keys, slots, centroid_offsets, centroid_cells, members, used, crossing, marks,
+                hidden):
+    for b in range(batch_starts.shape[0]):
+        first = batch_starts[b]
+        for c in range(b * batch, min(n, b * batch + batch)):
+            e = cells.entity_id(c)
+            _emit_cell(cells, c, e, first, values, value, invert, data, cases, edges, remap,
+                       whole_type, whole_order, types, offsets, connectivity, sources, keys,
+                       slots, centroid_offsets, centroid_cells, members, used, crossing,
+                       marks, hidden)
+            first = first + _cell_counts(cells, c, e, values, value, invert, data, cases,
+                                         remap, marks, hidden)
+
+
+@tack.kernel
+def _group_totals(cells, values, value, invert, data, cases, remap, n, totals, marks, hidden):
+    # With workgroups: a batch is a workgroup's 256 cells, a lane each, their
+    # counts summed in shared memory.
+    lanes = tack.shared(tack.i32, 1280)
+    for i in range(totals.shape[0] * 256):
+        t = tack.thread_id()
+        counts = [0, 0, 0, 0, 0]
+        if i < n:
+            counts = _cell_counts(cells, i, cells.entity_id(i), values, value, invert, data,
+                                  cases, remap, marks, hidden)
+        lanes[t] = counts[0]
+        lanes[256 + t] = counts[1]
+        lanes[512 + t] = counts[2]
+        lanes[768 + t] = counts[3]
+        lanes[1024 + t] = counts[4]
+        tack.barrier()
+        step = 128
+        while step > 0:
+            if t < step:
+                for k in range(5):
+                    lanes[k * 256 + t] = lanes[k * 256 + t] + lanes[k * 256 + t + step]
+            tack.barrier()
+            step = step // 2
+        if t == 0:
+            totals[i // 256] = [lanes[0], lanes[256], lanes[512], lanes[768], lanes[1024]]
+
+
+@tack.kernel
+def _group_emit(cells, values, value, invert, data, cases, edges, remap, whole_type,
+                whole_order, n, batch_starts, types, offsets, connectivity, sources, keys,
+                slots, centroid_offsets, centroid_cells, members, used, crossing, marks,
+                hidden):
+    # Each lane's start within its workgroup's batch: the lanes before it, by a
+    # scan in shared memory.
+    lanes = tack.shared(tack.i32, 1280)
+    for i in range(batch_starts.shape[0] * 256):
+        t = tack.thread_id()
+        counts = [0, 0, 0, 0, 0]
+        if i < n:
+            counts = _cell_counts(cells, i, cells.entity_id(i), values, value, invert, data,
+                                  cases, remap, marks, hidden)
+        lanes[t] = counts[0]
+        lanes[256 + t] = counts[1]
+        lanes[512 + t] = counts[2]
+        lanes[768 + t] = counts[3]
+        lanes[1024 + t] = counts[4]
+        tack.barrier()
+        step = 1
+        while step < 256:
+            b0 = lanes[t - step] if t >= step else 0
+            b1 = lanes[256 + t - step] if t >= step else 0
+            b2 = lanes[512 + t - step] if t >= step else 0
+            b3 = lanes[768 + t - step] if t >= step else 0
+            b4 = lanes[1024 + t - step] if t >= step else 0
+            tack.barrier()
+            if t >= step:
+                lanes[t] = lanes[t] + b0
+                lanes[256 + t] = lanes[256 + t] + b1
+                lanes[512 + t] = lanes[512 + t] + b2
+                lanes[768 + t] = lanes[768 + t] + b3
+                lanes[1024 + t] = lanes[1024 + t] + b4
+            tack.barrier()
+            step = step * 2
+        if i < n:
+            # The lanes before this one: the inclusive sums less its own counts.
+            first = batch_starts[i // 256] + [lanes[t], lanes[256 + t], lanes[512 + t],
+                                              lanes[768 + t], lanes[1024 + t]] - counts
+            _emit_cell(cells, i, cells.entity_id(i), first, values, value, invert, data, cases,
+                       edges, remap, whole_type, whole_order, types, offsets, connectivity,
+                       sources, keys, slots, centroid_offsets, centroid_cells, members, used,
+                       crossing, marks, hidden)
+
+
+# ── Several shapes: each cell's counts, compact ─────────────────────
+
 @tack.kernel
 def _clip_counts(cells, values, value, invert, data, cases, remap, counts, marks, hidden):
     for c in cells:
         e = cells.entity_id(c)
-        full = (1 << cells.NUM_POINTS) - 1
-        case = 0
-        for k in range(cells.NUM_POINTS):
-            if values[cells.point_id(c, remap[k])] >= value:
-                case = case | (1 << k)
-        if _left_out(marks, hidden, e):
-            case = 0 if invert == 0 else full          # hidden or refined: dropped
-        n_cells = 0
-        n_conn = 0
-        n_records = 0
-        n_centroids = 0
-        n_members = 0
-        whole = case == full if invert == 0 else case == 0
-        dropped = case == 0 if invert == 0 else case == full
-        if whole:
-            n_cells = 1
-            n_conn = cells.NUM_POINTS
-            n_records = cells.NUM_POINTS
-        elif not dropped:
-            at = cases[case]
-            shapes_left = data[at]
-            at += 1
-            for s in range(shapes_left):
-                kind = data[at]
-                count = data[at + 1]
-                at += 2
-                if kind == 0:
-                    n_centroids += 1
-                    n_members += count
-                    n_records += count
-                else:
-                    n_cells += 1
-                    n_conn += count
-                    for k in range(count):
-                        if data[at + k] != 20:
-                            n_records += 1
-                at += count
-        counts[e] = [n_cells, n_conn, n_records, n_centroids, n_members]
+        counts[e] = _cell_counts(cells, c, e, values, value, invert, data, cases, remap,
+                                 marks, hidden)
+
+
+@tack.kernel
+def _batch_offsets(counts, local, totals, n, batch):
+    # Each cell's start within its batch (u16), and each batch's totals, from the
+    # cells' counts (u8), whatever their shapes.
+    for b in range(totals.shape[0]):
+        running = [0, 0, 0, 0, 0]
+        for e in range(b * batch, min(n, b * batch + batch)):
+            local[e] = running
+            running = running + counts[e]
+        totals[b] = running
 
 
 @tack.kernel
 def _clip_emit(cells, values, value, invert, data, cases, edges, remap, whole_type,
-               whole_order, starts, types, offsets, connectivity, sources, keys, slots,
-               centroid_offsets, centroid_cells, marks, hidden):
+               whole_order, batch, batch_starts, local, types, offsets, connectivity, sources,
+               keys, slots, centroid_offsets, centroid_cells, members, used, crossing, marks,
+               hidden):
     for c in cells:
         e = cells.entity_id(c)
-        full = (1 << cells.NUM_POINTS) - 1
-        case = 0
-        for k in range(cells.NUM_POINTS):
-            if values[cells.point_id(c, remap[k])] >= value:
-                case = case | (1 << k)
-        if _left_out(marks, hidden, e):
-            case = 0 if invert == 0 else full
-        first = starts[e]
-        cell = first[0]
-        conn = first[1]
-        record = first[2]
-        centroid = first[3]
-        member = first[4]
-        whole = case == full if invert == 0 else case == 0
-        dropped = case == 0 if invert == 0 else case == full
-        if whole:
-            types[cell] = tack.u8(whole_type)
-            offsets[cell] = conn
-            sources[cell] = e
-            for k in range(cells.NUM_POINTS):
-                p = cells.point_id(c, whole_order[k])
-                keys[record] = [p, p]
-                slots[record] = conn
-                record += 1
-                conn += 1
-        elif not dropped:
-            at = cases[case]
-            shapes_left = data[at]
-            at += 1
-            for s in range(shapes_left):
-                kind = data[at]
-                count = data[at + 1]
-                at += 2
-                if kind == 0:
-                    centroid_offsets[centroid] = member
-                    centroid_cells[centroid] = e
-                    for k in range(count):
-                        entry = data[at + k]
-                        pa = 0
-                        pb = 0
-                        if entry < 8:
-                            pa = cells.point_id(c, remap[entry])
-                            pb = pa
-                        else:
-                            pa = cells.point_id(c, remap[edges[2 * (entry - 8)]])
-                            pb = cells.point_id(c, remap[edges[2 * (entry - 8) + 1]])
-                        keys[record] = [min(pa, pb), max(pa, pb)]
-                        slots[record] = -(member + 1)
-                        record += 1
-                        member += 1
+        _emit_cell(cells, c, e, batch_starts[e // batch] + local[e], values, value, invert,
+                   data, cases, edges, remap, whole_type, whole_order, types, offsets,
+                   connectivity, sources, keys, slots, centroid_offsets, centroid_cells,
+                   members, used, crossing, marks, hidden)
+
+
+def _scanned_map(used, num_points, odt):
+    """``(starts, kept)``: the point map's marks (i32, ``num_points + 1`` of them)
+    scanned into the output's id type, in place where that is i32, and how many
+    points are marked."""
+    if not num_points:
+        return used, 0
+    out = used if odt == tack.i32 else tack.empty((num_points + 1,), odt)
+    return out, exclusive_scan(used, out, num_points, close=True)
+
+
+@tack.kernel
+def _number_points(used, keys, order, run_offsets, crossings, number, ends, weights):
+    # The output's points are numbered as a sort of (low, high) edge keys over
+    # every point use would number them: each used input point p, then the
+    # crossings on its edges to higher points. So p's number is the used points
+    # before it (``used``, scanned) and the crossings whose low end is below it.
+    for p in range(number.shape[0]):
+        if used[p + 1] > used[p]:
+            lo = 0
+            hi = crossings
+            while lo < hi:
+                mid = (lo + hi) // 2
+                if keys[order[run_offsets[mid]]][0] < p:
+                    lo = mid + 1
                 else:
-                    types[cell] = tack.u8(kind)
-                    offsets[cell] = conn
-                    sources[cell] = e
-                    cell += 1
-                    for kk in range(count):
-                        # The tables (VisIt's) wind wedges the other way from VTK's
-                        # order: each triangle is taken reversed, 0 2 1 3 5 4.
-                        k = kk
-                        if kind == 13:
-                            k = 3 * (kk // 3) + (3 - kk % 3) % 3
-                        if data[at + k] == 20:
-                            connectivity[conn] = -(centroid + 1)     # resolved later
-                        else:
-                            entry = data[at + k]
-                            pa = 0
-                            pb = 0
-                            if entry < 8:
-                                pa = cells.point_id(c, remap[entry])
-                                pb = pa
-                            else:
-                                pa = cells.point_id(c, remap[edges[2 * (entry - 8)]])
-                                pb = cells.point_id(c, remap[edges[2 * (entry - 8) + 1]])
-                            keys[record] = [min(pa, pb), max(pa, pb)]
-                            slots[record] = conn
-                            record += 1
-                        conn += 1
-                at += count
+                    hi = mid
+            r = used[p] + lo
+            number[p] = r
+            ends[r] = [p, p]
+            weights[r] = 0.0
+
+
+@tack.kernel
+def _renumber(entries, number):
+    # Input point ids to their output numbers; the negative markers (crossings'
+    # slots, centroids) stay.
+    for i in range(entries.shape[0]):
+        p = entries[i]
+        if p >= 0:
+            entries[i] = number[p]
 
 
 @tack.kernel
 def _resolve_points(keys, order, run_offsets, slots, values, positions, value, connectivity,
-                    members, ends, weights, count):
-    # Each run of equal keys is one output point: a corner, or an edge crossing
-    # interpolated from its end first by position, as contour's are, so every
-    # piece holding the edge computes it alike.
+                    members, ends, weights, used, count):
+    # Each run of equal keys is one crossing, numbered after the used points up to
+    # its low end, and interpolated from its end first by position, as contour's
+    # are, so every piece holding the edge computes it alike.
     for r in range(count):
         key = keys[order[run_offsets[r]]]
         a = key[0]
         b = key[1]
-        if a != b and not _first_end(positions[a], positions[b], a, b):
+        point = used[a + 1] + r
+        if not _first_end(positions[a], positions[b], a, b):
             a, b = b, a
-        ends[r] = [a, b]
-        weights[r] = 0.0
-        if a != b:
-            weights[r] = _crossing(value, values[a], values[b])
+        ends[point] = [a, b]
+        weights[point] = _crossing(value, values[a], values[b])
         for i in range(run_offsets[r], run_offsets[r + 1]):
             slot = slots[order[i]]
             if slot >= 0:
-                connectivity[slot] = r
+                connectivity[slot] = point
             else:
-                members[-slot - 1] = r
+                members[-slot - 1] = point
 
 
 @tack.kernel
@@ -265,16 +540,31 @@ def clip(data, by, value=0.0, inside=False, fields=None, subdivision=None, toler
     corners, the crossings on cut edges (merged across cells) and centroid
     points; point data is interpolated onto them, cell data goes to each piece.
 
-    Crossings are named by their edges, as VTK's ``vtkTableBasedClipDataSet``
-    names them, so a clip exactly through mesh points (a plane through a face
-    of cells, or a hair from points, as a symmetry plane's at y = 1e-45) leaves
-    a crossing on top of the corner it lies at and cells of no volume between
-    them, as VTK's does. ``merge_points`` merges the coincident points (VTK's
-    ``vtkCleanGrid``), leaving those cells naming a point more than once;
-    ``generate_global_ids`` of clipped pieces needs them merged first, since it
-    matches points by position. ``contour`` and ``slice`` instead make such a
-    crossing the point (``edge_crossing``) and drop what loses its area; clip
-    cannot drop what it keeps, since some of those cells keep their volume.
+    A corner within a millionth of its cell's span of the value (the farthest
+    corner's distance from it) is at the value, above it on either side, so the
+    two sides of a clip fill each cell between them. A cell with no corner
+    strictly on the kept side but one on the other only touches the value and is
+    dropped; one with nothing strictly on the other side is kept whole, and one
+    all at the value is kept either way. So a clip through a plane of mesh
+    points -- a symmetry plane, whose nodes round-off puts 1e-16 to either side
+    -- keeps whole cells on one side and drops those on the other, where VTK's
+    ``vtkTableBasedClipDataSet`` cuts a cell through a corner a hair on the
+    dropped side and keeps pieces of no volume, with points twice.
+
+    A cut through a cell's corner at the value (a plane through mesh points but
+    oblique to the cells) crosses the edges from it at the corner itself, as
+    ``contour`` and ``slice`` make such a crossing the point
+    (``edge_crossing``): the pieces that lose their volume are dropped and the
+    others are the shape they now are (``_clip_snap_tables``), so no point lies
+    on top of a corner and clipped pieces match their points by position as
+    they are. A hexahedral piece that loses an edge is no shape and stays a
+    hexahedron, a corner named twice, as VTK writes a collapsed hexahedron; its
+    collapsed face is a quadrilateral naming a point twice, which the faces
+    derived from the topology do not match with the triangle its neighbour has
+    there.
+    VTK's clip names each such crossing by its edge instead: a point on top of
+    the corner and pieces of no volume, some inside out, for ``vtkCleanGrid``
+    to merge.
 
     A polyhedral topology is clipped cell by cell into polyhedra: each cut cell
     becomes the polyhedron of its kept part, its faces clipped (each face once,
@@ -285,11 +575,10 @@ def clip(data, by, value=0.0, inside=False, fields=None, subdivision=None, toler
     clipped yet. Polyhedra beside shapes (a mixed ``UnstructuredTopology``) are
     clipped the same way, and so is every cut shape beside them, since a shape's
     pieces would split faces a polyhedron holds whole; a shape kept whole stays
-    as it is, so the output is mixed too, its whole shapes first. There a cell is
-    kept only if a point is strictly above ``value`` (below, with ``inside``): a
-    cell that touches it from the other side is dropped, where the shapes' tables
-    (and VTK's) keep a piece of it of no volume, so a clip through a plane of mesh
-    points has fewer cells than VTK's, all of its volume.
+    as it is, so the output is mixed too, its whole shapes first. There too a cell
+    is kept only if a point is strictly above ``value`` (below, with ``inside``):
+    a cell that touches it from the other side is dropped, as the shapes' are
+    (VTK's keep a piece of it of no volume).
 
     A curved geometry, a field above order 1 or any ``L2`` field (or ``subdivision``
     above 1, or a ``tolerance``) is clipped through subdivision, as ``contour`` cuts it,
@@ -369,63 +658,120 @@ def clip(data, by, value=0.0, inside=False, fields=None, subdivision=None, toler
             if t is None:
                 raise NotImplementedError(f"clip has no table for {group.shape.__name__} cells")
             groups.append((group, t))
-    counts = tack.empty((n,), tack.vec(_KINDS, tack.i32))
-    if n:
-        counts.fill(0)
     marks, hidden = _masks(data)
-    for group, (table, cases, _, remap, _, _) in groups:
-        _clip_counts(group.view(), values, float(value), invert, table, cases, remap, counts,
-                     marks, hidden)
     idt = data.id_dtype
     odt = ids.for_output(data, _MOST * n)
-    starts = tack.empty((n,), tack.vec(_KINDS, odt))
-    if n <= _SERIAL_KINDS:
-        # A small mesh: every kind's scan in one thread, one launch and one read,
+    # Each batch of cells' outputs are counted, the batches' totals scanned, and
+    # each batch written from its start, its cells in id order, so the output is
+    # what counting every cell gave (the cut filters' memory plan, D3). One shape:
+    # nothing is kept per cell, a batch a thread or (with workgroups) a
+    # workgroup's 256 lanes. Several shapes, whose groups each hold some of a
+    # batch's cells, and structured cells: each cell's counts (u8) and its start
+    # within its batch (u16).
+    # (Batches index cells flat: a structured view, iterated by (i, j, k), takes
+    # the per-cell form.)
+    single = (_BATCHES and len(groups) == 1 and groups[0][0].count == n
+              and len(iteration_space(type(groups[0][0].view()))) == 1)
+    workgroups = get_backend().supports_workgroups
+    batch = (_GROUP if workgroups else _CPU_BATCH) if single else _OFFSET_BATCH
+    nb = -(-n // batch)
+    batch_totals = tack.empty((nb,), tack.vec(_KINDS, tack.i32))
+    local = None
+    if single:
+        group, (table, cases, edges, remap, whole_type, whole_order) = groups[0]
+        view = group.view()
+        if workgroups:
+            _group_totals(view, values, float(value), invert, table, cases, remap, n,
+                          batch_totals, marks, hidden)
+        else:
+            _batch_totals(view, values, float(value), invert, table, cases, remap, n, batch,
+                          batch_totals, marks, hidden)
+    elif n:
+        counts = tack.empty((n,), tack.vec(_KINDS, tack.u8))
+        for group, (table, cases, _, remap, _, _) in groups:
+            _clip_counts(group.view(), values, float(value), invert, table, cases, remap,
+                         counts, marks, hidden)
+        local = tack.empty((n,), tack.vec(_KINDS, tack.u16))
+        _batch_offsets(counts, local, batch_totals, n, batch)
+        del counts
+    batch_starts = tack.empty((nb,), tack.vec(_KINDS, odt))
+    if nb <= _SERIAL_KINDS:
+        # Few batches: every kind's scan in one thread, one launch and one read,
         # where the parallel scans below are eleven launches.
         sums = tack.empty((1,), tack.vec(_KINDS, odt))
-        if n:
-            _scan_kinds(counts, starts, sums, n)
-        totals = [int(v) for v in sums.numpy().reshape(-1)] if n else [0] * _KINDS
+        if nb:
+            _scan_kinds(batch_totals, batch_starts, sums, nb)
+        totals = [int(v) for v in sums.numpy().reshape(-1)] if nb else [0] * _KINDS
     else:
-        # One kind at a time through one buffer, scanned in place: the kinds'
-        # scans kept apart until joined held five more arrays of the cells.
+        # One kind at a time through one buffer, scanned in place.
         totals = []
-        scanned = tack.empty((n,), odt)
+        scanned = tack.empty((nb,), odt)
         for kind in range(_KINDS):
-            _split_counts(counts, kind, scanned)
-            totals.append(exclusive_scan(scanned, scanned, n))
-            _set_kind(scanned, kind, starts)
+            _split_counts(batch_totals, kind, scanned)
+            totals.append(exclusive_scan(scanned, scanned, nb))
+            _set_kind(scanned, kind, batch_starts)
         del scanned
-    del counts
+    del batch_totals
     n_cells, n_conn, n_records, n_centroids, n_members = totals
 
     types = tack.empty((n_cells,), tack.u8)
     offsets = tack.zeros((n_cells + 1,), odt)
     connectivity = tack.empty((n_conn,), odt)
     sources = tack.empty((n_cells,), idt)
+    # Records only for crossings: the input points cells keep are numbered through
+    # a map of one entry per input point (VTK's point map), so only the cut's new
+    # points are sorted. A record for every kept corner made the merge most of
+    # clip's memory (the cut filters' memory plan, D2).
     keys = tack.empty((n_records,), tack.vec(2, idt))
     slots = tack.empty((n_records,), odt)
     centroid_offsets = tack.empty((n_centroids + 1,), odt)
     centroid_cells = tack.empty((n_centroids,), idt)
-    for group, (table, cases, edges, remap, whole_type, whole_order) in groups:
-        _clip_emit(group.view(), values, float(value), invert, table, cases, edges, remap,
-                   whole_type, whole_order, starts, types, offsets, connectivity, sources,
-                   keys, slots, centroid_offsets, centroid_cells, marks, hidden)
-    del starts                            # before the merge, the clip's peak
+    members = tack.empty((n_members,), odt)
+    num_points = data.num_points
+    # Marked by every cell keeping the point, so atomically (i32, which every
+    # backend's atomics take); scanned into the output's id type.
+    used = tack.zeros((num_points + 1,), tack.i32)
+    crossing = -(n_centroids + 1)         # below every centroid's placeholder
+    if single and workgroups:
+        _group_emit(view, values, float(value), invert, table, cases, edges, remap, whole_type,
+                    whole_order, n, batch_starts, types, offsets, connectivity, sources, keys,
+                    slots, centroid_offsets, centroid_cells, members, used, crossing, marks,
+                    hidden)
+    elif single:
+        _batch_emit(view, values, float(value), invert, table, cases, edges, remap, whole_type,
+                    whole_order, n, batch, batch_starts, types, offsets, connectivity, sources,
+                    keys, slots, centroid_offsets, centroid_cells, members, used, crossing,
+                    marks, hidden)
+    else:
+        for group, (table, cases, edges, remap, whole_type, whole_order) in groups:
+            _clip_emit(group.view(), values, float(value), invert, table, cases, edges, remap,
+                       whole_type, whole_order, batch, batch_starts, local, types, offsets,
+                       connectivity, sources, keys, slots, centroid_offsets, centroid_cells,
+                       members, used, crossing, marks, hidden)
+    del batch_starts, local
     _close(offsets, n_cells, n_conn)
     _close(centroid_offsets, n_centroids, n_members)
 
-    order = key_order(keys, data.num_points, odt)
-    point_runs, count = run_offsets(keys, order)
-    members = tack.empty((n_members,), odt)
+    used, kept = _scanned_map(used, num_points, odt)
+    order = key_order(keys, num_points, odt)
+    point_runs, crossings = run_offsets(keys, order)
+    count = kept + crossings
     ends = tack.empty((count,), tack.vec(2, idt))
     # Weights are fractions even when the values are integers (Viskores interpolates
     # an integer field's crossings the same way).
     weights = tack.empty((count,), precision)
-    if count:
+    if kept:
+        number = tack.empty((num_points,), odt)
+        _number_points(used, keys, order, point_runs, crossings, number, ends, weights)
+        if n_conn:
+            _renumber(connectivity, number)
+        if n_members:
+            _renumber(members, number)
+        del number
+    if crossings:
         _resolve_points(keys, order, point_runs, slots, values,
                         data.geometry.values, float(value), connectivity,
-                        members, ends, weights, count)
+                        members, ends, weights, used, crossings)
     if n_conn:
         _centroid_entries(connectivity, count)
     out = UnstructuredTopology(types, offsets, connectivity, num_points=count + n_centroids)

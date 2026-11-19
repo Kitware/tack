@@ -155,20 +155,19 @@ def test_pieces_of_a_slice_a_hair_from_points_match_by_position(layers):
 
 
 @pytest.mark.parametrize("layers", [0, 1])
-def test_a_clip_through_points_is_merged_before_its_pieces_match(layers):
-    """clip names crossings by their edges, as VTK's vtkTableBasedClipDataSet does, so a
-    plane through mesh points leaves crossings on top of corners. merge_points
-    merges them (as vtkCleanGrid); then generate_global_ids matches the clipped
-    pieces by position, and they reduce to the whole's clip, merged."""
+def test_a_clip_through_points_matches_its_pieces_as_it_is(layers):
+    """A plane through mesh points crosses the edges from them at the points
+    themselves (#309), where VTK's vtkTableBasedClipDataSet leaves a crossing on top
+    of each, for vtkCleanGrid to merge: no point is on top of another, so
+    generate_global_ids matches the clipped pieces by position as they are, and they
+    reduce to the whole's clip."""
     whole = td.wavelet(6)
     plane = td.Plane((0.3, 0.2, 0.1), (1, 2, 3))         # through lattice points
-    clipped = td.clip(whole, plane)
-    x = clipped.positions()
-    assert len(np.unique(x.view(np.uint32).reshape(-1, 3), axis=0)) < len(x)
-    expected = td.merge_points(clipped)
+    expected = td.clip(whole, plane)
+    x = expected.positions()
+    assert len(np.unique(x.view(np.uint32).reshape(-1, 3), axis=0)) == len(x)
     pieces = td.split(whole, (2, 2, 2), ghost_layers=layers)
-    marked = td.generate_global_ids(td.PartitionedDataSet(
-        td.merge_points(td.clip(p, plane)) for p in pieces))
+    marked = td.generate_global_ids(td.PartitionedDataSet(td.clip(p, plane) for p in pieces))
     assert td.statistics(marked, "RTData").n == expected.num_points
     assert sum(int(((p.ghosts.cells.numpy() & 1) == 0).sum()) for p in marked) == \
         expected.num_cells

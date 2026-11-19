@@ -495,13 +495,19 @@ and voxels, and use the corners of other curved cells. The
 **Empty outputs are valid.** A filter that finds nothing returns a dataset of
 no cells. Check `num_cells` before assuming there is geometry to draw.
 
-**Clips through mesh points.** `clip` names its new points by the edges they
-lie on, as VTK's `vtkTableBasedClipDataSet` does. A clip exactly through mesh
-points, such as a plane through a layer of faces, therefore leaves a new point
-on top of the mesh point and cells of no volume between them, as VTK's does.
-`td.merge_points` merges the coincident points, as VTK's `vtkCleanGrid` does.
-`contour` and `slice` instead make such a crossing the mesh point itself, and
-drop the triangles that lose their area.
+**Clips through mesh points.** A mesh point within a millionth of its cell's
+span of the value (round-off, as a symmetry plane's nodes have) is at the
+value, above it on either side of `clip`, so the two sides fill each cell
+between them. A plane through a layer of faces keeps the cells on one side
+whole and drops the others. A plane through mesh points but oblique to the
+cells cuts each edge from such a point at the point itself, so no new point
+lies on top of a mesh point. Pieces that collapse to no volume are dropped, and
+the others become the shape they now are. A hexahedral piece that loses an edge
+is no shape, so it stays a hexahedron with that corner named twice, as VTK
+writes a collapsed hexahedron. VTK's `vtkTableBasedClipDataSet` leaves the new
+points on top of the mesh points and pieces of no volume (some inside out) for
+`vtkCleanGrid` to merge. `contour` and `slice` likewise make such a crossing
+the mesh point itself, and drop the triangles that lose their area.
 
 **Cells without a reference element.** Polyhedra, polygons and polylines have
 no parametric cell, so the filters treat them as the

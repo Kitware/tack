@@ -5,6 +5,8 @@
 points, measure and orientation on every linear shape, by implicit functions
 and by fields, both ways; fields carried onto the new points and pieces."""
 
+import itertools
+
 import numpy as np
 import pytest
 from test_dataset_api import _scalars, _two_hexes_and_a_pyramid
@@ -256,3 +258,87 @@ def test_clip_in_batches_is_clip_cell_by_cell(backend, monkeypatch, kind):
         for name in ("p", "c"):
             np.testing.assert_array_equal(batched.fields[name].values.numpy(),
                                           cellwise.fields[name].values.numpy())
+
+
+# Planes through mesh points of _grid's blocks (integer corners), oblique to the cells.
+CORNER_PLANES = {"x+y+z=3": ((1, 1, 1), 3.0), "x+2y-z=2": ((1, 2, -1), 2.0),
+                 "2x-y+z=1": ((2, -1, 1), 1.0)}
+
+
+def _closed_area(grid, normal, c, inside):
+    """The surface of the blocks' part on the kept side of a plane: their surface
+    clipped by it, and the cut."""
+    n = np.asarray(normal, float)
+    plane = vtk.vtkPlane(origin=tuple(n * c / n.dot(n)), normal=tuple(-n if inside else n))
+    surface = vtk.vtkTriangleFilter()(vtk.vtkDataSetSurfaceFilter()(grid))
+    kept = vtk.vtkClipPolyData(clip_function=plane)(surface)[0]
+    cut = vtk.vtkCutter(cut_function=plane)(grid)
+    return sum(vtk.vtkMassProperties(input_data=vtk.vtkTriangleFilter()(p)).GetSurfaceArea()
+               for p in (kept, cut))
+
+
+@needs_vtk
+@pytest.mark.parametrize("kind", SHAPES)
+@pytest.mark.parametrize("plane", CORNER_PLANES)
+@pytest.mark.parametrize("inside", [False, True])
+def test_a_clip_through_mesh_points_oblique_to_the_cells_is_exact(backend, kind, plane, inside):
+    """A plane through mesh points but oblique to the cells cuts each edge from such a
+    point at the point itself (#309): no crossing on top of a corner, no piece of no
+    volume, and no cell naming a point twice but a hexahedral piece that loses an
+    edge (no shape: it stays a hexahedron, a corner named twice). VTK's clip, of the
+    same volume, has points on top of corners and pieces of no volume (on the
+    hexahedra 17 and 14; with inside_out, 23, 13 and 5 inside out)."""
+    grid = _grid(kind)
+    data = vtk_to_dataset(grid)
+    normal, c = CORNER_PLANES[plane]
+    values = data.positions() @ np.asarray(normal, float) - c
+    out = td.clip(data, td.Field(td.H1(data), _scalars(values)), 0.0, inside=inside)
+    out.topology.validate()
+    x = out.positions()
+    assert len(np.unique(x, axis=0)) == len(x)
+    offsets, connectivity = (a.numpy() for a in (out.topology.offsets,
+                                                 out.topology.connectivity))
+    types = out.topology.types.numpy()
+    twice = [len(set(connectivity[a:b])) < b - a for a, b in itertools.pairwise(offsets)]
+    assert (types[twice] == 12).all()
+    measure = td.cell_geometry(out).measure.values.numpy()
+    assert (measure > 1e-6).all()
+    what = "Volume" if SHAPES[kind] >= 10 else "Area"
+    reference = _sizes(_vtk_clip(grid, values, 0.0, inside), what).sum()
+    assert measure.sum() == pytest.approx(reference, rel=1e-5)
+    if SHAPES[kind] >= 10 and not any(twice):
+        # No face is left inside: the surface is the kept part's. (A collapsed
+        # hexahedron's collapsed face names a point twice; the faces derived from
+        # the topology do not match it with its neighbour's triangle.)
+        area = td.cell_geometry(td.extract_surface(out)).measure.values.numpy().sum()
+        assert area == pytest.approx(_closed_area(grid, normal, c, inside), rel=1e-5)
+
+
+@needs_vtk
+@pytest.mark.parametrize("at", ["one corner", "two opposite corners", "three corners"])
+@pytest.mark.parametrize("inside", [False, True])
+def test_a_hexahedral_piece_that_loses_edges_stays_a_hexahedron(backend, at, inside):
+    """A hexahedron whose bottom corners are kept, some of them at the value, keeps a
+    piece of its own shape whose edges up from those corners have collapsed: no
+    shape, so a hexahedron naming those corners twice, as VTK writes a collapsed
+    one. One corner is a plane through it; two opposite corners or three only a
+    field that is not linear across the cell gives. The other side has the rest,
+    and both are VTK's volumes (VTK's clip, too, counts a corner at the value as
+    above it)."""
+    grid = vtk.vtkCellTypeSource(cell_type=SHAPES["hexahedron"], blocks_dimensions=(1, 1, 1))()
+    data = vtk_to_dataset(grid)
+    x, y, z = data.positions().T
+    bottom = {"one corner": np.where((x == 0) & (y == 0), 0.0, 1.0 + x + y),
+              "two opposite corners": np.where(x == y, 0.0, 1.0 + x),
+              "three corners": np.where((x == 1) & (y == 1), 1.5, 0.0)}[at]
+    values = np.where(z == 0, bottom, -1.0 - x - 0.5 * y)
+    out = td.clip(data, td.Field(td.H1(data), _scalars(values)), 0.0, inside=inside)
+    out.topology.validate()
+    distinct = {"one corner": 7, "two opposite corners": 6, "three corners": 5}[at]
+    if not inside:
+        assert out.topology.types.numpy().tolist() == [12]
+        assert len(set(out.topology.connectivity.numpy())) == distinct
+    assert out.num_points == len(np.unique(out.positions(), axis=0))
+    reference = _vtk_clip(grid, values, 0.0, inside)
+    assert td.cell_geometry(out).measure.values.numpy().sum() == pytest.approx(
+        _sizes(reference, "Volume").sum(), rel=1e-5)

@@ -6,7 +6,8 @@
   cells through a corner a hair on the dropped side: pieces of no volume, a
   diagonal split of the cell, and points twice, as VTK's
   `vtkTableBasedClipDataSet` makes them. A corner within a millionth of its
-  cell's span of the value is now at the value, kept on either side, and a cell
-  that only touches the value from the dropped side is dropped, as the
-  polyhedral clip already did. The higher-order clip's cut cells, clipped this
-  way, follow.
+  cell's span of the value is now at the value (above it on either side, so the
+  two sides of a clip fill each cell between them), the crossings on its edges
+  are the corner itself, and a cell that only touches the value from the dropped
+  side is dropped, as the polyhedral clip already did. The higher-order clip's
+  cut cells, clipped this way, follow.

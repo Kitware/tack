@@ -9,6 +9,7 @@ import numpy as np
 import tack
 from tack import arrays
 from tack.algorithms.scan import exclusive_scan
+from tack.dataset import _clip_snap_tables as snap_tables
 from tack.dataset import _clip_tables as tables
 from tack.dataset import ids, shapes
 from tack.dataset.algorithms._common import (
@@ -60,11 +61,19 @@ _AT_VALUE = tack.constant(1e-6)
 
 @tack.func
 def _cell_case(cells, c, values, value, invert, remap):
-    """The cell's case: bit ``k`` set where corner ``k`` is at or above ``value``. A
-    corner at the value (within ``_AT_VALUE``) counts as on the kept side; a cell with
-    no corner strictly on the kept side but one strictly on the other is dropped (it
-    only touches the value), so a clip through mesh points keeps whole cells and
-    drops whole cells, with no pieces of no volume between them."""
+    """The cell's case, bit ``k`` set where corner ``k`` is at or above ``value``,
+    and its corners at the value, bit ``k`` set where corner ``k`` is.
+
+    A corner within ``_AT_VALUE`` of the value is exactly at it: above, on both
+    sides of a clip (``inside`` or not), so the two sides take complementary cases
+    and fill the cell between them, and the crossings on its edges are the corner
+    itself (``_shape_tables``' records for corners at the value), so a cell whose
+    other corners are all on the kept side is kept whole, in the pieces its case
+    makes, as its neighbours cut their faces. A cell with a corner strictly on the
+    other side and none strictly on the kept side is dropped (it only touches the
+    value), and one all at the value is kept either way: a clip through a plane of
+    mesh points keeps the cells on one side whole and drops the others, with no
+    pieces of no volume between them."""
     full = (1 << cells.NUM_POINTS) - 1
     # The span of the finite distances: an infinite or NaN value is above or below
     # by its sign (a NaN below, as the case index always had it), never at the value.
@@ -75,13 +84,15 @@ def _cell_case(cells, c, values, value, invert, remap):
             span = max(span, a)
     near = span * _AT_VALUE
     case = 0
+    at = 0
     kept = 0
     other = 0
     for k in range(cells.NUM_POINTS):
         d = values[cells.point_id(c, remap[k])] - value
         above = 0
         if abs(d) <= near:
-            above = 1 if invert == 0 else 0
+            above = 1
+            at = at | (1 << k)
         else:
             above = 1 if d > 0 else 0
             if above == 1 - invert:
@@ -90,9 +101,11 @@ def _cell_case(cells, c, values, value, invert, remap):
                 other += 1
         if above == 1:
             case = case | (1 << k)
-    if kept == 0 and other > 0:
-        case = 0 if invert == 0 else full
-    return case
+    if kept == 0 and other == 0:
+        case = full if invert == 0 else 0                # all at the value: whole
+    elif kept == 0:
+        case = 0 if invert == 0 else full                # dropped: it only touches
+    return case, at
 
 
 @tack.kernel
@@ -107,19 +120,37 @@ def _scan_kinds(counts, starts, sums, n):
         sums[0] = running
 
 
+def _data(invert):
+    """The case tables' records, then the records of cut cells with corners at the
+    value (``_clip_snap_tables``)."""
+    return np.concatenate([np.asarray(tables.DATA[invert], np.int32),
+                           snap_tables.data(invert).astype(np.int32)])
+
+
+def _cases(invert, table, n):
+    """Each case's record in ``_data``, then one entry per case and set of corners at
+    the value (``case << n | at``, after the ``2**n`` cases): the record its pieces
+    are once the crossings at those corners are the corners, or -1 where that is
+    the case's own record."""
+    snapped = np.full(1 << (2 * n), -1, np.int64)
+    pairs = snap_tables.cases(invert, table).reshape(-1, 2).astype(np.int64)
+    snapped[pairs[:, 0]] = pairs[:, 1] + len(tables.DATA[invert])
+    return np.concatenate([np.asarray(tables.CASES[invert][table], np.int64), snapped])
+
+
 def _shape_tables(shape_id, invert):
     """``(data, cases, edges, remap, whole_type, whole_order)`` for one shape: the
-    tables, the corner order to read them through, and the type and corner order
-    of a cell kept whole -- a pixel or voxel kept as a quad or hexahedron, as
-    VTK's clip keeps them; a wedge in its own (VTK's) order."""
+    tables (``_data``, ``_cases``), the corner order to read them through, and the
+    type and corner order of a cell kept whole -- a pixel or voxel kept as a quad or
+    hexahedron, as VTK's clip keeps them; a wedge in its own (VTK's) order."""
     table, remap = _TABLE_OF.get(shape_id, (shape_id, None))
     if table not in tables.EDGES:
         return None
     n = len(remap) if remap else {1: 1, 3: 2, 5: 3, 9: 4, 10: 4, 12: 8, 13: 6, 14: 5}[table]
     remap = remap or list(range(n))
     whole_order = list(range(n)) if shape_id == int(shapes.WEDGE) else remap
-    return (_table(("clip data", invert), tables.DATA[invert]),
-            _table(("clip cases", invert, table), tables.CASES[invert][table]),
+    return (_table(("clip data", invert), lambda: _data(invert)),
+            _table(("clip cases", invert, table), lambda: _cases(invert, table, n)),
             _table(("clip edges", table), tables.EDGES[table] or [0, 0]),
             _table(("clip remap", shape_id), remap), table,
             _table(("clip whole", shape_id), whole_order))
@@ -138,12 +169,21 @@ _OFFSET_BATCH = 256
 
 
 @tack.func
-def _case(cells, c, e, values, value, invert, remap, marks, hidden):
+def _case(cells, c, e, values, value, invert, cases, remap, marks, hidden):
+    # The cell's case and its record in ``data``: the case table's, or, a cut cell
+    # with corners at the value, the record of its pieces as they are once the
+    # crossings at those corners are the corners (``_shape_tables``).
     full = (1 << cells.NUM_POINTS) - 1
-    case = _cell_case(cells, c, values, value, invert, remap)
+    case, at = _cell_case(cells, c, values, value, invert, remap)
     if _left_out(marks, hidden, e):
         case = 0 if invert == 0 else full          # hidden or refined: dropped
-    return case
+        at = 0
+    record = cases[case]
+    if at != 0:
+        snapped = cases[(1 << cells.NUM_POINTS) + ((case << cells.NUM_POINTS) | at)]
+        if snapped >= 0:
+            record = snapped
+    return case, record
 
 
 @tack.func
@@ -151,7 +191,7 @@ def _cell_counts(cells, c, e, values, value, invert, data, cases, remap, marks, 
     # One cell's outputs of each kind: cells, connectivity, crossings, centroids,
     # centroid members.
     full = (1 << cells.NUM_POINTS) - 1
-    case = _case(cells, c, e, values, value, invert, remap, marks, hidden)
+    case, at = _case(cells, c, e, values, value, invert, cases, remap, marks, hidden)
     n_cells = 0
     n_conn = 0
     n_records = 0
@@ -163,7 +203,6 @@ def _cell_counts(cells, c, e, values, value, invert, data, cases, remap, marks, 
         n_cells = 1
         n_conn = cells.NUM_POINTS
     elif not dropped:
-        at = cases[case]
         shapes_left = data[at]
         at += 1
         for s in range(shapes_left):
@@ -195,7 +234,7 @@ def _emit_cell(cells, c, e, first, values, value, invert, data, cases, edges, re
     # (its edge, and the slot that takes its point) and `crossing` in its slot
     # until the records are merged.
     full = (1 << cells.NUM_POINTS) - 1
-    case = _case(cells, c, e, values, value, invert, remap, marks, hidden)
+    case, at = _case(cells, c, e, values, value, invert, cases, remap, marks, hidden)
     cell = first[0]
     conn = first[1]
     record = first[2]
@@ -213,7 +252,6 @@ def _emit_cell(cells, c, e, first, values, value, invert, data, cases, edges, re
             tack.atomic_max(used, p, 1)
             conn += 1
     elif not dropped:
-        at = cases[case]
         shapes_left = data[at]
         at += 1
         for s in range(shapes_left):
@@ -503,23 +541,30 @@ def clip(data, by, value=0.0, inside=False, fields=None, subdivision=None, toler
     points; point data is interpolated onto them, cell data goes to each piece.
 
     A corner within a millionth of its cell's span of the value (the farthest
-    corner's distance from it) is at the value, and at the value is kept on
-    either side; a cell with no corner strictly on the kept side but one on the
-    other only touches the value and is dropped. So a clip through a plane of
-    mesh points -- a symmetry plane, whose nodes round-off puts 1e-16 to either
-    side -- keeps whole cells on one side and drops those on the other, where
-    VTK's ``vtkTableBasedClipDataSet`` cuts a cell through a corner a hair on
-    the dropped side and keeps pieces of no volume, with points twice.
+    corner's distance from it) is at the value, above it on either side, so the
+    two sides of a clip fill each cell between them. A cell with no corner
+    strictly on the kept side but one on the other only touches the value and is
+    dropped; one with nothing strictly on the other side is kept whole, and one
+    all at the value is kept either way. So a clip through a plane of mesh
+    points -- a symmetry plane, whose nodes round-off puts 1e-16 to either side
+    -- keeps whole cells on one side and drops those on the other, where VTK's
+    ``vtkTableBasedClipDataSet`` cuts a cell through a corner a hair on the
+    dropped side and keeps pieces of no volume, with points twice.
 
-    Crossings are named by their edges, as VTK's names them, so a cut through a
-    cell's corner (a plane through mesh points but oblique to the cells) leaves
-    a crossing on top of the corner it lies at, as VTK's does. ``merge_points``
-    merges the coincident points (VTK's ``vtkCleanGrid``), leaving cells naming
-    a point more than once; ``generate_global_ids`` of clipped pieces needs them
-    merged first, since it matches points by position. ``contour`` and
-    ``slice`` instead make such a crossing the point (``edge_crossing``) and
-    drop what loses its area; clip cannot drop what it keeps, since some of
-    those cells keep their volume.
+    A cut through a cell's corner at the value (a plane through mesh points but
+    oblique to the cells) crosses the edges from it at the corner itself, as
+    ``contour`` and ``slice`` make such a crossing the point
+    (``edge_crossing``): the pieces that lose their volume are dropped and the
+    others are the shape they now are (``_clip_snap_tables``), so no point lies
+    on top of a corner and clipped pieces match their points by position as
+    they are. A hexahedral piece that loses an edge is no shape and stays a
+    hexahedron, a corner named twice, as VTK writes a collapsed hexahedron; its
+    collapsed face is a quadrilateral naming a point twice, which the faces
+    derived from the topology do not match with the triangle its neighbour has
+    there.
+    VTK's clip names each such crossing by its edge instead: a point on top of
+    the corner and pieces of no volume, some inside out, for ``vtkCleanGrid``
+    to merge.
 
     A polyhedral topology is clipped cell by cell into polyhedra: each cut cell
     becomes the polyhedron of its kept part, its faces clipped (each face once,

@@ -16618,7 +16618,8 @@ where they stopped, with their times and the steps they took (<code>steps</code>
 counts those too), and a particle that stopped -- its steps done, at zero
 velocity, or outside -- stays as it is. A <code>seed</code> point field on it comes
 along.</p>
-<p>Over a <code>PartitionedDataSet</code> (<code>field</code> by name), particles cross from
+<p>Over a <code>PartitionedDataSet</code> (<code>field</code> by name, or an object whose
+<code>on(piece)</code> gives each piece's field, as a field expression does), particles cross from
 piece to piece, in rounds: each goes to the lowest piece one of whose own
 cells (not a ghost) holds it, steps until it leaves that piece, and is
 handed on, until none is in flight on any rank.</p>
@@ -16697,7 +16698,11 @@ a CPU core: below a few thousand seeds a CPU copy of the mesh is faster
 <span class="normal">83</span>
 <span class="normal">84</span>
 <span class="normal">85</span>
-<span class="normal">86</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">86</span>
+<span class="normal">87</span>
+<span class="normal">88</span>
+<span class="normal">89</span>
+<span class="normal">90</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">advect</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">,</span> <span class="n">seeds</span><span class="p">,</span> <span class="n">step_size</span><span class="p">,</span> <span class="n">steps</span><span class="p">,</span> <span class="n">integrator</span><span class="o">=</span><span class="s2">&quot;rk4&quot;</span><span class="p">,</span> <span class="n">locator</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
            <span class="n">step_unit</span><span class="o">=</span><span class="s2">&quot;time&quot;</span><span class="p">,</span> <span class="n">tolerance</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">min_step</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">max_step</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">max_length</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
            <span class="n">neighbors</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">terminal_speed</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
@@ -16729,7 +16734,8 @@ a CPU core: below a few thousand seeds a CPU copy of the mesh is faster
 <span class="sd">    velocity, or outside -- stays as it is. A ``seed`` point field on it comes</span>
 <span class="sd">    along.</span>
 
-<span class="sd">    Over a ``PartitionedDataSet`` (``field`` by name), particles cross from</span>
+<span class="sd">    Over a ``PartitionedDataSet`` (``field`` by name, or an object whose</span>
+<span class="sd">    ``on(piece)`` gives each piece&#39;s field, as a field expression does), particles cross from</span>
 <span class="sd">    piece to piece, in rounds: each goes to the lowest piece one of whose own</span>
 <span class="sd">    cells (not a ghost) holds it, steps until it leaves that piece, and is</span>
 <span class="sd">    handed on, until none is in flight on any rank.</span>
@@ -16742,15 +16748,18 @@ a CPU core: below a few thousand seeds a CPU copy of the mesh is faster
     <span class="c1"># length (&quot;1 mm&quot;), in the spatial unit.</span>
     <span class="k">if</span> <span class="n">step_unit</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;time&quot;</span><span class="p">,</span> <span class="s2">&quot;length&quot;</span><span class="p">):</span>
         <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;step_unit is &#39;time&#39; or &#39;length&#39;, not </span><span class="si">{</span><span class="n">step_unit</span><span class="si">!r}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">PartitionedDataSet</span><span class="p">):</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.algorithms._particles</span><span class="w"> </span><span class="kn">import</span> <span class="n">advect_pieces</span>
+        <span class="k">return</span> <span class="n">advect_pieces</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">,</span> <span class="n">seeds</span><span class="p">,</span> <span class="n">step_size</span><span class="p">,</span> <span class="n">steps</span><span class="p">,</span> <span class="n">integrator</span><span class="p">,</span> <span class="n">step_unit</span><span class="p">,</span>
+                             <span class="n">neighbors</span><span class="p">,</span> <span class="n">tolerance</span><span class="o">=</span><span class="n">tolerance</span><span class="p">,</span> <span class="n">min_step</span><span class="o">=</span><span class="n">min_step</span><span class="p">,</span>
+                             <span class="n">max_step</span><span class="o">=</span><span class="n">max_step</span><span class="p">,</span> <span class="n">max_length</span><span class="o">=</span><span class="n">max_length</span><span class="p">,</span>
+                             <span class="n">terminal_speed</span><span class="o">=</span><span class="n">terminal_speed</span><span class="p">)</span>
+
     <span class="n">step_size</span><span class="p">,</span> <span class="n">tolerance</span><span class="p">,</span> <span class="n">min_step</span><span class="p">,</span> <span class="n">max_step</span><span class="p">,</span> <span class="n">max_length</span><span class="p">,</span> <span class="n">terminal_speed</span> <span class="o">=</span> <span class="n">_parameters</span><span class="p">(</span>
         <span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">,</span> <span class="n">step_unit</span><span class="p">,</span> <span class="s2">&quot;advect&quot;</span><span class="p">,</span> <span class="n">step_size</span><span class="p">,</span> <span class="n">tolerance</span><span class="p">,</span> <span class="n">min_step</span><span class="p">,</span> <span class="n">max_step</span><span class="p">,</span> <span class="n">max_length</span><span class="p">,</span>
         <span class="n">terminal_speed</span><span class="p">)</span>
     <span class="n">adaptive</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;tolerance&quot;</span><span class="p">:</span> <span class="n">tolerance</span><span class="p">,</span> <span class="s2">&quot;min_step&quot;</span><span class="p">:</span> <span class="n">min_step</span><span class="p">,</span> <span class="s2">&quot;max_step&quot;</span><span class="p">:</span> <span class="n">max_step</span><span class="p">,</span>
                 <span class="s2">&quot;max_length&quot;</span><span class="p">:</span> <span class="n">max_length</span><span class="p">,</span> <span class="s2">&quot;terminal_speed&quot;</span><span class="p">:</span> <span class="n">terminal_speed</span><span class="p">}</span>
-    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">PartitionedDataSet</span><span class="p">):</span>
-        <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.algorithms._particles</span><span class="w"> </span><span class="kn">import</span> <span class="n">advect_pieces</span>
-        <span class="k">return</span> <span class="n">advect_pieces</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">,</span> <span class="n">seeds</span><span class="p">,</span> <span class="n">step_size</span><span class="p">,</span> <span class="n">steps</span><span class="p">,</span> <span class="n">integrator</span><span class="p">,</span> <span class="n">step_unit</span><span class="p">,</span>
-                             <span class="n">neighbors</span><span class="p">,</span> <span class="o">**</span><span class="n">adaptive</span><span class="p">)</span>
     <span class="c1"># Hidden and refined cells are left out by the search (_run, masked_marks).</span>
     <span class="n">seeds</span><span class="p">,</span> <span class="n">resume</span><span class="p">,</span> <span class="n">seed_ids</span> <span class="o">=</span> <span class="n">_resumed</span><span class="p">(</span><span class="n">seeds</span><span class="p">,</span> <span class="n">data</span><span class="p">)</span>
     <span class="n">xs</span><span class="p">,</span> <span class="n">times</span><span class="p">,</span> <span class="n">taken</span><span class="p">,</span> <span class="n">status</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">_run</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">,</span> <span class="n">seeds</span><span class="p">,</span> <span class="n">step_size</span><span class="p">,</span> <span class="n">steps</span><span class="p">,</span>
@@ -16875,7 +16884,8 @@ it in the length unit; <code>terminal_speed</code> (in the velocity's unit, as
 <code>vtkStreamTracer</code>'s) ends a path at its first point where the speed is at
 or below it, so a path stops where the flow does instead of wandering
 through near-still fluid.</p>
-<p>Over a <code>PartitionedDataSet</code> (<code>field</code> by name), paths cross from piece to
+<p>Over a <code>PartitionedDataSet</code> (<code>field</code> by name, or an object whose
+<code>on(piece)</code> gives each piece's field, as a field expression does), paths cross from piece to
 piece, each piece holding the stretches it traced.</p>
 
 
@@ -16963,7 +16973,11 @@ piece, each piece holding the stretches it traced.</p>
 <span class="normal">132</span>
 <span class="normal">133</span>
 <span class="normal">134</span>
-<span class="normal">135</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">135</span>
+<span class="normal">136</span>
+<span class="normal">137</span>
+<span class="normal">138</span>
+<span class="normal">139</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">streamlines</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">,</span> <span class="n">seeds</span><span class="p">,</span> <span class="n">step_size</span><span class="p">,</span> <span class="n">steps</span><span class="p">,</span> <span class="n">integrator</span><span class="o">=</span><span class="s2">&quot;rk4&quot;</span><span class="p">,</span> <span class="n">locator</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
                 <span class="n">step_unit</span><span class="o">=</span><span class="s2">&quot;time&quot;</span><span class="p">,</span> <span class="n">tolerance</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">min_step</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">max_step</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
                 <span class="n">max_length</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">neighbors</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">terminal_speed</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
@@ -16993,23 +17007,27 @@ piece, each piece holding the stretches it traced.</p>
 <span class="sd">    or below it, so a path stops where the flow does instead of wandering</span>
 <span class="sd">    through near-still fluid.</span>
 
-<span class="sd">    Over a ``PartitionedDataSet`` (``field`` by name), paths cross from piece to</span>
+<span class="sd">    Over a ``PartitionedDataSet`` (``field`` by name, or an object whose</span>
+<span class="sd">    ``on(piece)`` gives each piece&#39;s field, as a field expression does), paths cross from piece to</span>
 <span class="sd">    piece, each piece holding the stretches it traced.&quot;&quot;&quot;</span>
     <span class="c1"># A step as a time (&quot;0.5 s&quot;) is in the spatial unit over the velocity&#39;s; as</span>
     <span class="c1"># a length (&quot;1 mm&quot;), in the spatial unit.</span>
     <span class="k">if</span> <span class="n">step_unit</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;time&quot;</span><span class="p">,</span> <span class="s2">&quot;length&quot;</span><span class="p">):</span>
         <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;step_unit is &#39;time&#39; or &#39;length&#39;, not </span><span class="si">{</span><span class="n">step_unit</span><span class="si">!r}</span><span class="s2">&quot;</span><span class="p">)</span>
-    <span class="n">step_size</span><span class="p">,</span> <span class="n">tolerance</span><span class="p">,</span> <span class="n">min_step</span><span class="p">,</span> <span class="n">max_step</span><span class="p">,</span> <span class="n">max_length</span><span class="p">,</span> <span class="n">terminal_speed</span> <span class="o">=</span> <span class="n">_parameters</span><span class="p">(</span>
-        <span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">,</span> <span class="n">step_unit</span><span class="p">,</span> <span class="s2">&quot;streamlines&quot;</span><span class="p">,</span> <span class="n">step_size</span><span class="p">,</span> <span class="n">tolerance</span><span class="p">,</span> <span class="n">min_step</span><span class="p">,</span> <span class="n">max_step</span><span class="p">,</span>
-        <span class="n">max_length</span><span class="p">,</span> <span class="n">terminal_speed</span><span class="p">)</span>
-    <span class="n">adaptive</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;tolerance&quot;</span><span class="p">:</span> <span class="n">tolerance</span><span class="p">,</span> <span class="s2">&quot;min_step&quot;</span><span class="p">:</span> <span class="n">min_step</span><span class="p">,</span> <span class="s2">&quot;max_step&quot;</span><span class="p">:</span> <span class="n">max_step</span><span class="p">,</span>
-                <span class="s2">&quot;max_length&quot;</span><span class="p">:</span> <span class="n">max_length</span><span class="p">,</span> <span class="s2">&quot;terminal_speed&quot;</span><span class="p">:</span> <span class="n">terminal_speed</span><span class="p">}</span>
     <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.partitioned</span><span class="w"> </span><span class="kn">import</span> <span class="n">PartitionedDataSet</span>
 
     <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">PartitionedDataSet</span><span class="p">):</span>
         <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.algorithms._particles</span><span class="w"> </span><span class="kn">import</span> <span class="n">streamlines_pieces</span>
         <span class="k">return</span> <span class="n">streamlines_pieces</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">,</span> <span class="n">seeds</span><span class="p">,</span> <span class="n">step_size</span><span class="p">,</span> <span class="n">steps</span><span class="p">,</span> <span class="n">integrator</span><span class="p">,</span> <span class="n">step_unit</span><span class="p">,</span>
-                                  <span class="n">neighbors</span><span class="p">,</span> <span class="o">**</span><span class="n">adaptive</span><span class="p">)</span>
+                                  <span class="n">neighbors</span><span class="p">,</span> <span class="n">tolerance</span><span class="o">=</span><span class="n">tolerance</span><span class="p">,</span> <span class="n">min_step</span><span class="o">=</span><span class="n">min_step</span><span class="p">,</span>
+                                  <span class="n">max_step</span><span class="o">=</span><span class="n">max_step</span><span class="p">,</span> <span class="n">max_length</span><span class="o">=</span><span class="n">max_length</span><span class="p">,</span>
+                                  <span class="n">terminal_speed</span><span class="o">=</span><span class="n">terminal_speed</span><span class="p">)</span>
+
+    <span class="n">step_size</span><span class="p">,</span> <span class="n">tolerance</span><span class="p">,</span> <span class="n">min_step</span><span class="p">,</span> <span class="n">max_step</span><span class="p">,</span> <span class="n">max_length</span><span class="p">,</span> <span class="n">terminal_speed</span> <span class="o">=</span> <span class="n">_parameters</span><span class="p">(</span>
+        <span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">,</span> <span class="n">step_unit</span><span class="p">,</span> <span class="s2">&quot;streamlines&quot;</span><span class="p">,</span> <span class="n">step_size</span><span class="p">,</span> <span class="n">tolerance</span><span class="p">,</span> <span class="n">min_step</span><span class="p">,</span> <span class="n">max_step</span><span class="p">,</span>
+        <span class="n">max_length</span><span class="p">,</span> <span class="n">terminal_speed</span><span class="p">)</span>
+    <span class="n">adaptive</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;tolerance&quot;</span><span class="p">:</span> <span class="n">tolerance</span><span class="p">,</span> <span class="s2">&quot;min_step&quot;</span><span class="p">:</span> <span class="n">min_step</span><span class="p">,</span> <span class="s2">&quot;max_step&quot;</span><span class="p">:</span> <span class="n">max_step</span><span class="p">,</span>
+                <span class="s2">&quot;max_length&quot;</span><span class="p">:</span> <span class="n">max_length</span><span class="p">,</span> <span class="s2">&quot;terminal_speed&quot;</span><span class="p">:</span> <span class="n">terminal_speed</span><span class="p">}</span>
     <span class="c1"># Hidden and refined cells are left out by the search (_run, masked_marks).</span>
     <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.polyhedra</span><span class="w"> </span><span class="kn">import</span> <span class="n">PolylineTopology</span>
 

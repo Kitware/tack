@@ -781,6 +781,66 @@ def test_a_vector_l2_fields_trace_is_a_vector(backend, mesh, basis):
         td.interpolate(surface, _swirl_at, v.space, dtype=tack.vec3()).values.numpy(), atol=2e-5)
 
 
+def _sheet(n=5):
+    """An explicit mesh of quads over [-1, 1]^2 at z = 0."""
+    axis = np.linspace(-1, 1, n)
+    points = np.array([(x, y, 0.0) for y in axis for x in axis])
+    rows = [[i + j * n, i + 1 + j * n, i + 1 + (j + 1) * n, i + (j + 1) * n]
+            for j in range(n - 1) for i in range(n - 1)]
+    topology = td.UnstructuredTopology(np.full(len(rows), 9, np.uint8),
+                                       4 * np.arange(len(rows) + 1), np.concatenate(rows))
+    return td.DataSet(topology, points, dtype=tack.f32)
+
+
+@pytest.mark.parametrize("cells", ["quads", "triangles"])
+@pytest.mark.parametrize("order", [1, 3])
+def test_a_2d_meshs_boundary_edges_take_an_l2_fields_trace(backend, cells, order):
+    """A 2D mesh's boundary edges are lines, of two corners: their trace read a
+    third corner past each line's points, so the values were wrong (and the read
+    out of bounds)."""
+    data = _sheet() if cells == "quads" else td.triangulate(_sheet())
+    kind = {"basis": "equispaced"} if cells == "triangles" and order > 2 else {}
+    data.fields["u"] = td.interpolate(data, _cubic_at, td.L2(data, order=order, **kind))
+    edges = td.extract_surface(data, td.boundary_faces(data))
+    assert edges.num_cells == 16
+    u = edges.fields["u"]
+    assert u.space == td.L2(edges, order=order, **kind)
+    np.testing.assert_allclose(u.values.numpy(),
+                               td.interpolate(edges, _cubic_at, u.space).values.numpy(),
+                               atol=2e-5)
+
+
+@pytest.mark.parametrize("layout", ["blocks", "cells"])
+def test_an_l2_field_sharing_a_name_keeps_its_layout_on_the_surface(backend, layout):
+    """A point field and a DG field both called ``p``: the trace is put by its own
+    space, which keeps the layout asked for. It lost the layout, and so was refused
+    under the key of the solid's space."""
+    data = _l2_mesh("explicit")
+    data.fields["p", td.H1] = td.Field(td.H1(data), _scalars(data.positions()[:, 0]))
+    space = td.L2(data, order=3, layout=layout)
+    data.fields["p", space] = td.interpolate(data, _cubic_at, space)
+    surface = td.extract_surface(data)
+    assert isinstance(surface.fields["p", td.H1].space, td.H1)
+    p = surface.fields["p", td.L2]
+    assert p.space == td.L2(surface, order=3, layout=layout) and p.space.layout == layout
+    np.testing.assert_allclose(p.values.numpy(),
+                               td.interpolate(surface, _cubic_at, p.space).values.numpy(),
+                               atol=2e-5)
+
+
+@pytest.mark.parametrize("order", [0, 2])
+def test_a_surface_of_no_faces_has_the_l2_fields_with_no_values(backend, order):
+    """Whether a piece contributes faces or not, its surface has the same fields:
+    selecting no faces dropped the DG fields that one face keeps."""
+    data = _l2_mesh("explicit")
+    data.fields["u"] = td.interpolate(data, _cubic_at, td.L2(data, order=order))
+    one = td.extract_surface(data, np.array([0], np.int64))
+    none = td.extract_surface(data, np.zeros(0, np.int64))
+    assert list(one.fields) == list(none.fields) == ["u"]
+    assert none.num_cells == 0 and none.fields["u"].values.shape[0] == 0
+    assert none.fields["u"].space == td.L2(none, order=order)
+
+
 def test_an_l2_fields_trace_is_the_same_on_every_surface_path(backend):
     """A fresh mesh's surface, the surface from derived faces, the surface around
     hidden cells and each piece's surface all give a DG field its faces' trace, and

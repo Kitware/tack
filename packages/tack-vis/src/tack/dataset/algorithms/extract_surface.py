@@ -348,8 +348,10 @@ def extract_surface(data, faces=None, fields=None):
     the points. ``L2`` (DG) fields of one order stay in the same space on the
     surface, each face holding its side 0 cell's trace (the cell's field at the
     face's nodes, through the cell's parametric coordinates, exact for every
-    basis); an order-0 one takes its cell's value, as cell fields do, and so
-    does every ``L2`` field on polyhedra. The geometry must be ``H1``: an
+    basis); an order-0 one takes its cell's value, as cell fields do, and on no
+    faces each is there with no values. Polyhedra have no ``L2`` fields (``L2``
+    needs reference cells): a value a cell on them is a ``Constant`` field,
+    which comes to the surface as cell fields do. The geometry must be ``H1``: an
     ``L2`` one has no shared points for the faces to stand on.
 
     Given a ``PartitionedDataSet``, the whole's surface, a piece each: each
@@ -567,21 +569,25 @@ def _face_traces(solid, u, surface, t, points, starts, faces, out):
     # (the surface shape's corner functions weighing the solid corners'
     # parametric points), where the solid's field is evaluated. The trace of an
     # order-p polynomial on a face is in the face's order-p space, so the
-    # surface field is the solid's there.
+    # surface field is the solid's there. A face is a 3D cell's triangle or quad,
+    # or a 2D cell's edge (a line): only its own corners are read.
     for c in solid:
         e = solid.entity_id(c)
         for k in range(starts[e], starts[e + 1]):
             s = faces[k]
             p0 = _solid_corner(solid, c, points[surface.point_id(s, 0)])
             p1 = _solid_corner(solid, c, points[surface.point_id(s, 1)])
-            p2 = _solid_corner(solid, c, points[surface.point_id(s, 2)])
-            p3 = p2
+            p2 = p1
+            p3 = p1
+            if surface.NUM_POINTS >= 3:
+                p2 = _solid_corner(solid, c, points[surface.point_id(s, 2)])
             if surface.NUM_POINTS == 4:
                 p3 = _solid_corner(solid, c, points[surface.point_id(s, 3)])
             for n in range(t.NODES):
                 f = t.node_parametric(n)
-                pc = (surface.shape_function(0, f) * p0 + surface.shape_function(1, f) * p1
-                      + surface.shape_function(2, f) * p2)
+                pc = surface.shape_function(0, f) * p0 + surface.shape_function(1, f) * p1
+                if surface.NUM_POINTS >= 3:
+                    pc = pc + surface.shape_function(2, f) * p2
                 if surface.NUM_POINTS == 4:
                     pc = pc + surface.shape_function(3, f) * p3
                 out[t.dof_index(s, n)] = u.value(c, pc)
@@ -605,13 +611,14 @@ def _keep_traces(data, out, cells, points, fields):
     behind, since a face is a piece of its cell."""
     from tack.dataset import _bernstein
     from tack.dataset.buckets import bucket_groups
+    from tack.dataset.dataset import field_name
 
-    # Without reference cells (polyhedra, polygons) a face has no parametric
-    # point in its cell: only order 0, a value a cell, comes along.
-    shaped = all(getattr(t, "reference_cells", True) for t in (data.topology, out.topology))
+    # L2 needs reference cells (no field of it is made on polyhedra), and a
+    # mesh of them has faces of them; a polygonal surface takes order 0 alone.
+    shaped = getattr(out.topology, "reference_cells", True)
     names = [name for name in selected(data, fields) if _traced(data, data.fields[name])
              and (shaped or data.fields[name].space.order == 0)]
-    if not names or not out.num_cells:
+    if not names:
         return out
     if points is None:
         points = CountingArray(out.num_points, dtype=data.id_dtype)
@@ -619,11 +626,16 @@ def _keep_traces(data, out, cells, points, fields):
     for name in names:
         field = data.fields[name]
         space = field.space
-        if space.order == 0:
-            out.fields[name] = Field(L2(out, order=0), _take(field.values, cells), field.unit)
+        # The same space on the surface: order, basis and a layout asked for. Put
+        # by its own space where fields share the name, as out's fields are keyed.
+        kept = {k: v for k, v in space.params.items() if k in ("basis", "layout")}
+        target_space = L2(out, order=space.order, **kept)
+        key = name if isinstance(name, str) else (field_name(name), target_space)
+        if space.order == 0 or not out.num_cells:
+            # A value a cell, its cell's; on no faces, no values, but the field still.
+            out.fields[key] = Field(target_space, _take(field.values, cells)
+                                    if out.num_cells else _like(field.values, 0), field.unit)
             continue
-        target_space = L2(out, order=space.order,
-                          **({} if space.basis is None else {"basis": space.basis}))
         nodal_space = (_bernstein.lagrange_companion(target_space)
                        if _bernstein.is_bernstein(target_space) else target_space)
         target = Field(nodal_space, _like(field.values, nodal_space.size))
@@ -645,7 +657,7 @@ def _keep_traces(data, out, cells, points, fields):
         traced = Field(nodal_space, target.values, field.unit)
         if nodal_space is not target_space:
             traced = _bernstein.from_lagrange(out, traced, target_space)
-        out.fields[name] = Field(target_space, traced.values, field.unit)
+        out.fields[key] = Field(target_space, traced.values, field.unit)
     return out
 
 

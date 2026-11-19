@@ -70,12 +70,7 @@ def advect(data, field, seeds, step_size, steps, integrator="rk4", locator=None,
         from tack.dataset.algorithms._particles import advect_pieces
         return advect_pieces(data, field, seeds, step_size, steps, integrator, step_unit,
                              neighbors, **adaptive)
-    from tack.dataset.ghosts import refuse_hidden, visible
-
-    if locator is None:
-        data, field = visible(data, field)
-    else:
-        refuse_hidden(data, "advect with a locator")
+    # Hidden and refined cells are left out by the search (_run, masked_marks).
     seeds, resume, seed_ids = _resumed(seeds, data)
     xs, times, taken, status, _, _, _, _ = _run(data, field, seeds, step_size, steps,
                                                 integrator, locator, record=False,

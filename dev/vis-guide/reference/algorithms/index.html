@@ -9397,8 +9397,14 @@ surface's). A 3D mesh's order-2 <code>H1</code> fields and geometry stay order 2
 on the surface, the trace of the solid's: each face's corners, edge middles
 and (a quad's) center are the surface cell's, so their values are gathered,
 not evaluated. A 2D mesh's boundary lines take an order-2 field's values at
-the points. The geometry must be <code>H1</code>: an <code>L2</code> one has no shared points
-for the faces to stand on.</p>
+the points. <code>L2</code> (DG) fields of one order stay in the same space on the
+surface, each face holding its side 0 cell's trace (the cell's field at the
+face's nodes, through the cell's parametric coordinates, exact for every
+basis); an order-0 one takes its cell's value, as cell fields do, and on no
+faces each is there with no values. Polyhedra have no <code>L2</code> fields (<code>L2</code>
+needs reference cells): a value a cell on them is a <code>Constant</code> field,
+which comes to the surface as cell fields do. The geometry must be <code>H1</code>: an
+<code>L2</code> one has no shared points for the faces to stand on.</p>
 <p>Given a <code>PartitionedDataSet</code>, the whole's surface, a piece each: each
 piece's boundary, less the faces two pieces share. Pieces without ghost
 cells take the faces between them for boundary; the faces of every piece's
@@ -9412,9 +9418,7 @@ them where the pieces had no ghost cells).</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/algorithms/extract_surface.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">328</span>
-<span class="normal">329</span>
-<span class="normal">330</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">330</span>
 <span class="normal">331</span>
 <span class="normal">332</span>
 <span class="normal">333</span>
@@ -9525,7 +9529,16 @@ them where the pieces had no ghost cells).</p>
 <span class="normal">438</span>
 <span class="normal">439</span>
 <span class="normal">440</span>
-<span class="normal">441</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">441</span>
+<span class="normal">442</span>
+<span class="normal">443</span>
+<span class="normal">444</span>
+<span class="normal">445</span>
+<span class="normal">446</span>
+<span class="normal">447</span>
+<span class="normal">448</span>
+<span class="normal">449</span>
+<span class="normal">450</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">extract_surface</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">faces</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;The ``faces`` -- a face ``Set`` (as ``boundary_faces`` returns), a set&#39;s name</span>
 <span class="sd">    in ``data.sets``, or face ids (a field or an array); by default the boundary</span>
@@ -9543,8 +9556,14 @@ them where the pieces had no ghost cells).</p>
 <span class="sd">    on the surface, the trace of the solid&#39;s: each face&#39;s corners, edge middles</span>
 <span class="sd">    and (a quad&#39;s) center are the surface cell&#39;s, so their values are gathered,</span>
 <span class="sd">    not evaluated. A 2D mesh&#39;s boundary lines take an order-2 field&#39;s values at</span>
-<span class="sd">    the points. The geometry must be ``H1``: an ``L2`` one has no shared points</span>
-<span class="sd">    for the faces to stand on.</span>
+<span class="sd">    the points. ``L2`` (DG) fields of one order stay in the same space on the</span>
+<span class="sd">    surface, each face holding its side 0 cell&#39;s trace (the cell&#39;s field at the</span>
+<span class="sd">    face&#39;s nodes, through the cell&#39;s parametric coordinates, exact for every</span>
+<span class="sd">    basis); an order-0 one takes its cell&#39;s value, as cell fields do, and on no</span>
+<span class="sd">    faces each is there with no values. Polyhedra have no ``L2`` fields (``L2``</span>
+<span class="sd">    needs reference cells): a value a cell on them is a ``Constant`` field,</span>
+<span class="sd">    which comes to the surface as cell fields do. The geometry must be ``H1``: an</span>
+<span class="sd">    ``L2`` one has no shared points for the faces to stand on.</span>
 
 <span class="sd">    Given a ``PartitionedDataSet``, the whole&#39;s surface, a piece each: each</span>
 <span class="sd">    piece&#39;s boundary, less the faces two pieces share. Pieces without ghost</span>
@@ -9630,7 +9649,7 @@ them where the pieces had no ghost cells).</p>
         <span class="n">out</span> <span class="o">=</span> <span class="n">carry</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">surface</span><span class="p">,</span> <span class="n">points</span><span class="o">=</span><span class="n">Same</span><span class="p">(),</span> <span class="n">cells</span><span class="o">=</span><span class="n">Pieces</span><span class="p">(</span><span class="n">cells</span><span class="p">),</span> <span class="n">faces_to_cells</span><span class="o">=</span><span class="n">Take</span><span class="p">(</span><span class="n">ids</span><span class="p">),</span>
                     <span class="n">fields</span><span class="o">=</span><span class="n">fields</span><span class="p">)</span>
         <span class="n">_keep_order_two</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">out</span><span class="p">,</span> <span class="n">ids</span><span class="p">,</span> <span class="n">fields</span><span class="p">)</span>
-        <span class="k">return</span> <span class="n">_on_used_points</span><span class="p">(</span><span class="n">out</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">_on_used_points</span><span class="p">(</span><span class="n">_keep_traces</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">out</span><span class="p">,</span> <span class="n">cells</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="n">fields</span><span class="p">))</span>
     <span class="n">count</span><span class="p">,</span> <span class="n">points</span> <span class="o">=</span> <span class="n">_used_points</span><span class="p">(</span><span class="n">connectivity</span><span class="p">,</span> <span class="n">data</span><span class="o">.</span><span class="n">num_points</span><span class="p">,</span> <span class="n">idt</span><span class="p">)</span>
     <span class="n">surface</span> <span class="o">=</span> <span class="n">UnstructuredTopology</span><span class="p">(</span><span class="n">types</span><span class="p">,</span> <span class="n">offsets</span><span class="p">,</span> <span class="n">connectivity</span><span class="p">,</span> <span class="n">num_points</span><span class="o">=</span><span class="n">count</span><span class="p">)</span>
     <span class="n">maps</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;points&quot;</span><span class="p">:</span> <span class="n">Take</span><span class="p">(</span><span class="n">points</span><span class="p">),</span> <span class="s2">&quot;cells&quot;</span><span class="p">:</span> <span class="n">Pieces</span><span class="p">(</span><span class="n">cells</span><span class="p">),</span> <span class="s2">&quot;faces_to_cells&quot;</span><span class="p">:</span> <span class="n">Take</span><span class="p">(</span><span class="n">ids</span><span class="p">)}</span>
@@ -9638,7 +9657,8 @@ them where the pieces had no ghost cells).</p>
         <span class="c1"># The boundary is the topology&#39;s own: kept with it, as the fresh one is.</span>
         <span class="n">data</span><span class="o">.</span><span class="n">topology</span><span class="o">.</span><span class="n">_boundary</span> <span class="o">=</span> <span class="p">(</span><span class="s2">&quot;faces&quot;</span><span class="p">,</span> <span class="n">surface</span><span class="p">,</span> <span class="n">maps</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
         <span class="k">return</span> <span class="n">_on_boundary</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">fields</span><span class="p">)</span>
-    <span class="k">return</span> <span class="n">carry</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">surface</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="n">fields</span><span class="p">,</span> <span class="o">**</span><span class="n">maps</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">_keep_traces</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">carry</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">surface</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="n">fields</span><span class="p">,</span> <span class="o">**</span><span class="n">maps</span><span class="p">),</span> <span class="n">cells</span><span class="p">,</span>
+                        <span class="n">points</span><span class="p">,</span> <span class="n">fields</span><span class="p">)</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>

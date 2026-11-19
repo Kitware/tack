@@ -6381,6 +6381,14 @@ takes the visible cells first (<code>visible</code>) where hidden cells exist, o
 place for every filter, at the cost of one extraction on the rare data
 that has them. Ids the caller chose (faces, edges) and a reused locator
 refer to the whole dataset, so they are refused there instead.</p>
+<p><em>Revisited (2026-11, #402).</em> The data is not rare: every AMR box below the
+finest level has refined cells, and the extraction cost more than a copy, as
+each call's new topology built itself a new locator (a repeated probe of a
+128^3 box with a tenth of its cells refined: 31 ms against 190). The cell
+search now leaves hidden and refined cells out itself, the marks given with
+each query (<code>CellLocator.find</code>'s <code>hidden</code>), so <code>probe</code>, <code>advect</code> and
+<code>streamlines</code> keep the dataset, its locator, and a locator given. Other
+filters still extract (#403, #404, #405).</p>
 <h2 id="13-questions-to-settle">13. Questions to settle<a class="headerlink" href="#13-questions-to-settle" title="Permanent link">&para;</a></h2>
 <ol>
 <li><strong>Truth for continuity.</strong> This proposal follows MFEM -- continuity

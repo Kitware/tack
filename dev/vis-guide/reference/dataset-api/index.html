@@ -7211,8 +7211,11 @@ cells out (<code>Ghosts.MASKED_CELLS</code>); reductions leave out every skipped
   <code>extract_geometry</code>, <code>mask</code>, <code>extract_surface</code>, <code>extract_edges</code>,
   <code>triangulate</code>, <code>tetrahedralize</code>) and the source of <code>probe</code>, <code>advect</code> and
   <code>streamlines</code> leave them out, as if they were not there. Faces or edges
-  chosen by id, and a reused <code>CellLocator</code>, are refused on data with hidden
-  cells. Outputs on the same cells keep their values there, marked.
+  chosen by id are refused on data with hidden cells. The cell search leaves
+  hidden and refined cells out itself (<code>CellLocator.find(points,
+  hidden=data.ghosts.cells)</code>), so <code>probe</code> and advection keep the dataset's
+  locator, and take one given. Outputs on the same cells keep their values
+  there, marked.
 - <strong><code>remove_ghosts(data)</code></strong> takes out the duplicate and hidden cells and the
   points no remaining cell uses, as VTK's <code>vtkRemoveGhosts</code>: the last step
   before rendering, writing one file, or code that does not know ghost

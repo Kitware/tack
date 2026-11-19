@@ -16202,10 +16202,7 @@ origin in double precision before they are located (the pieces of a
 <span class="normal">232</span>
 <span class="normal">233</span>
 <span class="normal">234</span>
-<span class="normal">235</span>
-<span class="normal">236</span>
-<span class="normal">237</span>
-<span class="normal">238</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">235</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">probe</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">where</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">locator</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;``data``&#39;s fields at the points of ``where`` -- a dataset, or an ``(n, 3)``</span>
 <span class="sd">    array of points, which becomes vertex cells -- as Viskores&#39; Probe and VTK&#39;s</span>
@@ -16258,13 +16255,10 @@ origin in double precision before they are located (the pieces of a
         <span class="k">if</span> <span class="n">locator</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
             <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;probe of a PartitionedDataSet uses each piece&#39;s own locator&quot;</span><span class="p">)</span>
         <span class="k">return</span> <span class="n">_probe_pieces</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">where</span><span class="p">,</span> <span class="n">fields</span><span class="p">)</span>
-    <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.ghosts</span><span class="w"> </span><span class="kn">import</span> <span class="n">refuse_hidden</span><span class="p">,</span> <span class="n">visible</span>
-
-    <span class="k">if</span> <span class="n">locator</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="n">data</span> <span class="o">=</span> <span class="n">visible</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
-    <span class="k">else</span><span class="p">:</span>
-        <span class="n">refuse_hidden</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="s2">&quot;probe with a locator&quot;</span><span class="p">)</span>
+    <span class="c1"># Hidden and refined cells are left out by the search itself</span>
+    <span class="c1"># (masked_marks), so the dataset keeps its topology and its locator.</span>
     <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.carry</span><span class="w"> </span><span class="kn">import</span> <span class="n">_point_values</span><span class="p">,</span> <span class="n">selected</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.ghosts</span><span class="w"> </span><span class="kn">import</span> <span class="n">masked_marks</span>
 
     <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">where</span><span class="p">,</span> <span class="n">DataSet</span><span class="p">):</span>
         <span class="n">where</span> <span class="o">=</span> <span class="n">_vertices</span><span class="p">(</span><span class="n">relative_positions</span><span class="p">(</span><span class="n">where</span><span class="p">,</span> <span class="n">data</span><span class="o">.</span><span class="n">origin</span><span class="p">,</span> <span class="n">data</span><span class="o">.</span><span class="n">unit</span><span class="p">),</span> <span class="n">data</span><span class="p">)</span>
@@ -16281,7 +16275,7 @@ origin in double precision before they are located (the pieces of a
 
         <span class="n">points</span> <span class="o">=</span> <span class="n">_shifted_values</span><span class="p">(</span><span class="n">points</span><span class="p">,</span> <span class="n">where</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span>
                                  <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">where</span><span class="o">.</span><span class="n">origin</span><span class="p">)</span> <span class="o">-</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">origin</span><span class="p">))</span>
-    <span class="n">found</span><span class="p">,</span> <span class="n">pcs</span><span class="p">,</span> <span class="n">tets</span> <span class="o">=</span> <span class="n">locator</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="n">points</span><span class="p">)</span>
+    <span class="n">found</span><span class="p">,</span> <span class="n">pcs</span><span class="p">,</span> <span class="n">tets</span> <span class="o">=</span> <span class="n">locator</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="n">points</span><span class="p">,</span> <span class="n">hidden</span><span class="o">=</span><span class="n">masked_marks</span><span class="p">(</span><span class="n">data</span><span class="p">))</span>
     <span class="n">m</span> <span class="o">=</span> <span class="n">found</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
     <span class="c1"># Fields read by cell id where find searched from the points; built only</span>
     <span class="c1"># then, since it needs the cell bins.</span>
@@ -16683,12 +16677,7 @@ a CPU core: below a few thousand seeds a CPU copy of the mesh is faster
 <span class="normal">83</span>
 <span class="normal">84</span>
 <span class="normal">85</span>
-<span class="normal">86</span>
-<span class="normal">87</span>
-<span class="normal">88</span>
-<span class="normal">89</span>
-<span class="normal">90</span>
-<span class="normal">91</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">86</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">advect</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">,</span> <span class="n">seeds</span><span class="p">,</span> <span class="n">step_size</span><span class="p">,</span> <span class="n">steps</span><span class="p">,</span> <span class="n">integrator</span><span class="o">=</span><span class="s2">&quot;rk4&quot;</span><span class="p">,</span> <span class="n">locator</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
            <span class="n">step_unit</span><span class="o">=</span><span class="s2">&quot;time&quot;</span><span class="p">,</span> <span class="n">tolerance</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">min_step</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">max_step</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">max_length</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
            <span class="n">neighbors</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">terminal_speed</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
@@ -16742,12 +16731,7 @@ a CPU core: below a few thousand seeds a CPU copy of the mesh is faster
         <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.algorithms._particles</span><span class="w"> </span><span class="kn">import</span> <span class="n">advect_pieces</span>
         <span class="k">return</span> <span class="n">advect_pieces</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">,</span> <span class="n">seeds</span><span class="p">,</span> <span class="n">step_size</span><span class="p">,</span> <span class="n">steps</span><span class="p">,</span> <span class="n">integrator</span><span class="p">,</span> <span class="n">step_unit</span><span class="p">,</span>
                              <span class="n">neighbors</span><span class="p">,</span> <span class="o">**</span><span class="n">adaptive</span><span class="p">)</span>
-    <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.ghosts</span><span class="w"> </span><span class="kn">import</span> <span class="n">refuse_hidden</span><span class="p">,</span> <span class="n">visible</span>
-
-    <span class="k">if</span> <span class="n">locator</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="n">data</span><span class="p">,</span> <span class="n">field</span> <span class="o">=</span> <span class="n">visible</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">)</span>
-    <span class="k">else</span><span class="p">:</span>
-        <span class="n">refuse_hidden</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="s2">&quot;advect with a locator&quot;</span><span class="p">)</span>
+    <span class="c1"># Hidden and refined cells are left out by the search (_run, masked_marks).</span>
     <span class="n">seeds</span><span class="p">,</span> <span class="n">resume</span><span class="p">,</span> <span class="n">seed_ids</span> <span class="o">=</span> <span class="n">_resumed</span><span class="p">(</span><span class="n">seeds</span><span class="p">,</span> <span class="n">data</span><span class="p">)</span>
     <span class="n">xs</span><span class="p">,</span> <span class="n">times</span><span class="p">,</span> <span class="n">taken</span><span class="p">,</span> <span class="n">status</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">_run</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">,</span> <span class="n">seeds</span><span class="p">,</span> <span class="n">step_size</span><span class="p">,</span> <span class="n">steps</span><span class="p">,</span>
                                                 <span class="n">integrator</span><span class="p">,</span> <span class="n">locator</span><span class="p">,</span> <span class="n">record</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
@@ -16959,12 +16943,7 @@ piece, each piece holding the stretches it traced.</p>
 <span class="normal">132</span>
 <span class="normal">133</span>
 <span class="normal">134</span>
-<span class="normal">135</span>
-<span class="normal">136</span>
-<span class="normal">137</span>
-<span class="normal">138</span>
-<span class="normal">139</span>
-<span class="normal">140</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">135</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">streamlines</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">,</span> <span class="n">seeds</span><span class="p">,</span> <span class="n">step_size</span><span class="p">,</span> <span class="n">steps</span><span class="p">,</span> <span class="n">integrator</span><span class="o">=</span><span class="s2">&quot;rk4&quot;</span><span class="p">,</span> <span class="n">locator</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
                 <span class="n">step_unit</span><span class="o">=</span><span class="s2">&quot;time&quot;</span><span class="p">,</span> <span class="n">tolerance</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">min_step</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">max_step</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
                 <span class="n">max_length</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">neighbors</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">terminal_speed</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
@@ -17011,12 +16990,7 @@ piece, each piece holding the stretches it traced.</p>
         <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.algorithms._particles</span><span class="w"> </span><span class="kn">import</span> <span class="n">streamlines_pieces</span>
         <span class="k">return</span> <span class="n">streamlines_pieces</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">,</span> <span class="n">seeds</span><span class="p">,</span> <span class="n">step_size</span><span class="p">,</span> <span class="n">steps</span><span class="p">,</span> <span class="n">integrator</span><span class="p">,</span> <span class="n">step_unit</span><span class="p">,</span>
                                   <span class="n">neighbors</span><span class="p">,</span> <span class="o">**</span><span class="n">adaptive</span><span class="p">)</span>
-    <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.ghosts</span><span class="w"> </span><span class="kn">import</span> <span class="n">refuse_hidden</span><span class="p">,</span> <span class="n">visible</span>
-
-    <span class="k">if</span> <span class="n">locator</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="n">data</span><span class="p">,</span> <span class="n">field</span> <span class="o">=</span> <span class="n">visible</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">)</span>
-    <span class="k">else</span><span class="p">:</span>
-        <span class="n">refuse_hidden</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="s2">&quot;streamlines with a locator&quot;</span><span class="p">)</span>
+    <span class="c1"># Hidden and refined cells are left out by the search (_run, masked_marks).</span>
     <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.polyhedra</span><span class="w"> </span><span class="kn">import</span> <span class="n">PolylineTopology</span>
 
     <span class="n">_</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="p">(</span><span class="n">trace</span><span class="p">,</span> <span class="n">trace_times</span><span class="p">),</span> <span class="n">lengths</span><span class="p">,</span> <span class="n">capacity</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">_run</span><span class="p">(</span>

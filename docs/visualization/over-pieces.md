@@ -303,6 +303,12 @@ give an unstructured dataset, numbered as `generate_global_ids` numbers it.
 Across MPI ranks the result is on the root rank, `root=0` by default, and
 `None` elsewhere.
 
+Fields of higher order and curved cells merge at their order. An `H1` field
+above order 1, an `L2` field and a curved geometry travel as each owned cell's
+nodes and are placed through the merged mesh's own numbering, so a node two
+pieces share is one value, as a point is. Each field must be in the same space
+on every piece: the same family, order and basis.
+
 ## Pieces from VTK
 
 `vtk_to_dataset` turns a `vtkPartitionedDataSet` into a `PartitionedDataSet`,

@@ -8296,8 +8296,8 @@ with only the points they use: fields carry as <code>threshold</code> carries th
 <td><a href="#tack.dataset.algorithms.contour.contour"><code>contour</code></a></td>
 <td>isosurfaces, isolines or points of a field, one level or several</td>
 <td>dataset</td>
-<td>vtkContourFilter</td>
-<td>Contour</td>
+<td>vtkContourFilter, vtkFlyingEdges3D</td>
+<td>Contour, ContourFlyingEdges</td>
 </tr>
 <tr>
 <td><a href="#tack.dataset.algorithms.slice.slice"><code>slice</code></a></td>
@@ -8310,7 +8310,7 @@ with only the points they use: fields carry as <code>threshold</code> carries th
 <td><a href="#tack.dataset.algorithms.slice.slice_plane"><code>slice_plane</code></a></td>
 <td>a plane's cut, or parallel planes</td>
 <td>dataset</td>
-<td>vtkCutter</td>
+<td>vtkCutter, vtkFlyingEdgesPlaneCutter</td>
 <td>Slice</td>
 </tr>
 <tr>
@@ -8400,6 +8400,19 @@ of the first cell to cross there.</p>
 <p>A cell with a NaN among its values gives no surface (nor lines, nor
 vertices): the surface stops at the cells that hold numbers, and no point
 is placed on an edge to a missing value.</p>
+<p>A structured grid of solid cells -- an image, a rectilinear grid or a
+curvilinear one -- with a point field and positions on the points is
+contoured by flying edges, as VTK's <code>vtkFlyingEdges3D</code> and Viskores' flying
+edges: crossings counted along the grid's rows, numbered by a scan and
+written once, with no per-corner arrays and no sort. Its triangles, points
+and carried values are the ones the general path makes, up to their order
+(<code>algorithms._flying_edges</code>). On an 11M-cell image at ten values it peaked
+at 0.32 GB above the input against the general path's 2.24 (CPU, M1 Max).
+Hidden and refined cells (an AMR box's) are left out in place, where
+elsewhere the rest are extracted, a structured grid's into unstructured
+cells, first. A 2D structured grid's lines go by flying edges too, paired in
+each cell as the general path pairs them: on a 4096^2 image at ten values it
+peaked at 0.18 GB above the input against 14.1.</p>
 <p>With <code>merge_points</code>, triangles share their points: by global edge when
 the field and the geometry are both continuous (an <code>H1</code> field, or one of a
 space that declares itself <code>continuous</code>), so the surface is watertight; otherwise only within each cell, so a DG field's surface
@@ -8411,80 +8424,7 @@ each came from.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/algorithms/contour.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">399</span>
-<span class="normal">400</span>
-<span class="normal">401</span>
-<span class="normal">402</span>
-<span class="normal">403</span>
-<span class="normal">404</span>
-<span class="normal">405</span>
-<span class="normal">406</span>
-<span class="normal">407</span>
-<span class="normal">408</span>
-<span class="normal">409</span>
-<span class="normal">410</span>
-<span class="normal">411</span>
-<span class="normal">412</span>
-<span class="normal">413</span>
-<span class="normal">414</span>
-<span class="normal">415</span>
-<span class="normal">416</span>
-<span class="normal">417</span>
-<span class="normal">418</span>
-<span class="normal">419</span>
-<span class="normal">420</span>
-<span class="normal">421</span>
-<span class="normal">422</span>
-<span class="normal">423</span>
-<span class="normal">424</span>
-<span class="normal">425</span>
-<span class="normal">426</span>
-<span class="normal">427</span>
-<span class="normal">428</span>
-<span class="normal">429</span>
-<span class="normal">430</span>
-<span class="normal">431</span>
-<span class="normal">432</span>
-<span class="normal">433</span>
-<span class="normal">434</span>
-<span class="normal">435</span>
-<span class="normal">436</span>
-<span class="normal">437</span>
-<span class="normal">438</span>
-<span class="normal">439</span>
-<span class="normal">440</span>
-<span class="normal">441</span>
-<span class="normal">442</span>
-<span class="normal">443</span>
-<span class="normal">444</span>
-<span class="normal">445</span>
-<span class="normal">446</span>
-<span class="normal">447</span>
-<span class="normal">448</span>
-<span class="normal">449</span>
-<span class="normal">450</span>
-<span class="normal">451</span>
-<span class="normal">452</span>
-<span class="normal">453</span>
-<span class="normal">454</span>
-<span class="normal">455</span>
-<span class="normal">456</span>
-<span class="normal">457</span>
-<span class="normal">458</span>
-<span class="normal">459</span>
-<span class="normal">460</span>
-<span class="normal">461</span>
-<span class="normal">462</span>
-<span class="normal">463</span>
-<span class="normal">464</span>
-<span class="normal">465</span>
-<span class="normal">466</span>
-<span class="normal">467</span>
-<span class="normal">468</span>
-<span class="normal">469</span>
-<span class="normal">470</span>
-<span class="normal">471</span>
-<span class="normal">472</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">472</span>
 <span class="normal">473</span>
 <span class="normal">474</span>
 <span class="normal">475</span>
@@ -8543,7 +8483,101 @@ each came from.</p>
 <span class="normal">528</span>
 <span class="normal">529</span>
 <span class="normal">530</span>
-<span class="normal">531</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">531</span>
+<span class="normal">532</span>
+<span class="normal">533</span>
+<span class="normal">534</span>
+<span class="normal">535</span>
+<span class="normal">536</span>
+<span class="normal">537</span>
+<span class="normal">538</span>
+<span class="normal">539</span>
+<span class="normal">540</span>
+<span class="normal">541</span>
+<span class="normal">542</span>
+<span class="normal">543</span>
+<span class="normal">544</span>
+<span class="normal">545</span>
+<span class="normal">546</span>
+<span class="normal">547</span>
+<span class="normal">548</span>
+<span class="normal">549</span>
+<span class="normal">550</span>
+<span class="normal">551</span>
+<span class="normal">552</span>
+<span class="normal">553</span>
+<span class="normal">554</span>
+<span class="normal">555</span>
+<span class="normal">556</span>
+<span class="normal">557</span>
+<span class="normal">558</span>
+<span class="normal">559</span>
+<span class="normal">560</span>
+<span class="normal">561</span>
+<span class="normal">562</span>
+<span class="normal">563</span>
+<span class="normal">564</span>
+<span class="normal">565</span>
+<span class="normal">566</span>
+<span class="normal">567</span>
+<span class="normal">568</span>
+<span class="normal">569</span>
+<span class="normal">570</span>
+<span class="normal">571</span>
+<span class="normal">572</span>
+<span class="normal">573</span>
+<span class="normal">574</span>
+<span class="normal">575</span>
+<span class="normal">576</span>
+<span class="normal">577</span>
+<span class="normal">578</span>
+<span class="normal">579</span>
+<span class="normal">580</span>
+<span class="normal">581</span>
+<span class="normal">582</span>
+<span class="normal">583</span>
+<span class="normal">584</span>
+<span class="normal">585</span>
+<span class="normal">586</span>
+<span class="normal">587</span>
+<span class="normal">588</span>
+<span class="normal">589</span>
+<span class="normal">590</span>
+<span class="normal">591</span>
+<span class="normal">592</span>
+<span class="normal">593</span>
+<span class="normal">594</span>
+<span class="normal">595</span>
+<span class="normal">596</span>
+<span class="normal">597</span>
+<span class="normal">598</span>
+<span class="normal">599</span>
+<span class="normal">600</span>
+<span class="normal">601</span>
+<span class="normal">602</span>
+<span class="normal">603</span>
+<span class="normal">604</span>
+<span class="normal">605</span>
+<span class="normal">606</span>
+<span class="normal">607</span>
+<span class="normal">608</span>
+<span class="normal">609</span>
+<span class="normal">610</span>
+<span class="normal">611</span>
+<span class="normal">612</span>
+<span class="normal">613</span>
+<span class="normal">614</span>
+<span class="normal">615</span>
+<span class="normal">616</span>
+<span class="normal">617</span>
+<span class="normal">618</span>
+<span class="normal">619</span>
+<span class="normal">620</span>
+<span class="normal">621</span>
+<span class="normal">622</span>
+<span class="normal">623</span>
+<span class="normal">624</span>
+<span class="normal">625</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">contour</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">,</span> <span class="n">value</span><span class="p">,</span> <span class="n">merge_points</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">dimension</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
             <span class="n">subdivision</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">tolerance</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">exact</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Where ``field`` crosses ``value``: a surface of a 3D mesh, as triangles</span>
@@ -8607,6 +8641,20 @@ each came from.</p>
 <span class="sd">    vertices): the surface stops at the cells that hold numbers, and no point</span>
 <span class="sd">    is placed on an edge to a missing value.</span>
 
+<span class="sd">    A structured grid of solid cells -- an image, a rectilinear grid or a</span>
+<span class="sd">    curvilinear one -- with a point field and positions on the points is</span>
+<span class="sd">    contoured by flying edges, as VTK&#39;s ``vtkFlyingEdges3D`` and Viskores&#39; flying</span>
+<span class="sd">    edges: crossings counted along the grid&#39;s rows, numbered by a scan and</span>
+<span class="sd">    written once, with no per-corner arrays and no sort. Its triangles, points</span>
+<span class="sd">    and carried values are the ones the general path makes, up to their order</span>
+<span class="sd">    (``algorithms._flying_edges``). On an 11M-cell image at ten values it peaked</span>
+<span class="sd">    at 0.32 GB above the input against the general path&#39;s 2.24 (CPU, M1 Max).</span>
+<span class="sd">    Hidden and refined cells (an AMR box&#39;s) are left out in place, where</span>
+<span class="sd">    elsewhere the rest are extracted, a structured grid&#39;s into unstructured</span>
+<span class="sd">    cells, first. A 2D structured grid&#39;s lines go by flying edges too, paired in</span>
+<span class="sd">    each cell as the general path pairs them: on a 4096^2 image at ten values it</span>
+<span class="sd">    peaked at 0.18 GB above the input against 14.1.</span>
+
 <span class="sd">    With ``merge_points``, triangles share their points: by global edge when</span>
 <span class="sd">    the field and the geometry are both continuous (an ``H1`` field, or one of a</span>
 <span class="sd">    space that declares itself ``continuous``), so the surface is watertight; otherwise only within each cell, so a DG field&#39;s surface</span>
@@ -8618,7 +8666,11 @@ each came from.</p>
     <span class="n">value</span> <span class="o">=</span> <span class="n">_in_unit_of</span><span class="p">(</span><span class="n">_field</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">),</span> <span class="n">value</span><span class="p">,</span> <span class="s2">&quot;contour&#39;s value&quot;</span><span class="p">)</span>
     <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.ghosts</span><span class="w"> </span><span class="kn">import</span> <span class="n">visible</span>
 
-    <span class="n">data</span><span class="p">,</span> <span class="n">field</span> <span class="o">=</span> <span class="n">visible</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">)</span>
+    <span class="c1"># Flying edges leaves hidden and refined cells out in place; elsewhere the</span>
+    <span class="c1"># rest are extracted, a structured grid&#39;s into unstructured cells.</span>
+    <span class="n">flying</span> <span class="o">=</span> <span class="n">_by_flying_edges</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">,</span> <span class="n">merge_points</span><span class="p">,</span> <span class="n">dimension</span><span class="p">,</span> <span class="n">subdivision</span><span class="p">,</span> <span class="n">tolerance</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">flying</span><span class="p">:</span>
+        <span class="n">data</span><span class="p">,</span> <span class="n">field</span> <span class="o">=</span> <span class="n">visible</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">)</span>
     <span class="n">field</span> <span class="o">=</span> <span class="n">_field</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">)</span>
     <span class="n">space</span> <span class="o">=</span> <span class="n">field</span><span class="o">.</span><span class="n">space</span>
     <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.algorithms.subdivide</span><span class="w"> </span><span class="kn">import</span> <span class="n">subdivided_contour</span><span class="p">,</span> <span class="n">subdivides</span>
@@ -8649,6 +8701,9 @@ each came from.</p>
     <span class="n">_scalar_floating</span><span class="p">(</span><span class="s2">&quot;contour&quot;</span><span class="p">,</span> <span class="n">field</span><span class="p">)</span>
     <span class="n">levels</span><span class="p">,</span> <span class="n">nlevels</span><span class="p">,</span> <span class="n">several</span> <span class="o">=</span> <span class="n">_levels</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="n">field</span><span class="p">)</span>
     <span class="n">top</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">topology</span><span class="o">.</span><span class="n">dimension</span>
+    <span class="k">if</span> <span class="n">flying</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">_structured_contour</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">_with_basis</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">),</span> <span class="n">levels</span><span class="p">,</span> <span class="n">nlevels</span><span class="p">,</span> <span class="n">several</span><span class="p">,</span>
+                                   <span class="n">fields</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="n">shapes</span><span class="o">.</span><span class="n">LINE</span> <span class="k">if</span> <span class="n">top</span> <span class="o">==</span> <span class="mi">2</span> <span class="k">else</span> <span class="n">shapes</span><span class="o">.</span><span class="n">TRIANGLE</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">dimension</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
         <span class="n">dimension</span> <span class="o">=</span> <span class="n">top</span> <span class="k">if</span> <span class="n">top</span> <span class="o">&gt;=</span> <span class="mi">1</span> <span class="k">else</span> <span class="mi">3</span>       <span class="c1"># no cells (or vertices): no surface</span>
     <span class="k">if</span> <span class="n">dimension</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">):</span>
@@ -8713,6 +8768,15 @@ with a <code>Plane</code>. On a curved geometry (<code>H1</code> above order 1) 
 quads, pixels, hexahedra or voxels the cells are cut on linear sub-cells,
 as <code>contour</code> cuts them (<code>subdivision</code>, <code>tolerance</code>, <code>exact</code>); on
 other cells, linearized at their corners.</p>
+<p>A <code>Plane</code> through an image or a rectilinear grid of solid cells is cut by
+flying edges over the stretch of each row near the plane, its distance
+computed where it is read, as VTK's <code>vtkFlyingEdgesPlaneCutter</code>: only the
+cells near the plane are visited, and nothing is stored for the others. A
+curvilinear grid's rows are all visited, its points lying anywhere, the
+distance still computed where read. Hidden and refined cells are left out in
+place. The triangles, points and values are the general path's, up to their
+order. (<code>exact</code> does not keep a plane from the cutter: it matters only when
+cells are subdivided, and the cutter's cells are linear.)</p>
 
 
             <details class="mkdocstrings-source">
@@ -8739,7 +8803,24 @@ other cells, linearized at their corners.</p>
 <span class="normal">36</span>
 <span class="normal">37</span>
 <span class="normal">38</span>
-<span class="normal">39</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="normal">39</span>
+<span class="normal">40</span>
+<span class="normal">41</span>
+<span class="normal">42</span>
+<span class="normal">43</span>
+<span class="normal">44</span>
+<span class="normal">45</span>
+<span class="normal">46</span>
+<span class="normal">47</span>
+<span class="normal">48</span>
+<span class="normal">49</span>
+<span class="normal">50</span>
+<span class="normal">51</span>
+<span class="normal">52</span>
+<span class="normal">53</span>
+<span class="normal">54</span>
+<span class="normal">55</span>
+<span class="normal">56</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">slice</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">function</span><span class="p">,</span> <span class="n">merge_points</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">value</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">subdivision</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
           <span class="n">tolerance</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">exact</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Where ``function`` (``tack.dataset.implicit``) is ``value`` (zero by default):</span>
@@ -8750,7 +8831,24 @@ other cells, linearized at their corners.</p>
 <span class="sd">    with a ``Plane``. On a curved geometry (``H1`` above order 1) of segments,</span>
 <span class="sd">    quads, pixels, hexahedra or voxels the cells are cut on linear sub-cells,</span>
 <span class="sd">    as ``contour`` cuts them (``subdivision``, ``tolerance``, ``exact``); on</span>
-<span class="sd">    other cells, linearized at their corners.&quot;&quot;&quot;</span>
+<span class="sd">    other cells, linearized at their corners.</span>
+
+<span class="sd">    A ``Plane`` through an image or a rectilinear grid of solid cells is cut by</span>
+<span class="sd">    flying edges over the stretch of each row near the plane, its distance</span>
+<span class="sd">    computed where it is read, as VTK&#39;s ``vtkFlyingEdgesPlaneCutter``: only the</span>
+<span class="sd">    cells near the plane are visited, and nothing is stored for the others. A</span>
+<span class="sd">    curvilinear grid&#39;s rows are all visited, its points lying anywhere, the</span>
+<span class="sd">    distance still computed where read. Hidden and refined cells are left out in</span>
+<span class="sd">    place. The triangles, points and values are the general path&#39;s, up to their</span>
+<span class="sd">    order. (``exact`` does not keep a plane from the cutter: it matters only when</span>
+<span class="sd">    cells are subdivided, and the cutter&#39;s cells are linear.)&quot;&quot;&quot;</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.algorithms</span><span class="w"> </span><span class="kn">import</span> <span class="n">_flying_edges</span>
+
+    <span class="k">if</span> <span class="p">(</span><span class="n">merge_points</span> <span class="ow">and</span> <span class="n">subdivision</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">tolerance</span> <span class="ow">is</span> <span class="kc">None</span>
+            <span class="ow">and</span> <span class="n">_flying_edges</span><span class="o">.</span><span class="n">cuts</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">function</span><span class="p">)):</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.algorithms.contour</span><span class="w"> </span><span class="kn">import</span> <span class="n">plane_cut</span>
+
+        <span class="k">return</span> <span class="n">plane_cut</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">function</span><span class="p">,</span> <span class="n">value</span><span class="p">,</span> <span class="n">fields</span><span class="p">)</span>
     <span class="n">values</span> <span class="o">=</span> <span class="n">implicit_values</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">function</span><span class="p">)</span>
     <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.algorithms.subdivide</span><span class="w"> </span><span class="kn">import</span> <span class="n">subdivides</span>
 
@@ -8803,23 +8901,23 @@ distance) and <code>exact</code> are <code>contour</code>'s.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/algorithms/slice.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">42</span>
-<span class="normal">43</span>
-<span class="normal">44</span>
-<span class="normal">45</span>
-<span class="normal">46</span>
-<span class="normal">47</span>
-<span class="normal">48</span>
-<span class="normal">49</span>
-<span class="normal">50</span>
-<span class="normal">51</span>
-<span class="normal">52</span>
-<span class="normal">53</span>
-<span class="normal">54</span>
-<span class="normal">55</span>
-<span class="normal">56</span>
-<span class="normal">57</span>
-<span class="normal">58</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">59</span>
+<span class="normal">60</span>
+<span class="normal">61</span>
+<span class="normal">62</span>
+<span class="normal">63</span>
+<span class="normal">64</span>
+<span class="normal">65</span>
+<span class="normal">66</span>
+<span class="normal">67</span>
+<span class="normal">68</span>
+<span class="normal">69</span>
+<span class="normal">70</span>
+<span class="normal">71</span>
+<span class="normal">72</span>
+<span class="normal">73</span>
+<span class="normal">74</span>
+<span class="normal">75</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">slice_plane</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">origin</span><span class="p">,</span> <span class="n">normal</span><span class="p">,</span> <span class="n">merge_points</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">value</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
                 <span class="n">subdivision</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">tolerance</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">exact</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;The cut of the 3D cells by the plane through ``origin`` with ``normal`` (any</span>

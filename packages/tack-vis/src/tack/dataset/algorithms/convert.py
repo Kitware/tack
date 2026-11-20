@@ -42,7 +42,7 @@ def _converted(given, target, what):
                         f"{target!r}: give it floating-point values first")
     else:
         values = _times(given.values, factor, offset)
-    return Field(given.space, values, target)
+    return Field(given.space, values, target, kind=given.kind)
 
 
 @on_inputs_device

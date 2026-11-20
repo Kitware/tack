@@ -40,7 +40,7 @@ from functools import lru_cache
 import numpy as np
 
 __all__ = ["canonical", "check", "compatible", "conversion", "delta", "derived",
-           "magnitude", "named", "quantity", "same"]
+           "magnitude", "named", "quantity", "same", "same_dimensions"]
 
 _registry = None
 
@@ -114,6 +114,13 @@ def same(a, b):
         return False
     factor, offset = a.get_conversion_factor(b)
     return factor == 1.0 and offset is None
+
+
+def same_dimensions(a, b):
+    """Whether units ``a`` and ``b`` (canonical strings) have the same dimensions, in
+    any scale or offset (``"kPa"`` and ``"psi"``, ``"degC"`` and ``"K"``); true if
+    either is ``None``, which cannot be checked."""
+    return a is None or b is None or _parsed(a).same_dimensions_as(_parsed(b))
 
 
 def compatible(a, b):

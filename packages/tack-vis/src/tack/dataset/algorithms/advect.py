@@ -38,7 +38,9 @@ def advect(data, field, seeds, step_size, steps, integrator="rk4", locator=None,
     ``neighbors=True`` tries the face neighbours of the cell a particle was last
     found in before searching the locator's bins: the same particles, bit for
     bit, in about half the time on large meshes, for a table of six ids a cell
-    kept with the locator (``CellLocator.cell_neighbors``).
+    kept with the locator (``CellLocator.cell_neighbors``). On an image or a
+    rectilinear grid it changes nothing: the locator finds cells by
+    arithmetic there, as cheaply, and builds no table.
 
     ``seeds`` may also be what ``advect`` returned: the particles go on from
     where they stopped, with their times and the steps they took (``steps``
@@ -46,7 +48,8 @@ def advect(data, field, seeds, step_size, steps, integrator="rk4", locator=None,
     velocity, or outside -- stays as it is. A ``seed`` point field on it comes
     along.
 
-    Over a ``PartitionedDataSet`` (``field`` by name), particles cross from
+    Over a ``PartitionedDataSet`` (``field`` by name, or an object whose
+    ``on(piece)`` gives each piece's field, as a field expression does), particles cross from
     piece to piece, in rounds: each goes to the lowest piece one of whose own
     cells (not a ghost) holds it, steps until it leaves that piece, and is
     handed on, until none is in flight on any rank.
@@ -59,21 +62,19 @@ def advect(data, field, seeds, step_size, steps, integrator="rk4", locator=None,
     # length ("1 mm"), in the spatial unit.
     if step_unit not in ("time", "length"):
         raise ValueError(f"step_unit is 'time' or 'length', not {step_unit!r}")
+    if isinstance(data, PartitionedDataSet):
+        from tack.dataset.algorithms._particles import advect_pieces
+        return advect_pieces(data, field, seeds, step_size, steps, integrator, step_unit,
+                             neighbors, tolerance=tolerance, min_step=min_step,
+                             max_step=max_step, max_length=max_length,
+                             terminal_speed=terminal_speed)
+
     step_size, tolerance, min_step, max_step, max_length, terminal_speed = _parameters(
         data, field, step_unit, "advect", step_size, tolerance, min_step, max_step, max_length,
         terminal_speed)
     adaptive = {"tolerance": tolerance, "min_step": min_step, "max_step": max_step,
                 "max_length": max_length, "terminal_speed": terminal_speed}
-    if isinstance(data, PartitionedDataSet):
-        from tack.dataset.algorithms._particles import advect_pieces
-        return advect_pieces(data, field, seeds, step_size, steps, integrator, step_unit,
-                             neighbors, **adaptive)
-    from tack.dataset.ghosts import refuse_hidden, visible
-
-    if locator is None:
-        data, field = visible(data, field)
-    else:
-        refuse_hidden(data, "advect with a locator")
+    # Hidden and refined cells are left out by the search (_run, masked_marks).
     seeds, resume, seed_ids = _resumed(seeds, data)
     xs, times, taken, status, _, _, _, _ = _run(data, field, seeds, step_size, steps,
                                                 integrator, locator, record=False,

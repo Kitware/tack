@@ -41,6 +41,43 @@ design notes go in `docs/design/`.
 Maintainers try to reach agreement in the issue or pull request. When they
 cannot, the lead decides and says why in the same thread.
 
+## Reviewing a pull request
+
+A review asks whether the change is right and whether it is ready:
+
+- **It does what it says.** It does what its issue asks, or its plan (a
+  page in `docs/design/plans/`, accepted when its own pull request merged),
+  and says where it departs. A plan's pull requests are reviewed against the
+  plan: is this what it called for, and is the risk acceptable?
+- **It is tested.** New behaviour has tests that fail without the change,
+  and a fix the test that shows the bug. Tests check behaviour and values
+  rather than coverage (a kernel's body never runs as Python) and use the
+  shared backend fixtures, so every backend runs them. A change that CI's
+  hardware cannot exercise (a GPU backend other than Metal, MPI across
+  machines) says where it was run.
+- **Claims are measured.** A claim about speed or memory comes with its
+  numbers: the machine, the data, before and after, in one unit.
+- **It is complete.** Public names are in `__all__` and the reference
+  pages; the guides and examples that show the behaviour are updated; the
+  change has its `changelog.d/` entry; a removal is deprecated first
+  (`tack._deprecation`); new files carry their SPDX header, and code from
+  elsewhere keeps its license.
+- **It does nothing else.** No new network access, credentials or secrets,
+  and no unrelated changes. A change to what [SECURITY.md](SECURITY.md)
+  covers (the disk cache, memory handed outside Tack, readers of outside
+  data) gets a careful read.
+
+How maintainers approve:
+
+- A maintainer approves with GitHub's **Approve**. **Request changes** marks
+  what must change before merging; a plain comment may wait for a later
+  pull request. The author answers every comment, with a change or a reply.
+- A change made after approval that goes beyond what the review asked for
+  is reviewed again.
+- A review request unanswered for a week may go to another maintainer.
+- A pull request merges through the merge queue once every check passes;
+  no one merges around the checks. One stacked on another merges after it.
+
 ## Roadmap and releases
 
 The roadmap is the issue tracker. Each planned release is a milestone, and

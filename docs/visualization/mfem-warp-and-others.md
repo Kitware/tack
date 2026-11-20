@@ -94,8 +94,8 @@ function's `fes` and `fec` attributes alive as long as it is used.
   them: its values as they are, in a space numbered by MFEM's element-to-DOF
   table. By default they are renumbered by entity, as Tack's own spaces are.
 
-MFEM fields above order 1 on pyramids are refused: Tack has no such space on
-pyramids yet.
+MFEM fields above order 1 on pyramids are refused: Tack's order 2 on pyramids
+is VTK's 18-node pyramid, which MFEM's order-2 pyramid space is not.
 
 One limit matters for face-based algorithms. Tack does not yet know that a
 coarse cell's edge or face and the finer ones covering it are the same

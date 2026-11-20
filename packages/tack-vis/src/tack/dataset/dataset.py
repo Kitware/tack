@@ -335,7 +335,10 @@ def _geometry_parts(data, group, kind):
         data.topology.edges()
         if group.shape.QUADRATIC_FACES:
             data.topology.faces()
-        mixins, attributes = _space_parts(geometry, group, views._H1Order2Geometry)
+        mixins, attributes = _space_parts(geometry, group,
+                                          views._H1PyramidGeometry
+                                          if group.shape is shapes.Pyramid
+                                          else views._H1Order2Geometry)
         return [*mixins, views.quadratic_faces(group.shape), views._QuadraticNewton], attributes
     if high and kind == "cells" and bases.wedge_shape(group.shape):
         # Curved wedges of order 3 and up (2 too in a Bernstein basis).
@@ -1271,8 +1274,11 @@ class DataSet:
             if space.basis == bases.SERENDIPITY:
                 return out                       # no face centres or insides stored
             if any(g.count and g.shape.QUADRATIC_FACES for g in self.topology.groups()):
+                pyramids = any(g.count and g.shape is shapes.Pyramid
+                               for g in self.topology.groups())
                 for group in self.topology.faces().groups():
-                    if group.count and group.shape is shapes.Quad:
+                    if group.count and (group.shape is shapes.Quad
+                                        or (pyramids and group.shape is shapes.Triangle)):
                         out.append(self.domain_view("faces", group, (views._FaceDof, where),
                                                     node_face_dofs=face_dofs))
             for group in self.topology.groups():
@@ -1299,7 +1305,10 @@ class DataSet:
             # at its own offsets.
             fixed = (space.at_order(group.keys[space])
                      if isinstance(space, L2) and space.varies else space)
-            if isinstance(space, L2) and fixed.tensor and (bases.simplex_shape(group.shape)
+            if isinstance(space, L2) and fixed.tensor and group.shape is shapes.Pyramid:
+                view = self.domain_view("cells", group, (views._PyramidCellNodes,),
+                                        node_offsets=space.offsets)
+            elif isinstance(space, L2) and fixed.tensor and (bases.simplex_shape(group.shape)
                                                            or bases.wedge_shape(group.shape)):
                 lattice = bases.lattice_ijk(group.shape, fixed.order).reshape(-1)
                 ijk = tack.empty((len(lattice),), tack.i32)

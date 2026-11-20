@@ -22,13 +22,24 @@ def _side_centers(cells, u, out):
     # Each cell's value at each of its faces' centres -- the mean of the face's
     # corners in the cell's reference element, which both cells map to the same
     # point -- in its side's slot: the field as the cell's own basis has it there.
+    # A pyramid's coordinates collapse toward its apex, where the mean of the corners
+    # is another point: a triangle face's centre is over its base edge's middle at a
+    # third of the height (its base's corners' mean, t = 1/3).
     for c in cells:
         for k in range(cells.NUM_FACES):
             n = cells.face_num_points(k)
             pc = cells.parametric_point(cells.face_corner(k, 0))
             for i in range(1, n):
                 pc += cells.parametric_point(cells.face_corner(k, i))
-            out[2 * cells.face_id(c, k) + cells.face_side(c, k)] = u.value(c, pc / n)
+            pc = pc / n
+            if cells.NUM_POINTS == 5 and n == 3:
+                base = pc - pc
+                for i in range(n):
+                    j = cells.face_corner(k, i)
+                    if j != 4:
+                        base += cells.parametric_point(j)
+                pc = tack.vec3(0.5 * base[0], 0.5 * base[1], 1.0 / 3.0)
+            out[2 * cells.face_id(c, k) + cells.face_side(c, k)] = u.value(c, pc)
 
 
 @tack.kernel

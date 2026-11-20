@@ -60,10 +60,13 @@ classic quadratic cells.
 | `HGRAD C1`, per cell | `L2` order 1 (copied) |
 | `constant` | `Constant` |
 | `HGRAD C2`, `I2`, `A` (any order), `G` (Gauss points), Bezier | resampled by VTK onto Tack's equispaced space of that order: `H1` shared, `L2` per cell (exact) |
-| `HCURL`, `HDIV`, and pyramids' bases other than `C1` | left out, with a warning |
+| `HGRAD C2` on pyramids (shape or field) | Tack's order 2 there (VTK's 18-node pyramid), copied node by node: `H1` shared, `L2` per cell |
+| `HGRAD G` on pyramids, per cell, any order | resampled by VTK onto Tack's pyramid of that order, exactly: `L2` |
+| `HCURL`, `HDIV`, and pyramids' bases other than `C1`, `C2` and per-cell `G` | left out, with a warning |
 
-`dataset_to_vtk(data, cell_grid=True)` writes `C1` at order 1 and VTK's `A`
-basis above it.
+`dataset_to_vtk(data, cell_grid=True)` writes `C1` at order 1, `C2` on
+pyramids at order 2, and VTK's `A` basis above it elsewhere; a pyramid field
+above order 2 is left out.
 
 **MFEM.** `mfem_to_dataset` reads H1 and L2 collections of any order (Gauss–Lobatto,
 equispaced, Gauss–Legendre and positive bases), MFEM's older collections,

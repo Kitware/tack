@@ -335,8 +335,14 @@ def _geometry_parts(data, group, kind):
         data.topology.edges()
         if group.shape.QUADRATIC_FACES:
             data.topology.faces()
-        mixins, attributes = _space_parts(geometry, group, views._H1Order2Geometry)
+        mixins, attributes = _space_parts(geometry, group,
+                                          views._H1PyramidGeometry
+                                          if group.shape is shapes.Pyramid
+                                          else views._H1Order2Geometry)
         return [*mixins, views.quadratic_faces(group.shape), views._QuadraticNewton], attributes
+    if high and kind == "cells" and group.shape is shapes.Pyramid:
+        raise NotImplementedError(f"a curved pyramid of order {geometry.space.order}: "
+                                  "Tack's curved pyramids are of order 2")
     if high and kind == "cells" and bases.wedge_shape(group.shape):
         # Curved wedges of order 3 and up (2 too in a Bernstein basis).
         space = geometry.space
@@ -1201,6 +1207,23 @@ class DataSet:
                     (views.of_node_order(views._TableInteriorNodes, space.order),),
                     node_cell_dofs=cell_dofs, node_points=points, node_interior=table))
                 continue
+            if group.shape is shapes.Pyramid:
+                # Its interior lattice nodes' collapsed coordinates, each an index into
+                # the values they take (bases.pyramid_nodes).
+                kind = bases.dof_tables(group.shape, space.order)[0]
+                inside = bases.pyramid_nodes(space.order)[1][kind == bases.INTERIOR]
+                values, at = np.unique(inside.reshape(-1), return_inverse=True)
+                table = tack.empty((max(at.size, 3),), tack.i32)
+                tack.copyto(table, np.r_[at.astype(np.int32),
+                                         np.zeros(max(0, 3 - at.size), np.int32)])
+                where = tack.empty((max(values.size, 1),), _basis_type(geometry))
+                tack.copyto(where, np.r_[values, np.zeros(max(0, 1 - values.size))]
+                            .astype(where.dtype.numpy_dtype))
+                out.append(self.domain_view(
+                    "cells", group,
+                    (views.of_node_order(views._TableInteriorNodes, space.order),),
+                    node_cell_dofs=cell_dofs, node_points=where, node_interior=table))
+                continue
             interior = (views._SimplexInteriorNodes if bases.simplex_shape(group.shape)
                         else views._TensorInteriorNodes)
             out.append(self.domain_view(
@@ -1271,8 +1294,11 @@ class DataSet:
             if space.basis == bases.SERENDIPITY:
                 return out                       # no face centres or insides stored
             if any(g.count and g.shape.QUADRATIC_FACES for g in self.topology.groups()):
+                pyramids = any(g.count and g.shape is shapes.Pyramid
+                               for g in self.topology.groups())
                 for group in self.topology.faces().groups():
-                    if group.count and group.shape is shapes.Quad:
+                    if group.count and (group.shape is shapes.Quad
+                                        or (pyramids and group.shape is shapes.Triangle)):
                         out.append(self.domain_view("faces", group, (views._FaceDof, where),
                                                     node_face_dofs=face_dofs))
             for group in self.topology.groups():
@@ -1299,7 +1325,19 @@ class DataSet:
             # at its own offsets.
             fixed = (space.at_order(group.keys[space])
                      if isinstance(space, L2) and space.varies else space)
-            if isinstance(space, L2) and fixed.tensor and (bases.simplex_shape(group.shape)
+            if (isinstance(space, L2) and fixed.tensor and group.shape is shapes.Pyramid
+                    and fixed.order >= 3):
+                _, points = bases.pyramid_nodes(fixed.order)
+                where = tack.empty((points.size,), _basis_type(self.geometry))
+                tack.copyto(where, points.reshape(-1).astype(where.dtype.numpy_dtype))
+                nodes_of = views.of_node_order(views._PyramidOrderCellNodes, fixed.order,
+                                               len(points))
+                view = self.domain_view("cells", group, (nodes_of,),
+                                        node_offsets=space.offsets, node_points=where)
+            elif isinstance(space, L2) and fixed.tensor and group.shape is shapes.Pyramid:
+                view = self.domain_view("cells", group, (views._PyramidCellNodes,),
+                                        node_offsets=space.offsets)
+            elif isinstance(space, L2) and fixed.tensor and (bases.simplex_shape(group.shape)
                                                            or bases.wedge_shape(group.shape)):
                 lattice = bases.lattice_ijk(group.shape, fixed.order).reshape(-1)
                 ijk = tack.empty((len(lattice),), tack.i32)

@@ -511,12 +511,19 @@ tetrahedra and triangles each cell is fanned into.
 | Filter | Shapes | Polyhedra and polygons | Polylines |
 |---|---|---|---|
 | `threshold`, `extract_cells`, `extract_geometry` | yes | yes | yes |
-| `contour`, `slice` | yes, and above order 1 on segments, quads, hexahedra, triangles, tetrahedra and wedges | yes | contour gives vertices |
+| `contour`, `slice` | yes, and above order 1 on segments, quads, hexahedra, triangles, tetrahedra, wedges and pyramids | yes | contour gives vertices |
 | `clip` | yes | polyhedra, into polyhedra, but not polygons yet | not yet |
 | `extract_surface` | yes | yes | the chains' ends |
 
-An order-2 `H1` field on pyramids is refused by the cuts. Pyramids support
-order 1.
+**Pyramids.** The cuts take a pyramid at any level. Its lattice of level `n`
+is layered: layer `k` is a grid of `(n - k + 1)^2` points at height `k/n`. The
+sub-cells are, between each layer and the next, upright pyramids on the lower
+layer's squares, upside-down ones under the upper layer's, and tetrahedra in
+the gaps (at level 2, 6 pyramids and 4 tetrahedra). So the base's squares and
+the triangle faces' triangles are the ones the neighbours' sub-cells have.
+Crossings on pyramids are placed as with `exact=False`, on the straight line
+between the sub-cells' values, and so are those of any mesh that mixes
+pyramids, wedges, simplices and hexahedra.
 
 ## Where to go next
 

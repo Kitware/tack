@@ -12,12 +12,13 @@ from tack.algorithms.scan import exclusive_scan
 from tack.arrays import size_of
 from tack.dataset import ids
 from tack.dataset.algorithms._common import _close, _crossing, _first_end
+from tack.dataset.algorithms.clip import _number_points, _renumber, _scanned_map
 from tack.dataset.buckets import key_order, run_offsets
 from tack.dataset.carry import Interpolate, Take, carry
 
 
 @tack.kernel
-def _face_sizes(face_offsets, face_points, values, iso, sizes, kept):
+def _face_sizes(face_offsets, face_points, values, iso, sizes, kept, crossings):
     # Each face's clipped polygon: its kept points, and a crossing on each edge
     # strictly between the sides (a point at the value is kept, so an edge from
     # it has no other crossing). Below is not at or above, so a NaN is below,
@@ -27,6 +28,7 @@ def _face_sizes(face_offsets, face_points, values, iso, sizes, kept):
         start = face_offsets[f]
         n = face_offsets[f + 1] - start
         k = 0
+        x = 0
         for j in range(n):
             va = values[face_points[start + j]]
             vb = values[face_points[start + (j + 1 if j + 1 < n else 0)]]
@@ -34,29 +36,38 @@ def _face_sizes(face_offsets, face_points, values, iso, sizes, kept):
                 k += 1
             if (va > iso and not vb >= iso) or (not va >= iso and vb > iso):
                 k += 1
+                x += 1
         sizes[f] = k if k >= 3 else 0
         kept[f] = 1 if k >= 3 else 0
+        crossings[f] = x if k >= 3 else 0
 
 
 @tack.kernel
-def _face_keys(face_offsets, face_points, values, iso, sizes, starts, keys):
-    # The clipped polygon's points, named as contour names crossings: (a, a) for a
-    # kept point, (low, high) for an edge's crossing.
+def _face_keys(face_offsets, face_points, values, iso, sizes, starts, record_starts, keys,
+               slots, point_of, used, crossing):
+    # The clipped polygon's points: a kept point as its id, marked used; an edge's
+    # crossing as a record named (low, high), as contour names crossings, its
+    # slot holding `crossing` until the records are merged.
     for f in range(sizes.shape[0]):
         if sizes[f] > 0:
             start = face_offsets[f]
             n = face_offsets[f + 1] - start
             at = starts[f]
+            record = record_starts[f]
             for j in range(n):
                 a = face_points[start + j]
                 b = face_points[start + (j + 1 if j + 1 < n else 0)]
                 va = values[a]
                 vb = values[b]
                 if va >= iso:
-                    keys[at] = [a, a]
+                    point_of[at] = a
+                    tack.atomic_max(used, a, 1)
                     at += 1
                 if (va > iso and not vb >= iso) or (not va >= iso and vb > iso):
-                    keys[at] = [min(a, b), max(a, b)]
+                    keys[record] = [min(a, b), max(a, b)]
+                    slots[record] = at
+                    point_of[at] = crossing
+                    record += 1
                     at += 1
 
 
@@ -92,19 +103,22 @@ def _cell_counts(cell_offsets, cell_faces, face_offsets, face_points, values, is
 
 
 @tack.kernel
-def _point_runs(keys, order, offsets, values, positions, iso, ends, weights, point_of, count):
-    # One output point per run of equal names: a kept point (weight 0) or an
-    # edge's crossing, interpolated from its end first by position as contour's.
+def _point_runs(keys, order, offsets, slots, values, positions, iso, ends, weights, used,
+                point_of, count):
+    # One output point per run of equal crossing names, numbered after the used
+    # points up to its low end (`clip`'s `_number_points` numbers those), and
+    # interpolated from its end first by position as contour's.
     for r in range(count):
         key = keys[order[offsets[r]]]
         a = key[0]
         b = key[1]
-        if a != b and not _first_end(positions[a], positions[b], a, b):
+        point = used[a + 1] + r
+        if not _first_end(positions[a], positions[b], a, b):
             a, b = b, a
-        ends[r] = [a, b]
-        weights[r] = 0.0 if a == b else _crossing(iso, values[a], values[b])
+        ends[point] = [a, b]
+        weights[point] = _crossing(iso, values[a], values[b])
         for i in range(offsets[r], offsets[r + 1]):
-            point_of[order[i]] = r
+            point_of[slots[order[i]]] = point
 
 
 @tack.kernel
@@ -259,31 +273,61 @@ def clip_parts(data, values, iso, inside):
     n_faces, n_cells = size_of(t.face_offsets) - 1, data.num_cells
     sizes = tack.empty((n_faces,), tack.i32)
     face_kept = tack.empty((n_faces,), tack.i32)
+    face_crossings = tack.empty((n_faces,), tack.i32)
     if n_faces:
-        _face_sizes(t.face_offsets, t.face_points, values, iso, sizes, face_kept)
+        _face_sizes(t.face_offsets, t.face_points, values, iso, sizes, face_kept,
+                    face_crossings)
     odt = ids.for_output(data, 2 * size_of(t.face_points) + cap_count + n_faces)
     starts = tack.empty((n_faces,), odt)
     face_keys = exclusive_scan(sizes, starts, n_faces) if n_faces else 0
     face_slots = tack.empty((n_faces,), odt)
     kept_faces = exclusive_scan(face_kept, face_slots, n_faces) if n_faces else 0
 
-    # Every point's name: the clipped faces' points, then the caps' iso-vertices.
-    keys = tack.empty((face_keys + cap_count,), tack.vec(2, idt))
-    if face_keys:
-        _face_keys(t.face_offsets, t.face_points, values, iso, sizes, starts, keys)
+    # Every point the clipped faces and the caps use: an input point as its id,
+    # numbered through a map of one entry per input point, as `clip`'s shapes
+    # are; a crossing by a record, and only the records are sorted (the cut
+    # filters' memory plan, D2). The faces' points come first, then the caps'.
+    face_records = tack.empty((n_faces,), odt)
+    face_crossing_count = (exclusive_scan(face_crossings, face_records, n_faces)
+                           if n_faces else 0)
+    del face_crossings
+    cap_records = tack.empty((cap_count,), odt)
+    cap_crossing_count = 0
     if cap_count:
-        _cap_names(cap_ends, keys, face_keys, cap_count)
+        flags = tack.empty((cap_count,), tack.i32)
+        _cap_crossings(cap_ends, flags, cap_count)
+        cap_crossing_count = exclusive_scan(flags, cap_records, cap_count)
+        del flags
+    n_records = face_crossing_count + cap_crossing_count
+    keys = tack.empty((n_records,), tack.vec(2, idt))
+    slots = tack.empty((n_records,), odt)
     total = face_keys + cap_count
     point_of = tack.empty((total,), odt)
-    count = 0
-    if total:
-        order = key_order(keys, data.num_points, odt)
-        runs, count = run_offsets(keys, order)
+    num_points = data.num_points
+    # Marked by every face and cap using the point, so atomically (as `clip`'s).
+    used = tack.zeros((num_points + 1,), tack.i32)
+    crossing = -1
+    if face_keys:
+        _face_keys(t.face_offsets, t.face_points, values, iso, sizes, starts, face_records,
+                   keys, slots, point_of, used, crossing)
+    if cap_count:
+        _cap_names(cap_ends, cap_records, keys, slots, point_of, used, face_keys,
+                   face_crossing_count, crossing, cap_count)
+    del face_records, cap_records
+    used, kept_points = _scanned_map(used, num_points, odt)
+    order = key_order(keys, num_points, odt)
+    runs, crossings = run_offsets(keys, order)
+    count = kept_points + crossings
     ends = tack.empty((count,), tack.vec(2, idt))
     weights = tack.empty((count,), weight_dtype)
-    if count:
-        _point_runs(keys, order, runs, values, data.geometry.values, iso,
-                    ends, weights, point_of, count)
+    if kept_points:
+        number = tack.empty((num_points,), odt)
+        _number_points(used, keys, order, runs, crossings, number, ends, weights)
+        _renumber(point_of, number)
+        del number
+    if crossings:
+        _point_runs(keys, order, runs, slots, values, data.geometry.values, iso,
+                    ends, weights, used, point_of, crossings)
 
     # Cells: each kept one's faces left and caps.
     first = tack.zeros((n_cells,), odt)
@@ -342,12 +386,29 @@ def _negate(values, out, infinity):
 
 
 @tack.kernel
-def _cap_names(ends, keys, offset, n):
-    # A cap's iso-vertex named as a face's crossing is, (low id, high id): contour
-    # gives its ends first by position, which only interpolation reads.
+def _cap_crossings(ends, flags, n):
     for i in range(n):
         e = ends[i]
-        keys[offset + i] = [min(e[0], e[1]), max(e[0], e[1])]
+        flags[i] = 1 if e[0] != e[1] else 0
+
+
+@tack.kernel
+def _cap_names(ends, record_starts, keys, slots, point_of, used, offset, first_record,
+               crossing, n):
+    # A cap's iso-vertex named as a face's crossing is, (low id, high id): contour
+    # gives its ends first by position, which only interpolation reads. One at a
+    # point whose value is the level (ends (a, a)) is that point, as a face's
+    # kept point is.
+    for i in range(n):
+        e = ends[i]
+        if e[0] == e[1]:
+            point_of[offset + i] = e[0]
+            tack.atomic_max(used, e[0], 1)
+        else:
+            record = first_record + record_starts[i]
+            keys[record] = [min(e[0], e[1]), max(e[0], e[1])]
+            slots[record] = offset + i
+            point_of[offset + i] = crossing
 
 
 # ── Polyhedra beside shapes ─────────────────────────────────────────

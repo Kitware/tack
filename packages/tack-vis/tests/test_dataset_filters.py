@@ -1028,3 +1028,27 @@ def test_extract_edges_is_vtks(f64_backend, kind):
     ours_at = np.round(lines.positions(), 6)
     ours = {frozenset(map(tuple, ours_at[row])) for row in _lines(lines)}
     assert len(ours) == lines.num_cells == len(theirs) and ours == theirs
+
+
+def _contour_output_bytes(out):
+    t = out.topology
+    return sum(a.nbytes for a in (t.connectivity, out.geometry.values,
+                                  *(f.values for f in out.fields.values()))
+               if hasattr(a, "nbytes"))
+
+
+def test_contour_holds_little_more_than_its_output(backend, peak_memory):
+    """Each triangle corner keeps its point's name alone, and each point's position,
+    ends and weight are computed once from its name after the merge (the cut
+    filters' memory plan, D4): carried with every corner (40 bytes), they held
+    contour at 10.2 times its output; now 3.5."""
+    grid = td.uniform_grid((41, 41, 41), spacing=(0.025,) * 3)
+    data = td.tetrahedralize(grid)
+    data = td.DataSet(data.topology, data.geometry)
+    x = data.positions()
+    data.fields["p"] = td.Field(td.H1(data), tack.array((np.sin(5 * x[:, 0]) + x[:, 1] * x[:, 2])
+                                                         .astype(np.float32)))
+    for levels in ([0.1 * k for k in range(1, 11)], [0.3, 0.6, 0.9]):
+        td.contour(data, "p", levels)                     # compiled outside the measurement
+        out, peak = peak_memory(td.contour, data, "p", levels)
+        assert peak <= 5 * _contour_output_bytes(out), peak / _contour_output_bytes(out)

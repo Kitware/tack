@@ -103,9 +103,11 @@ def test_an_unknown_parameter_is_refused():
      lambda d: td.clip(d, "RTData", 150.0)),
     (lambda: ta.Threshold(field="RTData", lower=120.0, upper=200.0),
      lambda d: td.threshold(d, "RTData", 120.0, 200.0)),
+    (lambda: ta.Isovolume(by="RTData", lower=120.0, upper=200.0),
+     lambda d: td.isovolume(d, "RTData", 120.0, 200.0)),
     (lambda: ta.ExtractSurface(), lambda d: td.extract_surface(d)),
     (lambda: ta.Tetrahedralize(), lambda d: td.tetrahedralize(d)),
-], ids=["slice_plane", "clip", "threshold", "extract_surface", "tetrahedralize"])
+], ids=["slice_plane", "clip", "threshold", "isovolume", "extract_surface", "tetrahedralize"])
 def test_each_filter_gives_what_the_tack_filter_gives(make, run):
     image = _wavelet()()
     out = make()(image)

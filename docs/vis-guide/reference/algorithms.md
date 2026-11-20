@@ -96,6 +96,7 @@ New datasets of pieces of cells, with points made on their edges.
 | [`slice`](#tack.dataset.algorithms.slice.slice) | where an implicit function is zero (or a level) | dataset | vtkCutter | Slice |
 | [`slice_plane`](#tack.dataset.algorithms.slice.slice_plane) | a plane's cut, or parallel planes | dataset | vtkCutter | Slice |
 | [`clip`](#tack.dataset.algorithms.clip.clip) | the part above (or below) a field's level or inside an implicit function | dataset | vtkTableBasedClipDataSet | ClipWithField, ClipWithImplicitFunction |
+| [`isovolume`](#tack.dataset.algorithms.isovolume.isovolume) | the part where a field lies between two values | dataset | ParaView's Iso Volume (vtkPVClipDataSet by a range) | — |
 
 ::: tack.dataset.algorithms.contour.contour
     options: {show_root_full_path: false}
@@ -107,6 +108,9 @@ New datasets of pieces of cells, with points made on their edges.
     options: {show_root_full_path: false}
 
 ::: tack.dataset.algorithms.clip.clip
+    options: {show_root_full_path: false}
+
+::: tack.dataset.algorithms.isovolume.isovolume
     options: {show_root_full_path: false}
 
 ## Surfaces and edges

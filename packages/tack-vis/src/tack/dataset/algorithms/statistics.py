@@ -18,6 +18,43 @@ from tack.runtime.dispatch import on_inputs_device
 __all__ = ['Statistics', 'statistics']
 
 
+#: Values one thread adds (`_partial_sums`) before the partial sums are added in
+#: f64 on the host (`_sum`).
+_SUM_CHUNK = 256
+
+
+@tack.kernel
+def _partial_sums(values, n, chunk, out):
+    # Each chunk's sum with Kahan's compensation: an AMR level's cells have one
+    # volume, and adding equal f32 values in order rounds the same way every time
+    # (2e-6 of a level's volume in chunks of 256). Tack does not reassociate the
+    # additions, so the compensation is kept.
+    for c in range(out.shape[0]):
+        s = 0.0
+        carry = 0.0
+        for k in range(c * chunk, min(n, c * chunk + chunk)):
+            y = values[k] - carry
+            t = s + y
+            carry = (t - s) - y
+            s = t
+        out[c] = s
+
+
+def _sum(values):
+    """``values``' sum, a Python float. ``Array.sum()`` is NumPy's pairwise sum on
+    the CPU, but on a GPU it adds an f32 array on the device with f32 partial sums,
+    whose error grows with the length: 3e-4 in the volume of an AMR level of 160M
+    cells on Metal (#314). There each thread adds `_SUM_CHUNK` values, compensated,
+    and the partial sums are added in f64 on the host, as the boxes' moments were
+    merged when statistics took them box by box."""
+    if values.device.type == "cpu" or values.dtype != tack.f32:
+        return values.sum()
+    n = size_of(values)
+    parts = tack.empty((-(-n // _SUM_CHUNK),), values.dtype, device=values.device)
+    _partial_sums(values, n, _SUM_CHUNK, parts)
+    return float(np.sum(parts.numpy(), dtype=np.float64))
+
+
 @tack.kernel
 def _central_powers(values, mean, p2, p3, p4):
     for i in range(p2.shape[0]):
@@ -169,14 +206,14 @@ def _array_moments(source, weights=None):
     # Integer sums are exact in f64 up to 2**53 and cannot wrap; summing the
     # converted f32 values was off by 57 for a million i32 values of 1001.
     # NumPy reduces integer fields on the host anyway.
-    total = values.sum() if values is source else float(
+    total = _sum(values) if values is source else float(
         np.sum(source.numpy(), dtype=np.float64))
     mean = total / n
     # The powers of differences from a mean are fractions, whatever the values are.
     p2, p3, p4 = (tack.empty((n,), values.dtype) for _ in range(3))
     _central_powers(values, mean, p2, p3, p4)
-    return (n, float(n), float(n), source.min(), source.max(), total, mean, p2.sum(),
-            p3.sum(), p4.sum())
+    return (n, float(n), float(n), source.min(), source.max(), total, mean, _sum(p2),
+            _sum(p3), _sum(p4))
 
 
 def _weighted_moments(source, weights, n):
@@ -186,15 +223,15 @@ def _weighted_moments(source, weights, n):
     weights = _converted(arrays.materialize(weights), values.dtype)
     wx, w2 = tack.empty((n,), values.dtype), tack.empty((n,), values.dtype)
     _weighted(values, weights, wx, w2)
-    total_weight = weights.sum()
+    total_weight = _sum(weights)
     if not total_weight > 0:
         raise ValueError("statistics with weights needs a positive sum of weights")
-    total = wx.sum()
+    total = _sum(wx)
     mean = total / total_weight
     p2, p3, p4 = (tack.empty((n,), values.dtype) for _ in range(3))
     _weighted_powers(values, weights, mean, p2, p3, p4)
-    return (n, total_weight, w2.sum(), source.min(), source.max(), total, mean, p2.sum(),
-            p3.sum(), p4.sum())
+    return (n, total_weight, _sum(w2), source.min(), source.max(), total, mean, _sum(p2),
+            _sum(p3), _sum(p4))
 
 
 def _merged(a, b):
@@ -232,6 +269,113 @@ def _over_pieces(data, each, first=None):
         return [each(piece) for piece in data]
 
     return [part for parts in agree(data.world, mine) for part in parts]
+
+
+def _amr_statistics(amr, field, weights):
+    """``statistics`` of an ``AMRDataSet``: each level's boxes on a device reduced as
+    one array (`_level_moments`), the parts gathered over the hierarchy's world and
+    combined in order, as pieces' are."""
+    from tack import communication as tc
+    from tack.dataset import units
+    from tack.dataset.algorithms._common import _measure_unit
+    from tack.dataset.amr import _by_device
+
+    pieces = amr._as_pieces()
+    given = _per_piece(pieces, field, weights, "statistics")
+    # Each box's units from its resolved field (`_units` looks the field up again,
+    # 8 us a box); the volume's is the spatial unit, one per hierarchy.
+    if weights is None:
+        mine = [(f.unit, "dimensionless") for f, _ in given.values()]
+    elif isinstance(weights, str) and weights == "volume":
+        measure = _measure_unit(pieces[0]) if len(pieces) else None
+        mine = [(f.unit, measure) for f, _ in given.values()]
+    else:
+        mine = [_units(piece, *given[id(piece)]) for piece in pieces]
+    every = [pair for part in amr.world._allgather(mine) for pair in part]
+    unit = units.common("statistics' boxes' field", [u for u, _ in every])
+    weight_unit = units.common("statistics' boxes' weights", [w for _, w in every])
+    groups = []
+    for level in amr.levels:
+        level = list(level)
+        groups += [(device, [level[k] for k in ks]) for device, ks in _by_device(level)]
+    blocks = tc.Blocks([device for device, _ in groups], amr.world)
+    moments = None
+    for part in blocks.all_gather({g: _level_moments(boxes, given, amr.dimension)
+                                   for g, (_, boxes) in zip(blocks.local, groups)}):
+        if part is not None:
+            moments = part if moments is None else _merged(moments, part)
+    if moments is None:
+        raise ValueError("statistics of no values")
+    return _summary(*moments)._replace(unit=unit, weight_unit=weight_unit)
+
+
+def _level_moments(boxes, given, d):
+    """The moments of one level's boxes on one device, as one array: their values,
+    marks and weights end to end (`tack.arrays._joined`: the level's own array where
+    the boxes are views of it, as ``vtk_to_dataset`` and the sources give them, else
+    a copy), the entries the marks leave owned taken once (`owned_ids`), one
+    `_array_moments`. Fields the marks do not place (not on cells or points), and
+    boxes that lost their marks, go box by box as before."""
+    from tack import arrays
+    from tack.dataset.algorithms.ghost_cells import _kind
+    from tack.dataset.carry import _take
+    from tack.dataset.ghosts import Ghosts, owned_ids
+    from tack.lang.array import Array
+
+    fields = [given[id(b)][0] for b in boxes]
+    weights = given[id(boxes[0])][1]
+    kind = _kind(fields[0])
+    plain = kind is not None and all(
+        type(f.values) is Array and not b._ghosts_lost and b.ghosts is not None
+        and getattr(b.ghosts, kind) is not None for b, f in zip(boxes, fields))
+    if weights is not None and plain and not (isinstance(weights, str) and weights == "volume"):
+        weight_fields = [_weights(b, f, given[id(b)][1]) for b, f in zip(boxes, fields)]
+        plain = all(type(w.values) is Array for w in weight_fields)
+    if not plain:
+        moments = None
+        for b in boxes:
+            part = _moments(b, *given[id(b)])
+            if part is not None:
+                moments = part if moments is None else _merged(moments, part)
+        return moments
+    with boxes[0].device:
+        values = arrays._joined([f.values for f in fields])
+        if weights is None:
+            w = None
+        elif isinstance(weights, str) and weights == "volume":
+            if kind != "cells":
+                raise TypeError("volume weights are a cell's measure: they take a cell field")
+            w = _volumes(boxes, d)
+        else:
+            w = arrays._joined([wf.values for wf in weight_fields])
+        marks = arrays._joined([getattr(b.ghosts, kind) for b in boxes])
+        skipped = Ghosts.SKIPPED_CELLS if kind == "cells" else Ghosts.SKIPPED_POINTS
+        ids = owned_ids(marks, skipped, boxes[0].id_dtype)
+        if ids is not None:
+            values = _take(values, ids)
+            w = None if w is None else _take(w, ids)
+        return _array_moments(values, w)
+
+
+def _volumes(boxes, d):
+    """Each cell's measure, the boxes' cells end to end: an image box's cells all
+    the product of its spacing (one value a box, spread by `segment_broadcast`),
+    any other box's from its corners (`cell_geometry`)."""
+    from tack import arrays
+    from tack.algorithms.segmented import segment_broadcast
+    from tack.arrays import UniformCoordinates
+    from tack.dataset.algorithms.cell_geometry import cell_geometry
+
+    if not all(isinstance(b.geometry.values, UniformCoordinates) for b in boxes):
+        return arrays._joined([arrays.materialize(cell_geometry(b).measure.values)
+                               for b in boxes])
+    measures = np.array([np.prod(np.asarray(b.geometry.values._spacing, np.float64)[:d])
+                         for b in boxes])
+    counts = np.array([b.num_cells for b in boxes], np.int64)
+    offsets = np.concatenate([[0], np.cumsum(counts)]).astype(np.int64)
+    dtype = boxes[0].dtype
+    return segment_broadcast(tack.array(measures.astype(dtype.numpy_dtype), dtype),
+                             tack.array(offsets, tack.i64), int(offsets[-1]))
 
 
 def _summary(n, weight, weight2, low, high, total, mean, m2, m3, m4):
@@ -289,7 +433,7 @@ def statistics(data, field, weights=None, level=None):
     if level is not None:
         raise TypeError("level= picks an octree's level; this is not an OctreeDataSet")
     if isinstance(data, AMRDataSet):
-        data = data._as_pieces()
+        return _amr_statistics(data, field, weights)
     if isinstance(data, PartitionedDataSet):
         from tack.dataset import units
 

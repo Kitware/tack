@@ -396,10 +396,32 @@ def _point_dims(dims):
 
 def _three(values, fill, what):
     """Up to three numbers as three floats, the missing ones ``fill``."""
-    values = tuple(float(v) for v in np.asarray(values, float).reshape(-1))
+    if type(values) in (tuple, list) and all(type(v) in (int, float) for v in values):
+        values = tuple(float(v) for v in values)        # plain numbers: no NumPy
+    else:
+        values = tuple(float(v) for v in np.asarray(values, float).reshape(-1))
     if not 1 <= len(values) <= 3:
         raise ValueError(f"an image's {what} has one to three values, not {len(values)}")
     return values + (fill,) * (3 - len(values))
+
+
+#: An unoriented image's direction matrix, one for every image (read only): an AMR
+#: hierarchy has an image a box.
+_EYE3 = np.eye(3)
+_EYE3.flags.writeable = False
+
+
+def _identity(dtype, device):
+    """A 3 x 3 identity of ``dtype`` on ``device``, one a type and device: an
+    unoriented image's ``direction``. Kept on the backend, so it goes with it."""
+    from tack.runtime.dispatch import as_device, backend_of
+
+    backend = backend_of(device)
+    kept = backend.__dict__.setdefault("_tack_identities", {})
+    found = kept.get(dtype)
+    if found is None:
+        found = kept[dtype] = _store(np.eye(3).reshape(-1), dtype, as_device(backend))
+    return found
 
 
 @tack.device_class
@@ -426,8 +448,9 @@ class UniformCoordinates(_Implicit):
         origin, spacing = _three(origin, 0.0, "origin"), _three(spacing, 1.0, "spacing")
         self.ox, self.oy, self.oz = origin
         self.sx, self.sy, self.sz = spacing
-        matrix = np.eye(3)
+        matrix = _EYE3
         if direction is not None:
+            matrix = np.eye(3)
             given = np.asarray(direction, float)
             if given.shape == (2, 2):
                 matrix[:2, :2] = given
@@ -439,10 +462,32 @@ class UniformCoordinates(_Implicit):
         if direction is not None and not np.allclose(matrix, np.eye(3)):
             self.ORIENTED = 1
         # Always present, so an f64 grid's scalars are f64 in the kernel; it
-        # puts the grid on ``device`` (by default the default device).
-        self.direction = _store(matrix.reshape(-1), dtype, device)
+        # puts the grid on ``device`` (by default the default device). An image
+        # without a direction shares one identity of its type on its device: no
+        # kernel writes it, and an AMR hierarchy has an image a box.
+        self.direction = (_store(matrix.reshape(-1), dtype, device) if self.ORIENTED
+                          else _identity(dtype, device))
         self._origin, self._spacing, self._matrix = origin, spacing, matrix
         _metadata(self, math.prod(dims), 3, dtype)
+
+    @classmethod
+    def _assembled(cls, dims, origin, spacing, dtype, device):
+        """``UniformCoordinates(dims, origin, spacing, dtype=dtype, device=device)``
+        without a direction, its checks or conversions: ``dims`` three Python ints,
+        ``origin`` and ``spacing`` three Python floats, ``device`` a `tack.Device`. For the
+        thousands of boxes of an AMR hierarchy."""
+        out = cls.__new__(cls)
+        out.dims = dims
+        out.px, out.py = dims[0], dims[1]
+        out.ox, out.oy, out.oz = origin
+        out.sx, out.sy, out.sz = spacing
+        out.direction = _identity(dtype, device)
+        out._origin, out._spacing, out._matrix = origin, spacing, _EYE3
+        # In the constructor's order (``_metadata``'s): a template's attribute layout
+        # is learned per order of names.
+        out._size, out._width, out._dtype = dims[0] * dims[1] * dims[2], 3, dtype
+        out.length = out._size
+        return out
 
     @property
     def point_dims(self):
@@ -820,6 +865,46 @@ def _revision(values):
     if isinstance(values, (int, float, str, bool, np.generic)) or values is None:
         return values
     return id(values)
+
+
+def _joined_view(parts, extra=0):
+    """``parts`` (stored 1-D arrays of one element type) end to end, and ``extra``
+    elements after them, as one view of the memory they are in, where they are
+    views of one buffer that abut in order (``array[i:j]``, as an AMR hierarchy's
+    boxes are) and, for ``extra``, that buffer ends ``extra`` elements after them
+    (room made for them, as ``ghost_cells`` makes it, never another part's); else
+    None. Writes through it are writes to the parts."""
+    from tack.lang.array import _array_view, view_buffer
+
+    first = parts[0] if parts else None
+    root = getattr(getattr(first, "_buffer", None), "_root", None)
+    if root is None or not all(type(p) is type(first) and p.layout == "aos"
+                               and getattr(p._buffer, "_root", None) is root
+                               and p.dtype == first.dtype for p in parts):
+        return None
+    start = at = first._buffer._start
+    for p in parts:
+        if p._buffer._start != at:
+            return None
+        at += p.scalar_size
+    width = getattr(first, "_vector_n", None) or 1     # scalars an element
+    capacity = root.nbytes // first.scalar_dtype.numpy_dtype.itemsize
+    # The room after them must be no one else's: the buffer's end, made for it.
+    if at + extra * width > capacity or (extra and at + extra * width != capacity):
+        return None
+    count = sum(p.size for p in parts) + extra
+    return _array_view(first.dtype, (count,),
+                       view_buffer(root, start, at + extra * width - start),
+                       all(p._writable for p in parts), first._device)
+
+
+def _joined(parts):
+    """One 1-D array of ``parts`` (stored arrays of one element type, on one
+    device) end to end: the stretch of memory they are, without a copy, where
+    they are views of one buffer that abut in order (`_joined_view`); else
+    ``tack.concat``'s copy."""
+    joined = _joined_view(parts)
+    return joined if joined is not None else tack.concat(parts)
 
 
 def size_of(values):

@@ -119,6 +119,26 @@ def test_offset_units(data):
     assert got.unit == "K"
 
 
+def test_cgns_names_are_tack_kinds():
+    """fx.cgns() and tack.dataset.kinds list the same CGNS names, in units of the same
+    dimensions and of the same rank, so the two cannot drift apart."""
+    from tack.dataset import kinds
+
+    entries = fx.cgns().entries
+    parts = {p for e in entries.values() if e.components for p in e.components}
+    ranks = {None: "scalar", 3: "vector", 6: "symmetric tensor"}
+    named = {}
+    for name, entry in entries.items():
+        if name in parts:
+            continue
+        kind = td.Kind(name)
+        assert kind.rank == ranks[len(entry.components) if entry.components else None], name
+        assert U.same_dimensions(entry.unit, kind.reference_unit), name
+        named[name] = kind
+    totals = {name for name in kinds.names() if td.Kind(name).extent == "extensive"}
+    assert set(named) == set(kinds.names()) - totals
+
+
 def test_a_dictionary_maps_names_to_storage(data):
     data.fields["PRESSURE"] = data.fields["p"]
     for k, c in enumerate("XYZ"):

@@ -96,10 +96,11 @@ class _Step:
                 raise KeyError(f"no field {name!r}: the step has "
                                f"{', '.join(map(repr, data.fields)) or 'none'}")
             field = data.fields[name]
-            self.fields[name] = Field(field.space, _kept(field.values, copy), field.unit)
+            self.fields[name] = Field(field.space, _kept(field.values, copy), field.unit,
+                                      kind=field.kind)
         geometry = data.geometry
         self.geometry = Field(geometry.space, _kept(geometry.values, copy),
-                              geometry.unit) if positions else None
+                              geometry.unit, kind=geometry.kind) if positions else None
 
     def same_mesh(self, data):
         """Whether ``data`` is on this step's mesh: the same topology object."""
@@ -477,7 +478,8 @@ def _with_before(before, now, field):
         return PartitionedDataSet([_with_before(b, n, field) for b, n in zip(before, now)],
                                   world=now.world)
     velocity, earlier = now.fields[field], before.fields[field]
-    fields = {field: velocity, _BEFORE: Field(velocity.space, earlier.values, earlier.unit)}
+    fields = {field: velocity, _BEFORE: Field(velocity.space, earlier.values, earlier.unit,
+                                              kind=earlier.kind)}
     return DataSet(now.topology, now.geometry, fields=fields, ghosts=now.ghosts,
                    **now._frame())
 

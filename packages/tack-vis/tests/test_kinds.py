@@ -51,6 +51,12 @@ def test_given_parts_must_agree_with_the_name():
         td.Kind("Velocity", rank="scalar")
     with pytest.raises(KeyError, match="registry"):
         td.Kind("Flux capacitance")
+    with pytest.raises(ValueError, match="a Pressure .a scalar. has no variance"):
+        td.Kind("Pressure", variance="covariant")
+    with pytest.raises(ValueError, match="a Mach .a scalar. has no variance"):
+        td.Kind("Mach", variance="mixed")
+    with pytest.raises(ValueError, match="only a tensor is mixed"):
+        td.Kind("HeatFlux", variance="mixed")
 
 
 def test_each_part_stands_alone_without_a_name():
@@ -101,7 +107,7 @@ def test_the_values_must_fit_the_rank(grid):
     n = grid.num_points
     vectors = tack.zeros((n,), tack.vec3())
     assert td.Field(td.H1(grid), vectors, "m/s", kind="Velocity").kind.rank == "vector"
-    with pytest.raises(ValueError, match="1 component"):
+    with pytest.raises(ValueError, match=r"a Velocity \(a vector\) cannot have values of 1 component"):
         td.Field(td.H1(grid), tack.zeros((n,)), "m/s", kind="Velocity")
     with pytest.raises(ValueError, match="3 components"):
         td.Field(td.H1(grid), vectors, "Pa", kind="Pressure")
@@ -119,6 +125,17 @@ def test_a_vector_space_holds_a_vector_whatever_its_width(grid):
     assert flux.kind.rank == "vector"
     with pytest.raises(ValueError, match="HDiv"):
         td.Field(space, tack.zeros((space.size,)), "Pa", kind="Pressure")
+
+
+def test_a_vector_space_takes_only_its_own_variance(grid):
+    hdiv, hcurl = td.HDiv(grid), td.HCurl(grid)
+    flux = td.Field(hdiv, tack.zeros((hdiv.size,)), "T", kind="MagneticFluxDensity")
+    assert flux.kind.variance is None
+    with pytest.raises(ValueError, match="covariant, which a field in HDiv is not"):
+        td.Field(hdiv, tack.zeros((hdiv.size,)), "V/m", kind="ElectricField")
+    td.Field(hcurl, tack.zeros((hcurl.size,)), "V/m", kind="ElectricField")
+    with pytest.raises(ValueError, match="contravariant, which a field in HCurl is not"):
+        td.Field(hcurl, tack.zeros((hcurl.size,)), "m/s", kind="Velocity")
 
 
 def test_moving_and_converting_keep_the_kind(grid):
@@ -160,6 +177,14 @@ def test_the_registry_takes_new_kinds_once():
         del kinds._REGISTRY["TestTorque"]
     with pytest.raises(KeyError, match="not registered"):
         kinds.add("TestDensity", "kg/m^3", "scalar", "intensive", density_of="TestMass")
+    with pytest.raises(ValueError, match="not extensive"):
+        kinds.add("TestDensity", "1/m^3", "scalar", "intensive", density_of="Temperature")
+    assert "TestDensity" not in kinds.names()
+    kinds.add("TestFlux", "W/m^2", "vector", "intensive", variance=None)
+    try:
+        assert td.Kind("TestFlux").variance is None
+    finally:
+        del kinds._REGISTRY["TestFlux"]
 
 
 def test_the_registry_is_seeded_from_cgns_names():
@@ -169,4 +194,30 @@ def test_the_registry_is_seeded_from_cgns_names():
     for name in kinds.names():
         k = td.Kind(name)
         assert k.rank is not None and k.extent is not None and k.parity is not None
-        assert (k.variance is None) == (k.rank == "scalar")
+        if k.rank == "scalar":
+            assert k.variance is None
+    for name in ("Momentum", "MagneticFluxDensity", "CurrentDensity", "HeatFlux"):
+        assert td.Kind(name).variance is None          # flux densities turn as HDiv does
+    assert td.Kind("Velocity").variance == "contravariant"
+
+
+@pytest.mark.parametrize("call", [
+    lambda d: td.extract_cells(d, [0, 1, 2]),
+    lambda d: td.threshold(d, "p", -1.0, 1.0),
+    lambda d: td.clip(d, "x", 0.5),
+    lambda d: td.shrink(d),
+    lambda d: td.project(d, "p", td.Constant(d)),
+], ids=["extract_cells", "threshold", "clip", "shrink", "project"])
+def test_filters_of_the_same_values_keep_the_kind(grid, call):
+    grid.fields["p"] = scalar(grid, "Pa")
+    grid.fields["x"] = td.Field(td.H1(grid), tack.array(grid.positions()[:, 0].copy()), "m")
+    out = call(grid)
+    p = out if isinstance(out, td.Field) else out.fields["p"]
+    assert p.kind == td.Kind("Pressure") and p.unit == "Pa"
+
+
+def test_a_temporal_step_keeps_the_kind(grid):
+    from tack.dataset.temporal import _Step
+
+    grid.fields["p"] = scalar(grid, "Pa")
+    assert _Step(grid, ["p"]).fields["p"].kind == td.Kind("Pressure")

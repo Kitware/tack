@@ -17,11 +17,14 @@ optional:
 - ``parity``: ``"polar"`` or ``"axial"`` (a pseudovector or pseudoscalar);
 - ``variance``: how a vector or tensor turns under a linear map,
   ``"contravariant"`` (a velocity), ``"covariant"`` (a gradient, a normal) or,
-  for a tensor, ``"mixed"`` (a velocity gradient).
+  for a tensor, ``"mixed"`` (a velocity gradient). A flux density (a magnetic
+  flux density, a current density, a heat flux) turns as ``HDiv`` does, by the
+  contravariant Piola map, which needs a density weight a kind does not record
+  yet: its variance is left unknown.
 
 Given a name, the registry fills the parts not given, and the parts given
 must agree with it. Without one, each part stands alone: a field read from
-VTK's active vectors has a rank and nothing else. ``None`` is unknown, part
+VTK's active vectors would have a rank and nothing else. ``None`` is unknown, part
 by part, as for units: nothing is guessed.
 
 A kind never converts anything, and nothing reads one yet: filters keep
@@ -65,12 +68,16 @@ class Kind:
             if given is not None and given not in allowed:
                 raise ValueError(f"a kind's {part} is one of {', '.join(map(repr, allowed))}, "
                                  f"not {given!r}")
+        if self.name is not None:
+            self._fill_from_registry()
         if self.variance is not None and self.rank == "scalar":
-            raise ValueError("a scalar has no variance: it does not turn under a map")
+            raise ValueError(f"{self._described()} has no variance: a scalar does not turn "
+                             "under a map")
         if self.variance == "mixed" and self.rank == "vector":
-            raise ValueError("a vector is contravariant or covariant; only a tensor is mixed")
-        if self.name is None:
-            return
+            raise ValueError(f"{self._described()} is contravariant or covariant; only a "
+                             "tensor is mixed")
+
+    def _fill_from_registry(self):
         entry = _REGISTRY.get(self.name)
         if entry is None:
             raise KeyError(f"no kind {self.name!r} in the registry: add it first "
@@ -81,6 +88,13 @@ class Kind:
                 object.__setattr__(self, part, registered)
             elif registered is not None and given != registered:
                 raise ValueError(f"a {self.name} is {registered!r} ({part}), not {given!r}")
+
+    def _described(self):
+        """``"a Velocity (a vector)"``, ``"a vector"`` or ``"a kind"``, for messages."""
+        rank = None if self.rank is None else f"a {self.rank}"
+        if self.name is None:
+            return rank or "a kind"
+        return f"a {self.name}" + ("" if rank is None else f" ({rank})")
 
     @property
     def reference_unit(self):
@@ -108,27 +122,36 @@ class _Entry:
 _REGISTRY = {}
 
 
-def add(name, unit, rank, extent=None, parity="polar", variance=None, density_of=None):
+_BY_RANK = "by rank"
+
+
+def add(name, unit, rank, extent=None, parity="polar", variance=_BY_RANK, density_of=None):
     """Register kind ``name``: its values have ``unit``'s dimensions, and its rank,
-    extent, parity and variance are as given (a vector's variance defaults to
-    contravariant). ``density_of`` names the extensive kind a density integrates
-    to (``"Mass"`` for ``"Density"``). A name registered already must be given
-    the same parts."""
+    extent, parity and variance are as given (by default a vector's variance is
+    contravariant and a tensor's or a scalar's unknown; pass ``None`` to leave a
+    vector's unknown). ``density_of`` names the extensive kind a density
+    integrates to (``"Mass"`` for ``"Density"``). A name registered already must
+    be given the same parts."""
     units.canonical(unit)                       # refuses what is not a unit
     return _register(name, unit, rank, extent, parity, variance, density_of)
 
 
-def _register(name, unit, rank, extent=None, parity="polar", variance=None,
+def _register(name, unit, rank, extent=None, parity="polar", variance=_BY_RANK,
               density_of=None):
     """``add`` without parsing ``unit``, so seeding the registry imports no unyt."""
     if not isinstance(name, str) or not name:
         raise TypeError(f"a kind's name is a non-empty string, not {name!r}")
-    if variance is None and rank == "vector":
-        variance = "contravariant"
+    if variance == _BY_RANK:
+        variance = "contravariant" if rank == "vector" else None
     kind = Kind(rank=rank, extent=extent, parity=parity, variance=variance)
     object.__setattr__(kind, "name", name)      # registered below, so not looked up
-    if density_of is not None and density_of not in _REGISTRY and density_of != name:
-        raise KeyError(f"{name!r} is a density of {density_of!r}, which is not registered")
+    if density_of is not None:
+        target = _REGISTRY.get(density_of)
+        if target is None:
+            raise KeyError(f"{name!r} is a density of {density_of!r}, which is not registered")
+        if target.kind.extent != "extensive":
+            raise ValueError(f"{name!r} is a density of {density_of!r}, which is not "
+                             "extensive: a density integrates to a total")
     known = _REGISTRY.get(name)
     if known is not None and (known.kind != kind or known.density_of != density_of
                               or not units.same(units.canonical(known.unit),
@@ -223,15 +246,15 @@ def _seed():
         _register(name, unit, "scalar", extent, "polar", None, density)
     for name, unit, parity, variance, density in (
         ("Velocity", "m/s", "polar", "contravariant", None),
-        ("Momentum", "kg/(m^2*s)", "polar", "contravariant", "LinearMomentum"),
+        ("Momentum", "kg/(m^2*s)", "polar", None, "LinearMomentum"),
         ("Vorticity", "1/s", "axial", "covariant", None),
         ("Displacement", "m", "polar", "contravariant", None),
         ("Force", "N", "polar", "contravariant", None),
         ("ElectricField", "V/m", "polar", "covariant", None),
         ("MagneticField", "A/m", "axial", "covariant", None),
-        ("MagneticFluxDensity", "T", "axial", "covariant", None),
-        ("CurrentDensity", "A/m^2", "polar", "contravariant", None),
-        ("HeatFlux", "W/m^2", "polar", "contravariant", None),
+        ("MagneticFluxDensity", "T", "axial", None, None),
+        ("CurrentDensity", "A/m^2", "polar", None, None),
+        ("HeatFlux", "W/m^2", "polar", None, None),
     ):
         _register(name, unit, "vector", "intensive", parity, variance, density)
     _register("Stress", "Pa", "symmetric tensor", "intensive", variance="contravariant")

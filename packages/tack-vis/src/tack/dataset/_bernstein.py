@@ -238,14 +238,16 @@ def _matrices(shape, order, forward):
 
 def from_lagrange(data, field, space):
     """``field``, in ``lagrange_companion(space)``, as ``space``'s coefficients."""
-    return Field(space, _converted(data, field.values, space, True), field.unit)
+    return Field(space, _converted(data, field.values, space, True), field.unit,
+                 kind=field.kind)
 
 
 def to_lagrange(data, field):
     """``field``, of a Bernstein space, as its values at the equispaced nodes: a field
     of ``lagrange_companion(field.space)``, the same polynomials."""
     return Field(lagrange_companion(field.space),
-                 _converted(data, field.values, field.space, False), field.unit)
+                 _converted(data, field.values, field.space, False), field.unit,
+                 kind=field.kind)
 
 
 def with_lagrange_geometry(data):

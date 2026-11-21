@@ -131,8 +131,9 @@ class Field:
 
 
 def _checked_kind(kind, space, values, unit):
-    """``kind``, checked against the field's unit (its dimensions) and its values
-    (its rank: a vector in ``HDiv`` or ``HCurl`` whatever their width)."""
+    """``kind``, checked against the field's unit (its dimensions), its values (its
+    rank: a vector in ``HDiv`` or ``HCurl`` whatever their width) and its space (a
+    vector in ``HDiv`` is not covariant, nor one in ``HCurl`` contravariant)."""
     if kind is None:
         return None
     if not units.same_dimensions(unit, kind.reference_unit):
@@ -142,8 +143,13 @@ def _checked_kind(kind, space, values, unit):
 
     width = arrays.width_of(values) or 1
     if not kinds.width_fits(kind.rank, width, isinstance(space, (HDiv, HCurl))):
-        raise ValueError(f"a {kind!r} cannot have values of {width} component"
+        raise ValueError(f"{kind._described()} cannot have values of {width} component"
                          f"{'s' if width != 1 else ''} in {space!r}")
+    refused = {HDiv: "covariant", HCurl: "contravariant"}
+    for vector_space, variance in refused.items():
+        if isinstance(space, vector_space) and kind.variance == variance:
+            raise ValueError(f"{kind._described()} is {variance}, which a field in "
+                             f"{vector_space.__name__} is not")
     return kind
 
 

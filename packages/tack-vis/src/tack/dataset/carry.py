@@ -374,6 +374,13 @@ def _copy_prefix(values, out):
         _copy_rows(materialize(values), out)
 
 
+def _with_kind(field, kind):
+    """``field`` with ``kind``: a carried field's values are the same quantity."""
+    if field is None or kind is None or field.kind == kind:
+        return field
+    return Field(field.space, field.values, field.unit, gradient=field.gradient, kind=kind)
+
+
 def _carry_field(field, data, out, points, cells, faces, faces_to_cells, edges=None,
                  edges_to_cells=None):
     """``field`` on ``out``, or ``None`` when no map applies to it."""
@@ -498,8 +505,8 @@ def carry(data, out, *, points=None, cells=None, faces=None, faces_to_cells=None
                 _average_rows(values, points.averages[0], points.averages[1],
                               points.weights.shape[0])
     if geometry is None:
-        geometry = _carry_field(data.geometry, data, out, points, cells, faces,
-                                faces_to_cells)
+        geometry = _with_kind(_carry_field(data.geometry, data, out, points, cells, faces,
+                                           faces_to_cells), data.geometry.kind)
         if geometry is None:
             raise ValueError("the geometry cannot be carried by these maps; pass it")
     carried = {}
@@ -509,15 +516,17 @@ def carry(data, out, *, points=None, cells=None, faces=None, faces_to_cells=None
         if source.space.evaluated:
             rebound.append((name, source))
             continue
-        field = _carry_field(source, data, out, points, cells, faces,
-                             faces_to_cells, edges, edges_to_cells)
+        field = _with_kind(_carry_field(source, data, out, points, cells, faces,
+                                        faces_to_cells, edges, edges_to_cells), source.kind)
         if field is not None and source.gradient is not None:
-            gradient = _carry_field(source.gradient, data, out, points, cells, faces,
-                                    faces_to_cells, edges, edges_to_cells)
+            gradient = _with_kind(_carry_field(source.gradient, data, out, points, cells,
+                                               faces, faces_to_cells, edges, edges_to_cells),
+                                  source.gradient.kind)
             # A field whose gradient cannot come along goes with it: without it,
             # gradients of the output would quietly differentiate the basis instead.
             field = (None if gradient is None
-                     else Field(field.space, field.values, field.unit, gradient=gradient))
+                     else Field(field.space, field.values, field.unit, gradient=gradient,
+                                kind=field.kind))
         if field is not None:
             carried[name] = field
     if sets is None:
@@ -539,7 +548,7 @@ def carry(data, out, *, points=None, cells=None, faces=None, faces_to_cells=None
     # An evaluated field has no values to move: its space makes it again on the
     # output, from the fields carried there.
     for name, source in rebound:
-        field = source.space.rebind(source, made)
+        field = _with_kind(source.space.rebind(source, made), source.kind)
         if field is not None:
             made.fields[name] = field
     return made

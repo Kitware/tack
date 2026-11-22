@@ -158,3 +158,113 @@ def test_integer_clip_converts_before_subtracting(backend):
     positions = out.positions()
     assert sum(np.all(np.isclose(positions, [1, 0.5, 0]), axis=1)) == 1
     np.testing.assert_array_equal(field.values.numpy(), values)
+
+
+def _clip_output_bytes(out):
+    t = out.topology
+    return sum(a.nbytes for a in (t.types, t.offsets, t.connectivity, out.geometry.values,
+                                  *(f.values for f in out.fields.values())))
+
+
+@pytest.mark.parametrize("kind", ["tetrahedra", "hexahedra"])
+def test_clip_holds_little_more_than_its_output(backend, peak_memory, kind):
+    """The input points cells keep are numbered through a map of one entry per input
+    point, and only the crossings are sorted (the cut filters' memory plan, D2):
+    with a record and a sort for every kept corner, clip held 4.4 to 5 times its
+    output at its peak, where it keeps most of the mesh; now 1.4 to 2.6."""
+    grid = td.uniform_grid((41, 41, 41), spacing=(0.025, 0.025, 0.025))
+    data = (td.tetrahedralize(grid) if kind == "tetrahedra"
+            else td.extract_cells(grid, np.arange(grid.num_cells)))
+    data = td.DataSet(data.topology, data.geometry)
+    x = data.positions()
+    data.fields["p"] = td.Field(td.H1(data), tack.array((x[:, 0] + 0.3 * x[:, 1]).astype(np.float32)))
+    td.clip(data, "p", 0.5)                               # compiled outside the measurement
+    for value in (0.05, 0.5):
+        out, peak = peak_memory(td.clip, data, "p", value)
+        assert peak <= 3 * _clip_output_bytes(out), (value, peak / _clip_output_bytes(out))
+
+
+@pytest.mark.parametrize("kind", ["tetrahedra", "hexahedra"])
+def test_clip_in_batches_is_clip_cell_by_cell(backend, monkeypatch, kind):
+    """A mesh of one shape is counted and written in batches of cells (a thread's,
+    or a workgroup's 256 lanes), nothing kept per cell; the output is what
+    counting every cell gives, bit for bit: a last batch short, hidden cells,
+    both sides, a function (the cut filters' memory plan, D3). It holds the
+    batches to the per-cell form as the batches' change left it; that the output
+    is what clip gave before that change was checked once, by the 117 clips of
+    #463 hashing alike before and after it (CPU and Metal), not by this test."""
+    import importlib
+
+    clip_module = importlib.import_module("tack.dataset.algorithms.clip")
+    grid = td.uniform_grid((12, 11, 9), spacing=(0.1, 0.12, 0.15))
+    data = (td.tetrahedralize(grid) if kind == "tetrahedra"
+            else td.extract_cells(grid, np.arange(grid.num_cells)))
+    data = td.DataSet(data.topology, data.geometry)
+    assert data.num_cells % 256
+    x = data.positions()
+    data.fields["p"] = td.Field(td.H1(data), tack.array((np.sin(4 * x[:, 0]) + x[:, 1] * x[:, 2])
+                                                         .astype(np.float32)))
+    data.fields["c"] = td.Field(td.Constant(data), tack.array(np.arange(data.num_cells,
+                                                                          dtype=np.float32)))
+    marks = np.zeros(data.num_cells, np.uint8)
+    marks[::7] = td.Ghosts.HIDDENCELL
+    data.ghosts = td.Ghosts(cells=tack.array(marks))
+    center = tuple(x.mean(axis=0))
+    for kwargs in ({"by": "p", "value": 0.4}, {"by": "p", "value": 0.4, "inside": True},
+                   {"by": td.implicit.Sphere(center=center, radius=0.4)}):
+        batched = td.clip(data, **kwargs)
+        monkeypatch.setattr(clip_module, "_BATCHES", False)
+        cellwise = td.clip(data, **kwargs)
+        monkeypatch.setattr(clip_module, "_BATCHES", True)
+        a, b = batched.topology, cellwise.topology
+        for name in ("types", "offsets", "connectivity"):
+            np.testing.assert_array_equal(getattr(a, name).numpy(), getattr(b, name).numpy())
+        np.testing.assert_array_equal(batched.positions(), cellwise.positions())
+        for name in ("p", "c"):
+            np.testing.assert_array_equal(batched.fields[name].values.numpy(),
+                                          cellwise.fields[name].values.numpy())
+
+
+def _case_counts(data, at):
+    """One case's outputs of each kind, as ``clip._cell_counts`` counts them: cells,
+    connectivity, crossings, centroids, centroid members."""
+    counts = [0] * 5
+    shapes_left = data[at]
+    at += 1
+    for _ in range(shapes_left):
+        kind, count = data[at], data[at + 1]
+        at += 2
+        entries = data[at:at + count]
+        if kind == 0:
+            counts[3] += 1
+            counts[4] += count
+            counts[2] += sum(1 for p in entries if p >= 8)
+        else:
+            counts[0] += 1
+            counts[1] += count
+            counts[2] += sum(1 for p in entries if p >= 8 and p != 20)
+        at += count
+    return counts
+
+
+def test_every_case_stays_within_the_bound_the_batches_rest_on():
+    """A batch keeps each cell's counts in u8 and its starts within the batch in
+    u16, which rest on ``_MOST``, the most entries of any kind one cell makes (49 in
+    VisIt's tables): a table that broke the bound would wrap silently, so every
+    case of every table is walked here, both sides."""
+    import importlib
+
+    from tack.dataset import _clip_tables as tables
+
+    clip_module = importlib.import_module("tack.dataset.algorithms.clip")
+    most = clip_module._MOST
+    assert most < 2**8 and (clip_module._OFFSET_BATCH - 1) * most < 2**16
+    largest = 0
+    for invert in (0, 1):
+        data = tables.DATA[invert]
+        for table, cases in tables.CASES[invert].items():
+            for case, at in enumerate(cases):
+                counts = _case_counts(data, at)
+                assert max(counts) <= most, (invert, table, case, counts)
+                largest = max(largest, *counts)
+    assert largest <= most and 8 <= most            # a cell kept whole: 8 corners at most

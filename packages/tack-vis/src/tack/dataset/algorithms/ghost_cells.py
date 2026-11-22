@@ -304,8 +304,11 @@ def _carried(pieces, fields, what="ghost_cells", high_order=False):
         for name in names:
             if name not in piece.fields:
                 raise KeyError(f"partition {i} has no field {name!r}")
+            # An H1 field numbered by an element-to-DOF table travels as any other:
+            # each cell's nodes read through the table (its corners are its points),
+            # and the grown piece's space numbered by entity, as merge_pieces does.
             kind = (field_kind if high_order else _kind)(piece.fields[name])
-            if kind is None or (kind == "nodes" and piece.fields[name].space.dofs is not None):
+            if kind is None:
                 raise TypeError(f"{what} carries point and cell fields"
                                 + (", H1 and L2 fields" if high_order else "")
                                 + f"; {name!r} is in {piece.fields[name].space!r} (choose "

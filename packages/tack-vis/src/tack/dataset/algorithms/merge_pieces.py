@@ -12,6 +12,7 @@ from tack import communication as tc
 from tack.arrays import CartesianProduct, UniformCoordinates
 from tack.dataset.algorithms._cell_nodes import (
     add_nodes,
+    by_piece,
     field_kind,
     nodes_placed,
     space_spec,
@@ -393,7 +394,7 @@ def _merged_unstructured(blocks, pieces, names, kind_of, target, device, toleran
     if target not in blocks.local:
         return None
     first = converted[target - blocks.local.start]
-    messages = list(incoming[target].values())
+    messages = by_piece(incoming[target])
     np_ = sum(m["point_at"].size for m in messages)
     nc = sum(m["cell_at"].size for m in messages)
     with device:
@@ -523,7 +524,7 @@ def _assembled(topology, geometry, like, names, kind_of, parts, messages=()):
         ghosts = Ghosts(cells=marks_cells if marks_cells.any() else None,
                         points=marks_points if marks_points.any() else None)
     out = DataSet(topology, geometry, dtype=like.dtype, ghosts=ghosts, **like._frame())
-    messages = list(messages.values()) if isinstance(messages, dict) else list(messages)
+    messages = by_piece(messages)
     if kind_of(like.geometry) == "nodes":
         space = H1(out, **space_spec(like.geometry.space, None))
         out.geometry = Field(space, nodes_placed(space, like.geometry.values, messages,

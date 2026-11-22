@@ -107,6 +107,51 @@ def test_filters_over_the_grown_pieces_give_the_wholes(cells):
                                    expected.values.numpy(), rtol=0, atol=1e-13)
 
 
+def test_a_field_numbered_by_a_table_comes_numbered_by_entity():
+    """An H1 field numbered by an element-to-DOF table (its non-corner values
+    relabelled at random) grows as merge_pieces merges one: each cell's nodes read
+    through the table, the grown piece's field numbered by entity, the values the
+    field numbered by entity gives."""
+    from tack.dataset.carry import _node_entries
+
+    pieces = _pieces("hexahedra")
+    for k, piece in enumerate(pieces):
+        entity = piece.fields["h"].space
+        index, _, _, total = _node_entries(entity, tack.zeros((entity.size,), tack.f64))
+        rows = index.numpy()[:total].reshape(piece.num_cells, -1)
+        relabel = np.arange(entity.size)
+        relabel[piece.num_points:] = np.random.default_rng(k).permutation(
+            relabel[piece.num_points:])
+        table = td.H1(piece, order=3, basis="equispaced", dofs=relabel[rows])
+        piece.fields["t"] = td.interpolate(piece, _cubic, table, dtype=tack.f64)
+    for after in td.ghost_cells(pieces):
+        assert after.fields["t"].space.dofs is None
+        # Within an ulp: interpolating into the table space evaluates a node by
+        # another path.
+        np.testing.assert_allclose(after.fields["t"].values.numpy(),
+                                   after.fields["h"].values.numpy(), rtol=0, atol=1e-14)
+
+
+def test_a_node_a_ghost_shares_keeps_the_pieces_value():
+    """Pieces holding different values where they meet: each grown piece keeps its
+    own value at a node its cells share with a ghost, corners and nodes inside the
+    shared face alike, as its points keep theirs (an order-1 field's); a node only
+    the ghosts have takes the neighbour's. The last neighbour's used to win."""
+    whole = td.uniform_grid((3, 2, 2), dtype=tack.f64)
+    pieces = [td.extract_cells(p, np.arange(p.num_cells)) for p in td.split(whole, 2)]
+    for k, piece in enumerate(pieces):
+        piece.fields["a"] = td.Field(td.H1(piece), tack.array(np.full(piece.num_points, k + 1.0)))
+        space = td.H1(piece, order=2)
+        piece.fields["b"] = td.Field(space, tack.array(np.full(space.size, k + 1.0)))
+    for k, after in enumerate(td.ghost_cells(td.PartitionedDataSet(pieces))):
+        points = after.fields["a"].values.numpy()
+        nodes = after.fields["b"].values.numpy()
+        np.testing.assert_array_equal(nodes[:after.num_points], points)
+        # Order 2 on two cells: 5 x 3 x 3 nodes, 27 of them the piece's own.
+        assert np.count_nonzero(nodes == k + 1.0) == 27
+        assert np.count_nonzero(nodes == 2.0 - k) == 18
+
+
 def test_what_ghost_cells_of_higher_order_refuse():
     """Structured pieces with fields of higher order; refreshing a field of higher
     order (update_ghosts); an L2 geometry."""

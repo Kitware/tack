@@ -35,12 +35,15 @@ def space_spec(space, put):
     """What remakes a field's space on the merged dataset: ``None`` for those made
     from the topology alone, an ``H1`` space's parameters (but an element-to-DOF
     table, which numbers another mesh's cells), an ``L2`` space's (an order per
-    cell, an array, sent through ``put`` as ``("array", name)``)."""
+    cell, an array, sent through ``put`` as ``("array", name)``). An ``L2`` space
+    sends the layout it resolved to, not its parameter: ``"auto"`` resolves by the
+    device, and a dataset remade on another device would read the values in the
+    other order."""
     if isinstance(space, H1) and space.order > 1:
         return {k: v for k, v in space.params.items() if k != "dofs"}
     if isinstance(space, L2):
         spec = {"basis": space.basis or "gauss_lobatto",
-                "layout": space.params.get("layout", "auto")}
+                "layout": space.layout}
         spec["order"] = ("array", put(space.cell_keys())) if space.varies else space.order
         return spec
     return None
@@ -98,26 +101,47 @@ def add_nodes(message, name, field, cells, device):
     message[f"\0sizes {name}"] = tack.array(mine, tack.i64, device=device)
 
 
+def by_piece(messages):
+    """The messages in their pieces' order (a dict by source block, or a list in
+    that order already)."""
+    if isinstance(messages, dict):
+        return [messages[source] for source in sorted(messages)]
+    return list(messages)
+
+
 def nodes_placed(space, like, messages, name, points=None):
-    """The values of a field in ``space`` (on the merged mesh) from every message's
-    cells' nodes, ``points`` (its values at the points, for an ``H1`` field) first."""
-    from tack.communication._kernels import scatter
+    """The values of a field in ``space`` (on the mesh it is placed on) from every
+    message's cells' nodes, ``points`` (its values at the points, for an ``H1``
+    field) first.
+
+    A node several messages bring takes one value, as a point does: a corner keeps
+    ``points``', and a node inside an edge or face cells share the first message's
+    that brings it (``messages`` in order of precedence, each scattered after the
+    ones behind it): ``merge_pieces`` gives its pieces lowest first, ``ghost_cells``
+    the piece's own cells and then its neighbours'."""
+    from tack.communication._kernels import gather, scatter
     from tack.dataset.carry import _copy_prefix, _like
 
     out = _like(like, space.size)
+    corners = 0
     if points is not None:
         _copy_prefix(points, out)
+        corners = arrays.size_of(points)
     sizes, starts, places = value_places(space, out)
-    for m in messages:
+    for m in reversed(messages):
         key = f"\0nodes {name}"
         if key not in m or not m["cell_at"].size:
             continue
         cells = m["cell_at"].numpy().astype(np.int64)
         came = m[f"\0sizes {name}"].numpy().astype(np.int64)
         if not np.array_equal(came, sizes[cells]):
-            raise ValueError(f"merge_pieces: the cells' nodes of {name!r} do not match the "
-                             "merged mesh's")
+            raise ValueError(f"the cells' nodes of {name!r} that came do not match the "
+                             "mesh they are placed on")
         at = places[np.repeat(starts[cells], came) + _ramp(came)]
-        scatter(m[key].to_device(out.device), tack.array(at, tack.i64, device=out.device),
-                out)
+        values = m[key].to_device(out.device)
+        if corners:
+            inner = np.flatnonzero(at >= corners)           # corners are the points'
+            values = gather(values, tack.array(inner, tack.i64, device=out.device))
+            at = at[inner]
+        scatter(values, tack.array(at, tack.i64, device=out.device), out)
     return out

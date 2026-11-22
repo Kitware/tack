@@ -123,6 +123,7 @@ __all__ = [
     "ImplicitValues",
     "Integrate",
     "Interpolate",
+    "Isovolume",
     "Jump",
     "LogValues",
     "Magnitude",
@@ -1436,6 +1437,21 @@ class Clip(TackAlgorithm):
     inside = Parameter(False, "keep the part below the value instead")
 
 
+class Isovolume(TackAlgorithm):
+    """``td.isovolume``: the part of the cells where ``by`` (a point field, or an
+    implicit function: Tack's or VTK's) lies in ``[lower, upper]``, cut at both ends.
+    ParaView's Iso Volume."""
+
+    OUTPUT = "surfaces"
+    FUNCTION = "isovolume"
+    FIELDS = ("by",)
+    IMPLICIT = ("by",)
+
+    by = Parameter(None, "a point field, or an implicit function (Tack's or VTK's)")
+    lower = Parameter(0.0, "the lowest value kept")
+    upper = Parameter(1.0, "the highest value kept")
+
+
 class Threshold(_OfAComponent):
     """``td.threshold``: the cells whose ``field`` lies in ``[lower, upper]`` (a point
     field at all of a cell's points, or any with ``all_points=False``); of a vector
@@ -1799,8 +1815,9 @@ class Tubes(TackAlgorithm):
 
 
 class Glyphs(TackAlgorithm):
-    """``td.glyphs``: an arrow at each point along the ``vectors`` field, scaled by
-    ``scale`` (and the ``scale_by`` field). VTK's ``vtkGlyph3D``."""
+    """``td.glyphs``: an arrow along the ``vectors`` field at each point, or with
+    ``at="cells"`` at each cell's centre (a DG field's default), scaled by ``scale``
+    (and the ``scale_by`` field). VTK's ``vtkGlyph3D``."""
 
     OUTPUT = "vtkPolyData"
     FUNCTION = "glyphs"

@@ -311,6 +311,49 @@ def _array_slots(ir_func, effective_args) -> tuple:
     return tuple(slots)
 
 
+def _repeated_arrays(effective_args, array_slots) -> tuple:
+    """``(index, first)`` of each array argument that an earlier one already
+    passes: device-class objects over the same space hold the same arrays, so
+    a kernel reading several of them takes each array many times. Each repeat
+    reads through the first one's parameter instead (`_share_params`), which
+    keeps a kernel's arguments within a device's limit on their total size
+    (2 KB on Level Zero)."""
+    first, repeats = {}, []
+    for i, _, through_texture in array_slots:
+        if not through_texture:
+            j = first.setdefault(id(effective_args[i]), i)
+            if j != i:
+                repeats.append((i, j))
+    return tuple(repeats)
+
+
+def _without_repeats(effective_args, repeats) -> tuple:
+    """The arguments a variant with ``repeats`` shared is launched with."""
+    if not repeats:
+        return effective_args
+    dropped = {i for i, _ in repeats}
+    return tuple(arg for i, arg in enumerate(effective_args) if i not in dropped)
+
+
+def _share_params(ir_func, repeats):
+    """Read each repeated array through its first parameter, and drop its own."""
+    names = [p.name for p in ir_func.params]
+    rename = {names[i]: names[j] for i, j in repeats}
+    for node in _walk_ir(ir_func.body):
+        if isinstance(node, ir.IRName) and node.name in rename:
+            node.name = rename[node.name]
+        elif getattr(node, "array_name", None) in rename:
+            node.array_name = rename[node.array_name]
+    dropped = {i for i, _ in repeats}
+    ir_func.params = [p for i, p in enumerate(ir_func.params) if i not in dropped]
+
+
+def _layout(disjoint, repeats):
+    """What a variant is specialized for in its arguments' storage: whether
+    they are disjoint, and which repeat an earlier one."""
+    return (disjoint, repeats) if repeats else disjoint
+
+
 def _disjoint_by_slots(effective_args, array_slots) -> bool:
     """`arrays_disjoint` for a call whose argument kinds are known.
 
@@ -605,11 +648,13 @@ def _fast_resolve(backend, kernel, args, specialize_disjoint):
     else:
         effective_args = args
     disjoint = specialize_disjoint and _disjoint_by_slots(effective_args, array_slots)
-    variant = variants.get(disjoint)
+    repeats = _repeated_arrays(effective_args, array_slots)
+    variant = variants.get(_layout(disjoint, repeats))
     if variant is None:
         return None
-    _check_call(backend, variant, effective_args)
-    return variant, effective_args
+    launch_args = _without_repeats(effective_args, repeats)
+    _check_call(backend, variant, effective_args, launch_args)
+    return variant, launch_args
 
 
 def _resolve_variant(backend, kernel, args, kwargs, build, store_texture_shapes,
@@ -665,16 +710,21 @@ def _resolve_variant(backend, kernel, args, kwargs, build, store_texture_shapes,
     store_texture_shapes(probe, effective_args)
 
     disjoint = specialize_disjoint and arrays_disjoint(template, effective_args)
+    array_slots = _array_slots(template, effective_args)
+    # Debug mode appends hidden arguments after these, so it shares none.
+    repeats = () if debug else _repeated_arrays(effective_args, array_slots)
+    layout = _layout(disjoint, repeats)
+    launch_args = _without_repeats(effective_args, repeats)
     shape_sig = shape_signature(template, name_to_array)
-    key = kernel_variant_key(probe, kernel, vector_arrays, template_args, shape_sig, disjoint)
+    key = kernel_variant_key(probe, kernel, vector_arrays, template_args, shape_sig, layout)
 
     slot = kernel_cache_slot(backend._cache, kernel)
     variant = slot.get(key)
     if variant is None:
         from tack.runtime import disk_cache
         disk_key = disk_cache.variant_key(backend, template, probe, vector_arrays,
-                                          shape_sig, disjoint)
-        variant = _stored_variant(backend, disk_key, template, effective_args)
+                                          shape_sig, layout)
+        variant = _stored_variant(backend, disk_key, template, effective_args, launch_args)
         if variant is not None:
             slot[key] = variant
     if variant is None:
@@ -683,12 +733,14 @@ def _resolve_variant(backend, kernel, args, kwargs, build, store_texture_shapes,
         from tack.lang.ir_verify import verify_stage
 
         ir_func = clone_ir(template)
+        if repeats:
+            _share_params(ir_func, repeats)
         resolve_ir(ir_func, name_to_array)
         verify_stage(ir_func, 'resolved')
-        infer_param_types(ir_func, effective_args)
-        store_texture_shapes(ir_func, effective_args)
+        infer_param_types(ir_func, launch_args)
+        store_texture_shapes(ir_func, launch_args)
         verify_stage(ir_func, 'inferred')
-        check_dispatch_types(ir_func, effective_args,
+        check_dispatch_types(ir_func, launch_args,
                              supported_dtypes=backend.supported_dtypes,
                              backend_name=backend.label)
         _localize_outer_scalars(ir_func)
@@ -697,16 +749,16 @@ def _resolve_variant(backend, kernel, args, kwargs, build, store_texture_shapes,
             ir_func, backend_name=backend.name,
             supported_dtypes=backend.supported_atomic_dtypes,
         )
-        check_atomic_alignment(ir_func.name, atomic_targets, effective_args)
+        check_atomic_alignment(ir_func.name, atomic_targets, launch_args)
         full_groups = (backend.supports_workgroups and
                        check_workgroup_participation(ir_func))
         if full_groups:
-            check_workgroup_launch(ir_func.name, _get_loop_range(ir_func, effective_args),
+            check_workgroup_launch(ir_func.name, _get_loop_range(ir_func, launch_args),
                                    backend_label=backend.label)
         optimize_ir(ir_func)
         verify_stage(ir_func, 'optimized')
         ir_func.disjoint_arrays = disjoint
-        variant = KernelVariant(ir_func, build(ir_func, effective_args),
+        variant = KernelVariant(ir_func, build(ir_func, launch_args),
                                 requires_full_workgroups=full_groups,
                                 atomic_targets=atomic_targets,
                                 written_arrays=_written_array_args(
@@ -717,7 +769,7 @@ def _resolve_variant(backend, kernel, args, kwargs, build, store_texture_shapes,
         _store_variant(backend, disk_key, variant)
         variant.ir = _launch_skeleton(ir_func)
     elif variant.requires_full_workgroups:
-        check_workgroup_launch(variant.ir.name, _get_loop_range(variant.ir, effective_args),
+        check_workgroup_launch(variant.ir.name, _get_loop_range(variant.ir, launch_args),
                                backend_label=backend.label)
 
     if sig is not None and not debug:      # see resolve_variant
@@ -725,18 +777,17 @@ def _resolve_variant(backend, kernel, args, kwargs, build, store_texture_shapes,
         if entry is None:
             if len(fast) >= _FAST_CAP:
                 fast.clear()
-            entry = fast[sig] = (_expansion_plan(template_args, expanded), {},
-                                 _array_slots(template, effective_args))
-        entry[1][disjoint] = variant
+            entry = fast[sig] = (_expansion_plan(template_args, expanded), {}, array_slots)
+        entry[1][layout] = variant
 
-    check_atomic_alignment(variant.ir.name, variant.atomic_targets, effective_args)
+    check_atomic_alignment(variant.ir.name, variant.atomic_targets, launch_args)
     check_writable_arrays(variant.ir.name, variant.written_arrays, effective_args)
     if debug:
         debug_bounds.launched(effective_args, template)
-    return variant, effective_args
+    return variant, launch_args
 
 
-def _stored_variant(backend, disk_key, template, effective_args):
+def _stored_variant(backend, disk_key, template, effective_args, launch_args):
     """The variant a previous process compiled for this call, or None.
 
     The entry holds the IR after the passes and the backend's artifact;
@@ -753,7 +804,7 @@ def _stored_variant(backend, disk_key, template, effective_args):
     import pickle
     try:
         ir_func = pickle.loads(entry["ir"])
-        payload = backend.load_variant(ir_func, entry["artifact"], effective_args)
+        payload = backend.load_variant(ir_func, entry["artifact"], launch_args)
     except Exception:
         disk_cache._count("bad")
         return None
@@ -763,7 +814,7 @@ def _stored_variant(backend, disk_key, template, effective_args):
                             written_arrays=_written_array_args(template, effective_args),
                             has_textures=any(isinstance(a, Texture3D) for a in effective_args))
     if variant.requires_full_workgroups:
-        check_workgroup_launch(ir_func.name, _get_loop_range(ir_func, effective_args),
+        check_workgroup_launch(ir_func.name, _get_loop_range(ir_func, launch_args),
                                backend_label=backend.label)
     return variant
 
@@ -801,12 +852,14 @@ def _store_variant(backend, disk_key, variant):
     disk_cache.store_variant(disk_key, entry)
 
 
-def _check_call(backend, variant, effective_args):
-    """What every dispatch checks against its actual arguments, hit or miss."""
+def _check_call(backend, variant, effective_args, launch_args):
+    """What every dispatch checks against its actual arguments, hit or miss:
+    ``effective_args`` as the kernel's parameters take them, ``launch_args``
+    as the variant's do (`_without_repeats`)."""
     if variant.requires_full_workgroups:
-        check_workgroup_launch(variant.ir.name, _get_loop_range(variant.ir, effective_args),
+        check_workgroup_launch(variant.ir.name, _get_loop_range(variant.ir, launch_args),
                                backend_label=backend.label)
-    check_atomic_alignment(variant.ir.name, variant.atomic_targets, effective_args)
+    check_atomic_alignment(variant.ir.name, variant.atomic_targets, launch_args)
     check_writable_arrays(variant.ir.name, variant.written_arrays, effective_args)
 
 

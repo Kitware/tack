@@ -530,3 +530,20 @@ def test_host_reads_are_checked_and_writes_refused(backend):
         f[0, 0] = 1.0
     with pytest.raises(TypeError, match="not iterated"):
         list(f)
+
+
+def test_uniform_coordinates_index_to_world_gives_its_points():
+    from tack.arrays import UniformCoordinates
+
+    turn = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+    grid = UniformCoordinates((3, 4, 2), (1.0, -2.0, 0.5), (0.5, 0.25, 2.0), turn,
+                              dtype=tack.f64)
+    origin, steps = grid.index_to_world
+    assert origin.dtype == steps.dtype == np.float64 and steps.shape == (3, 3)
+    k, j, i = np.meshgrid(np.arange(2), np.arange(4), np.arange(3), indexing="ij")
+    ijk = np.stack([i, j, k], axis=-1).reshape(-1, 3)
+    np.testing.assert_allclose(origin + ijk @ steps.T, grid.numpy())
+    # An unturned image's steps are its spacing.
+    origin, steps = UniformCoordinates((2, 2), (1.0, 2.0), (0.5, 3.0)).index_to_world
+    np.testing.assert_array_equal(origin, [1.0, 2.0, 0.0])
+    np.testing.assert_array_equal(steps, np.diag([0.5, 3.0, 1.0]))

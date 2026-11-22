@@ -21,6 +21,7 @@ from test_shapes import EXPECTED
 
 import tack
 import tack.dataset as td
+from tack import arrays
 from tack.dataset import algorithms as alg
 from tack.dataset import shapes as sh
 from tack.runtime.dispatch import env_flag
@@ -712,6 +713,178 @@ def test_a_fresh_meshs_curved_surface_stays_curved(backend, mesh):
                                   expected.fields["c"].values.numpy())
 
 
+@tack.func
+def _cubic_at(x):
+    return x[0] * x[0] * x[1] + 0.5 * x[1] * x[2] - x[2] * x[2] * x[2]
+
+
+def _wedges(hexes):
+    """Each hexahedron of an explicit mesh as two wedges on its points."""
+    rows = hexes.topology.connectivity.numpy().reshape(-1, 8)
+    wedges = np.concatenate([rows[:, [0, 1, 3, 4, 5, 7]], rows[:, [1, 2, 3, 5, 6, 7]]], axis=1)
+    topology = td.UnstructuredTopology(np.full(2 * len(rows), 13, np.uint8),
+                                       6 * np.arange(2 * len(rows) + 1), wedges.reshape(-1))
+    return td.DataSet(topology, hexes.positions())
+
+
+def _l2_mesh(mesh):
+    data = _grid(4, "rectilinear" if mesh == "rectilinear" else "explicit")
+    if mesh == "tetrahedra":
+        return td.tetrahedralize(data)
+    return _wedges(data) if mesh == "wedges" else data
+
+
+@pytest.mark.parametrize("mesh", ["rectilinear", "explicit", "tetrahedra", "wedges"])
+@pytest.mark.parametrize("order, basis", [(1, None), (2, None), (3, "equispaced"),
+                                          (4, "gauss_lobatto"), (3, "bernstein")])
+def test_l2_fields_come_to_the_surface_as_each_faces_trace(backend, mesh, order, basis):
+    """A DG field on the surface is in the same space there, each face holding its
+    cell's trace: a polynomial of the field's order on the solid is the same
+    polynomial on the surface. The surface used to leave L2 fields behind (#418)."""
+    if basis == "gauss_lobatto" and mesh in ("tetrahedra", "wedges"):
+        pytest.skip("simplices and wedges have equispaced nodes only above order 2")
+    data = _l2_mesh(mesh)
+    kind = {} if basis is None else {"basis": basis}
+    data.fields["u"] = td.interpolate(data, _cubic_at, td.L2(data, order=order, **kind))
+    surface = td.extract_surface(data)
+    u = surface.fields["u"]
+    assert u.space == td.L2(surface, order=order, **kind)
+    np.testing.assert_allclose(u.values.numpy(),
+                               td.interpolate(surface, _cubic_at, u.space).values.numpy(),
+                               atol=2e-5)
+
+
+@tack.func
+def _swirl_at(x):
+    return tack.vec3(-x[1] * x[2], x[0] * x[0] + x[2], x[0] * x[1] * x[2])
+
+
+@pytest.mark.parametrize("mesh", ["explicit", "tetrahedra", "wedges"])
+@pytest.mark.parametrize("basis", ["equispaced", "bernstein"])
+def test_a_vector_l2_fields_trace_is_a_vector(backend, mesh, basis):
+    """A DG velocity comes to the surface as each face's trace of every component,
+    stored or implicit (a reader's blocks, concatenated). The traces were allocated
+    in the values' ``dtype``, an implicit array's component type, so an implicit
+    vector field stopped extract_surface with a lowering error."""
+    data = _l2_mesh(mesh)
+    space = td.L2(data, order=3, basis=basis)
+    stored = td.interpolate(data, _swirl_at, space, dtype=tack.vec3()).values
+    n = stored.shape[0] // 2
+    host = stored.numpy()
+    data.fields["v"] = td.Field(space, arrays.Concatenate(tack.array(host[:n], tack.vec3()),
+                                                          tack.array(host[n:], tack.vec3())))
+    surface = td.extract_surface(data)
+    v = surface.fields["v"]
+    assert v.space == td.L2(surface, order=3, basis=basis)
+    np.testing.assert_allclose(
+        v.values.numpy(),
+        td.interpolate(surface, _swirl_at, v.space, dtype=tack.vec3()).values.numpy(), atol=2e-5)
+
+
+def _sheet(n=5):
+    """An explicit mesh of quads over [-1, 1]^2 at z = 0."""
+    axis = np.linspace(-1, 1, n)
+    points = np.array([(x, y, 0.0) for y in axis for x in axis])
+    rows = [[i + j * n, i + 1 + j * n, i + 1 + (j + 1) * n, i + (j + 1) * n]
+            for j in range(n - 1) for i in range(n - 1)]
+    topology = td.UnstructuredTopology(np.full(len(rows), 9, np.uint8),
+                                       4 * np.arange(len(rows) + 1), np.concatenate(rows))
+    return td.DataSet(topology, points, dtype=tack.f32)
+
+
+@pytest.mark.parametrize("cells", ["quads", "triangles"])
+@pytest.mark.parametrize("order", [1, 3])
+def test_a_2d_meshs_boundary_edges_take_an_l2_fields_trace(backend, cells, order):
+    """A 2D mesh's boundary edges are lines, of two corners: their trace read a
+    third corner past each line's points, so the values were wrong (and the read
+    out of bounds)."""
+    data = _sheet() if cells == "quads" else td.triangulate(_sheet())
+    kind = {"basis": "equispaced"} if cells == "triangles" and order > 2 else {}
+    data.fields["u"] = td.interpolate(data, _cubic_at, td.L2(data, order=order, **kind))
+    edges = td.extract_surface(data, td.boundary_faces(data))
+    assert edges.num_cells == 16
+    u = edges.fields["u"]
+    assert u.space == td.L2(edges, order=order, **kind)
+    np.testing.assert_allclose(u.values.numpy(),
+                               td.interpolate(edges, _cubic_at, u.space).values.numpy(),
+                               atol=2e-5)
+
+
+@pytest.mark.parametrize("layout", ["blocks", "cells"])
+def test_an_l2_field_sharing_a_name_keeps_its_layout_on_the_surface(backend, layout):
+    """A point field and a DG field both called ``p``: the trace is put by its own
+    space, which keeps the layout asked for. It lost the layout, and so was refused
+    under the key of the solid's space."""
+    data = _l2_mesh("explicit")
+    data.fields["p", td.H1] = td.Field(td.H1(data), _scalars(data.positions()[:, 0]))
+    space = td.L2(data, order=3, layout=layout)
+    data.fields["p", space] = td.interpolate(data, _cubic_at, space)
+    surface = td.extract_surface(data)
+    assert isinstance(surface.fields["p", td.H1].space, td.H1)
+    p = surface.fields["p", td.L2]
+    assert p.space == td.L2(surface, order=3, layout=layout) and p.space.layout == layout
+    np.testing.assert_allclose(p.values.numpy(),
+                               td.interpolate(surface, _cubic_at, p.space).values.numpy(),
+                               atol=2e-5)
+
+
+@pytest.mark.parametrize("order", [0, 2])
+def test_a_surface_of_no_faces_has_the_l2_fields_with_no_values(backend, order):
+    """Whether a piece contributes faces or not, its surface has the same fields:
+    selecting no faces dropped the DG fields that one face keeps."""
+    data = _l2_mesh("explicit")
+    data.fields["u"] = td.interpolate(data, _cubic_at, td.L2(data, order=order))
+    one = td.extract_surface(data, np.array([0], np.int64))
+    none = td.extract_surface(data, np.zeros(0, np.int64))
+    assert list(one.fields) == list(none.fields) == ["u"]
+    assert none.num_cells == 0 and none.fields["u"].values.shape[0] == 0
+    assert none.fields["u"].space == td.L2(none, order=order)
+
+
+def test_an_l2_fields_trace_is_the_same_on_every_surface_path(backend):
+    """A fresh mesh's surface, the surface from derived faces, the surface around
+    hidden cells and each piece's surface all give a DG field its faces' trace, and
+    an order-0 one its cells' values."""
+    def mesh():
+        data = _grid(4, "explicit")
+        data.fields["u"] = td.interpolate(data, _cubic_at, td.L2(data, order=3, basis="equispaced"))
+        data.fields["w"] = td.Field(td.L2(data, order=0), _scalars(np.arange(data.num_cells)))
+        data.fields["c"] = td.Field(td.Constant(data), _scalars(np.arange(data.num_cells)))
+        return data
+
+    def check(surface):
+        u = surface.fields["u"]
+        np.testing.assert_allclose(u.values.numpy(),
+                                   td.interpolate(surface, _cubic_at, u.space).values.numpy(),
+                                   atol=2e-5)
+        assert surface.fields["w"].space == td.L2(surface, order=0)
+        np.testing.assert_array_equal(surface.fields["w"].values.numpy(),
+                                      surface.fields["c"].values.numpy())
+
+    fresh = td.extract_surface(mesh())
+    check(fresh)
+    derived = mesh()
+    derived.topology.faces()
+    from_faces = td.extract_surface(derived)
+    np.testing.assert_array_equal(fresh.fields["u"].values.numpy(),
+                                  from_faces.fields["u"].values.numpy())
+    hidden = mesh()
+    marks = np.zeros(hidden.num_cells, np.uint8)
+    marks[13] = td.Ghosts.HIDDENCELL
+    hidden.ghosts = td.Ghosts(cells=tack.array(marks))
+    around = td.extract_surface(hidden)
+    assert around.num_cells == fresh.num_cells + 6
+    check(around)
+    whole = mesh()
+    half = whole.num_cells // 2
+    pieces = td.PartitionedDataSet([td.extract_cells(whole, np.arange(half)),
+                                    td.extract_cells(whole, np.arange(half, whole.num_cells))])
+    surfaces = td.extract_surface(pieces)
+    assert sum(s.num_cells for s in surfaces) == fresh.num_cells
+    for surface in surfaces:
+        check(surface)
+
+
 def test_an_order_two_surface_needs_no_faces_of_its_own(backend):
     """Two hexahedra sharing one edge: four boundary quads meet there, which no face
     of the surface could have. Its order-2 layout has no face values, so it
@@ -855,3 +1028,27 @@ def test_extract_edges_is_vtks(f64_backend, kind):
     ours_at = np.round(lines.positions(), 6)
     ours = {frozenset(map(tuple, ours_at[row])) for row in _lines(lines)}
     assert len(ours) == lines.num_cells == len(theirs) and ours == theirs
+
+
+def _contour_output_bytes(out):
+    t = out.topology
+    return sum(a.nbytes for a in (t.connectivity, out.geometry.values,
+                                  *(f.values for f in out.fields.values()))
+               if hasattr(a, "nbytes"))
+
+
+def test_contour_holds_little_more_than_its_output(backend, peak_memory):
+    """Each triangle corner keeps its point's name alone, and each point's position,
+    ends and weight are computed once from its name after the merge (the cut
+    filters' memory plan, D4): carried with every corner (40 bytes), they held
+    contour at 10.2 times its output; now 3.5."""
+    grid = td.uniform_grid((41, 41, 41), spacing=(0.025,) * 3)
+    data = td.tetrahedralize(grid)
+    data = td.DataSet(data.topology, data.geometry)
+    x = data.positions()
+    data.fields["p"] = td.Field(td.H1(data), tack.array((np.sin(5 * x[:, 0]) + x[:, 1] * x[:, 2])
+                                                         .astype(np.float32)))
+    for levels in ([0.1 * k for k in range(1, 11)], [0.3, 0.6, 0.9]):
+        td.contour(data, "p", levels)                     # compiled outside the measurement
+        out, peak = peak_memory(td.contour, data, "p", levels)
+        assert peak <= 5 * _contour_output_bytes(out), peak / _contour_output_bytes(out)

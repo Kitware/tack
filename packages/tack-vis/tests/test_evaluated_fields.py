@@ -108,6 +108,28 @@ def test_contour_reads_it_through_its_view(backend):
     assert td.integrate(mine).measure == pytest.approx(td.integrate(exact).measure, rel=1e-5)
 
 
+class _Unsubdivided(Analytic):
+    default_subdivision = 1
+
+
+def test_contour_without_subdividing_reads_it_through_its_view(backend):
+    # Contoured cell by cell: its 36 stored values are placeholders, not the 80
+    # points' values, so no point may be computed from them.
+    data = td.uniform_grid((5, 4, 4), spacing=(0.25, 1 / 3, 1 / 3))
+    space = _Unsubdivided(data, key=next(_keys))
+    space.data, space.carried = data, True
+    data.fields["f"] = td.Field(space, tack.zeros((data.num_cells,), tack.f32))
+    data.fields["linear"] = td.interpolate(data, _f, td.H1(data))
+    mine = td.contour(data, "f", 0.6)
+    linear = td.contour(data, "linear", 0.6)
+    positions = mine.geometry.values.numpy()
+    assert np.isfinite(positions).all()
+    # Crossings on the edges, between corner values: the order-1 field's.
+    assert mine.num_cells == linear.num_cells and mine.num_points == linear.num_points
+    np.testing.assert_allclose(np.sort(positions, axis=0),
+                               np.sort(linear.geometry.values.numpy(), axis=0), atol=1e-5)
+
+
 def _cells(out):
     return sum(piece.num_cells for piece in out) if isinstance(
         out, td.PartitionedDataSet) else out.num_cells

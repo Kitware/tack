@@ -46,6 +46,7 @@ from tack.dataset.algorithms.halo_catalog import halo_catalog
 from tack.dataset.algorithms.implicit_values import implicit_values
 from tack.dataset.algorithms.integrate import Integrals, integrate
 from tack.dataset.algorithms.interpolate import interpolate
+from tack.dataset.algorithms.isovolume import isovolume
 from tack.dataset.algorithms.jump import jump
 from tack.dataset.algorithms.log_values import log_values
 from tack.dataset.algorithms.magnitude import magnitude
@@ -133,6 +134,7 @@ __all__ = [
     "implicit_values",
     "integrate",
     "interpolate",
+    "isovolume",
     "jump",
     "log_values",
     "magnitude",

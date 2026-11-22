@@ -92,10 +92,11 @@ New datasets of pieces of cells, with points made on their edges.
 
 | Algorithm | Gives | Takes | VTK | Viskores |
 |---|---|---|---|---|
-| [`contour`](#tack.dataset.algorithms.contour.contour) | isosurfaces, isolines or points of a field, one level or several | dataset | vtkContourFilter | Contour |
+| [`contour`](#tack.dataset.algorithms.contour.contour) | isosurfaces, isolines or points of a field, one level or several | dataset | vtkContourFilter, vtkFlyingEdges3D | Contour, ContourFlyingEdges |
 | [`slice`](#tack.dataset.algorithms.slice.slice) | where an implicit function is zero (or a level) | dataset | vtkCutter | Slice |
-| [`slice_plane`](#tack.dataset.algorithms.slice.slice_plane) | a plane's cut, or parallel planes | dataset | vtkCutter | Slice |
+| [`slice_plane`](#tack.dataset.algorithms.slice.slice_plane) | a plane's cut, or parallel planes | dataset | vtkCutter, vtkFlyingEdgesPlaneCutter | Slice |
 | [`clip`](#tack.dataset.algorithms.clip.clip) | the part above (or below) a field's level or inside an implicit function | dataset | vtkTableBasedClipDataSet | ClipWithField, ClipWithImplicitFunction |
+| [`isovolume`](#tack.dataset.algorithms.isovolume.isovolume) | the part where a field lies between two values | dataset | ParaView's Iso Volume (vtkPVClipDataSet by a range) | — |
 
 ::: tack.dataset.algorithms.contour.contour
     options: {show_root_full_path: false}
@@ -107,6 +108,9 @@ New datasets of pieces of cells, with points made on their edges.
     options: {show_root_full_path: false}
 
 ::: tack.dataset.algorithms.clip.clip
+    options: {show_root_full_path: false}
+
+::: tack.dataset.algorithms.isovolume.isovolume
     options: {show_root_full_path: false}
 
 ## Surfaces and edges
@@ -149,7 +153,7 @@ vectors, made by Tack so its fields and marks come along.
 | Algorithm | Gives | Takes | VTK | Viskores |
 |---|---|---|---|---|
 | [`tubes`](#tack.dataset.algorithms.tubes.tubes) | lines as tubes of quads, with outward normals | lines | vtkTubeFilter | — |
-| [`glyphs`](#tack.dataset.algorithms.glyphs.glyphs) | an arrow at each point along a vector field | dataset | vtkGlyph3D | — |
+| [`glyphs`](#tack.dataset.algorithms.glyphs.glyphs) | an arrow along a vector field at each point, or at each cell's centre (a DG field's) | dataset | vtkGlyph3D | — |
 
 ::: tack.dataset.algorithms.tubes.tubes
     options: {show_root_full_path: false}
@@ -290,6 +294,7 @@ New fields computed from a dataset's fields.
 | Algorithm | Gives | Takes | VTK | Viskores |
 |---|---|---|---|---|
 | [`gradients`](#tack.dataset.algorithms.gradients.gradients) | the gradient of a scalar or vector field, at cells or points | dataset | vtkGradientFilter | Gradient |
+| [`finite_differences`](#tack.dataset.algorithms.finite_differences.finite_differences) | the gradient or second derivatives of a field on an image, a rectilinear or a curvilinear grid, by differences of order 2, 4 or 6 | dataset | vtkGradientFilter (structured data) | — |
 | [`flow_quantities`](#tack.dataset.algorithms.flow_quantities.flow_quantities) | divergence, vorticity and Q-criterion from a velocity gradient | dataset | vtkGradientFilter | Gradient |
 | [`project`](#tack.dataset.algorithms.project.project) | a field moved into another space (cells to points, points to cells, ...) | dataset | vtkCellDataToPointData, vtkPointDataToCellData | PointAverage, CellAverage |
 | [`values_at_centers`](#tack.dataset.algorithms.values_at_centers.values_at_centers) | a field at each cell's parametric center | dataset | — | — |
@@ -302,6 +307,9 @@ New fields computed from a dataset's fields.
 | [`convert`](#tack.dataset.algorithms.convert.convert) | a field, or a dataset's field or geometry, in another unit | field, dataset | — | — |
 
 ::: tack.dataset.algorithms.gradients.gradients
+    options: {show_root_full_path: false}
+
+::: tack.dataset.algorithms.finite_differences.finite_differences
     options: {show_root_full_path: false}
 
 ::: tack.dataset.algorithms.flow_quantities.flow_quantities

@@ -134,3 +134,32 @@ def _volume_of_surface(surface):
         for i in range(1, len(p) - 1):
             total += np.dot(p[0], np.cross(p[i], p[i + 1]))
     return total / 6.0
+
+
+def _polyhedral_output_bytes(out):
+    t = out.topology
+    return (sum(getattr(t, name).nbytes for name in ("face_offsets", "face_points", "cell_offsets",
+                                                     "cell_faces", "cell_face_sides"))
+            + out.geometry.values.nbytes + sum(f.values.nbytes for f in out.fields.values()))
+
+
+@pytest.mark.parametrize("kind", ["hexahedra", "tetrahedra"])
+def test_a_polyhedral_clip_holds_little_more_than_its_output(peak_memory, kind):
+    """The faces' kept points are numbered through a map of one entry per input
+    point, and only the crossings are sorted (the cut filters' memory plan, D2): with
+    a name and a sort for every kept face point, the clip held 3.8 to 4.5 times its
+    output at its peak, where it keeps most of the mesh; now 2.5 to 3.4. The bound holds
+    where the clip keeps a good share of the mesh (0.05 and 0.5 here): the map has an
+    entry per input point, so a clip that keeps little has a peak set by its input,
+    not its output, as VTK's does, and a value such as 0.95 would not meet 3.6."""
+    grid = td.uniform_grid((31, 31, 31), spacing=(1 / 30,) * 3)
+    shaped = (td.tetrahedralize(grid) if kind == "tetrahedra"
+              else td.extract_cells(grid, np.arange(grid.num_cells)))
+    data = td.as_polyhedra(td.DataSet(shaped.topology, shaped.geometry.values))
+    x = data.positions()
+    data.fields["p"] = td.Field(td.H1(data), tack.array((x[:, 0] + 0.3 * x[:, 1]).astype(np.float32)))
+    td.clip(data, "p", 0.5)                               # compiled outside the measurement
+    for value in (0.05, 0.5):
+        out, peak = peak_memory(td.clip, data, "p", value)
+        ratio = peak / _polyhedral_output_bytes(out)
+        assert ratio <= 3.6, (value, ratio)

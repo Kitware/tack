@@ -811,6 +811,15 @@ place for every filter, at the cost of one extraction on the rare data
 that has them. Ids the caller chose (faces, edges) and a reused locator
 refer to the whole dataset, so they are refused there instead.
 
+*Revisited (2026-11, #402).* The data is not rare: every AMR box below the
+finest level has refined cells, and the extraction cost more than a copy, as
+each call's new topology built itself a new locator (a repeated probe of a
+128^3 box with a tenth of its cells refined: 31 ms against 190). The cell
+search now leaves hidden and refined cells out itself, the marks given with
+each query (`CellLocator.find`'s `hidden`), so `probe`, `advect` and
+`streamlines` keep the dataset, its locator, and a locator given. Other
+filters still extract (#403, #404, #405).
+
 ## 13. Questions to settle
 
 1. **Truth for continuity.** This proposal follows MFEM -- continuity

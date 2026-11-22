@@ -35,6 +35,7 @@ from tack.dataset.algorithms.extract_surface import extract_surface
 from tack.dataset.algorithms.face_centers import face_centers
 from tack.dataset.algorithms.face_geometry import FaceGeometry, face_geometry
 from tack.dataset.algorithms.feature_edges import EdgeKind, feature_edges
+from tack.dataset.algorithms.finite_differences import finite_differences
 from tack.dataset.algorithms.flow_quantities import FlowQuantities, flow_quantities
 from tack.dataset.algorithms.generate_global_ids import generate_global_ids
 from tack.dataset.algorithms.ghost_cells import ghost_cells, update_ghosts
@@ -45,6 +46,7 @@ from tack.dataset.algorithms.halo_catalog import halo_catalog
 from tack.dataset.algorithms.implicit_values import implicit_values
 from tack.dataset.algorithms.integrate import Integrals, integrate
 from tack.dataset.algorithms.interpolate import interpolate
+from tack.dataset.algorithms.isovolume import isovolume
 from tack.dataset.algorithms.jump import jump
 from tack.dataset.algorithms.log_values import log_values
 from tack.dataset.algorithms.magnitude import magnitude
@@ -121,6 +123,7 @@ __all__ = [
     "face_centers",
     "face_geometry",
     "feature_edges",
+    "finite_differences",
     "flow_quantities",
     "generate_global_ids",
     "ghost_cells",
@@ -131,6 +134,7 @@ __all__ = [
     "implicit_values",
     "integrate",
     "interpolate",
+    "isovolume",
     "jump",
     "log_values",
     "magnitude",

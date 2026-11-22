@@ -39,14 +39,15 @@ from tack.dataset.algorithms._advection import (
     SUCCESS,
     TERMINATE,
     ZERO_VELOCITY,
+    _parameters,
     _run,
     check_arguments,
     check_piece,
 )
 from tack.dataset.algorithms._common import _stand_in, _time_unit
 from tack.dataset.algorithms._extract import _vertices
-from tack.dataset.dataset import DataSet, Field, is_field_key
-from tack.dataset.ghosts import Ghosts, visible
+from tack.dataset.dataset import DataSet, Field
+from tack.dataset.ghosts import Ghosts, masked_marks
 from tack.dataset.locator import cached_locator
 from tack.dataset.partitioned import PartitionedDataSet, common_origin, fields_of
 from tack.dataset.spaces import Values
@@ -135,8 +136,8 @@ def advect_pieces(data, field, seeds, step_size, steps, integrator="rk4", unit="
     ``seeds`` are this rank's, an ``(n, 3)`` array; across MPI ranks each rank
     passes its own, numbered after the ranks before it."""
     blocks, pieces, finished, _, nothing, time_unit = _rounds(
-        data, field, seeds, step_size, steps, integrator, record=False, unit=unit,
-        neighbors=neighbors, adaptive=adaptive)
+        data, field, seeds, step_size, steps, integrator, record=False, who="advect",
+        unit=unit, neighbors=neighbors, adaptive=adaptive)
     out = []
     for g, piece in zip(blocks.local, pieces):
         done = finished[g]
@@ -169,8 +170,8 @@ def streamlines_pieces(data, field, seeds, step_size, steps, integrator="rk4", u
     from tack.dataset.polyhedra import PolylineTopology
 
     blocks, pieces, _, traced, nothing, time_unit = _rounds(
-        data, field, seeds, step_size, steps, integrator, record=True, unit=unit,
-        neighbors=neighbors, adaptive=adaptive)
+        data, field, seeds, step_size, steps, integrator, record=True, who="streamlines",
+        unit=unit, neighbors=neighbors, adaptive=adaptive)
     out = []
     for g, piece in zip(blocks.local, pieces):
         if piece is nothing:
@@ -212,33 +213,38 @@ def streamlines_pieces(data, field, seeds, step_size, steps, integrator="rk4", u
     return PartitionedDataSet(out, world=blocks.world)
 
 
-def _rounds(data, field, seeds, step_size, steps, integrator, record, unit="time",
+def _rounds(data, field, seeds, step_size, steps, integrator, record, who, unit="time",
             neighbors=False, adaptive=None):
     """The rounds: ``(blocks, pieces, finished, traced, nothing, time_unit)``, the
-    particles each piece finished with, with ``record`` each piece's stretches
+    particles each piece finished with (the velocity resolved once a piece,
+    ``fields_of``), with ``record`` each piece's stretches
     ``(seed, segment, positions, times)``, the piece of nothing standing in for a
     rank without pieces (``_stand_in``, else ``None``) and the particles' unit of
-    time."""
-    check_arguments(steps, integrator, step_size, unit=unit, **(adaptive or {}))
-    if not is_field_key(field):
-        raise TypeError("advection of a PartitionedDataSet takes a field's name")
+    time. ``step_size`` and ``adaptive`` are as ``who`` (``advect`` or
+    ``streamlines``) was given them: their quantities are read in the units of the
+    velocity the rounds resolve."""
+    resolved = []
 
     def check():                             # what only a rank with pieces can see
-        fields_of(data, field, "advection")
-        for piece in data:
+        resolved.extend(fields_of(data, field, "advection"))
+        for piece, own in zip(data, resolved):
             with piece.device:
-                check_piece(piece, field)
+                check_piece(piece, own)
 
     origin = common_origin(data, "advection over pieces", check=check)
-    pieces = []
-    for piece in data:                       # each piece's work on its own device
-        with piece.device:
-            pieces.append(visible(piece, field)[0])
+    step_size, tolerance, min_step, max_step, max_length, terminal_speed = _parameters(
+        data, field, unit, who, step_size, fields=resolved, **(adaptive or {}))
+    adaptive = {"tolerance": tolerance, "min_step": min_step, "max_step": max_step,
+                "max_length": max_length, "terminal_speed": terminal_speed}
+    check_arguments(steps, integrator, step_size, unit=unit, **adaptive)
+    # Each piece as it is: its hidden and refined cells are left out by the
+    # search (masked_marks), so it keeps its topology and its locator.
+    pieces, fields = list(data), list(resolved)
     # A rank with no pieces takes part through a piece of nothing: its block holds
     # no point, and sends its seeds to the pieces that do.
     nothing = _stand_in(data, origin)
     if nothing is not None:
-        pieces = [nothing]
+        pieces, fields = [nothing], [None]   # no particle ever stays on it
     blocks = tc.Blocks([piece.device for piece in pieces], data.world)
     locators = {}
     for g, piece in zip(blocks.local, pieces):
@@ -247,7 +253,7 @@ def _rounds(data, field, seeds, step_size, steps, integrator, record, unit="time
                 locators[g] = cached_locator(piece)
     boxes = _boxes(blocks, pieces, locators)
     pending = _seeded(blocks, seeds, origin)
-    time_unit = _time_unit(data, field)
+    time_unit = _time_unit(data, field, resolved)
     finished = {g: [] for g in blocks.local}
     traced = {g: [] for g in blocks.local}
     for _ in range(int(steps) + 2):
@@ -263,10 +269,10 @@ def _rounds(data, field, seeds, step_size, steps, integrator, record, unit="time
                         break
         for g in blocks.local:
             finished[g].append(outside[g])
-            pending[g], done = _advance(pieces[g - blocks.local.start], field,
+            pending[g], done = _advance(pieces[g - blocks.local.start],
+                                        fields[g - blocks.local.start],
                                         arrived[g], step_size, steps, integrator, record,
-                                        traced[g], unit, neighbors,
-                                        adaptive or {})
+                                        traced[g], unit, neighbors, adaptive)
             finished[g].append(done)
     else:
         raise RuntimeError("particles were still in flight after a round per step")
@@ -281,6 +287,27 @@ def _boxes(blocks, pieces, locators):
 
     return {g: _held_box(piece, locators[g]) if piece.num_points else None
             for g, piece in zip(blocks.local, pieces)}
+
+
+def _holder(blocks, pieces, locators):
+    """``Routing``'s ``holds`` over this rank's pieces: how well one of a piece's own
+    cells (not a ghost, nor hidden or refined: ``masked_marks``) holds each point, 0
+    for none."""
+    def holds(g, x):
+        piece = pieces[g - blocks.local.start]
+        with piece.device:
+            cells, held = locators[g]._find_holding(x.astype(piece.dtype.numpy_dtype),
+                                                    hidden=masked_marks(piece))
+        cells = arrays.to_host(cells).astype(np.int64)
+        owned = cells >= 0
+        marks = None if piece.ghosts is None else piece.ghosts.cells
+        if marks is not None:
+            owned &= (marks.numpy()[np.maximum(cells, 0)] & Ghosts.SKIPPED_CELLS) == 0
+        # Holding the point ranks ahead of coming within the tolerance, as one
+        # dataset's locator ranks its cells.
+        return np.where(owned, 1 + held.numpy(), 0)
+
+    return holds
 
 
 def _seeded(blocks, seeds, origin):
@@ -308,19 +335,7 @@ def _route(blocks, pieces, locators, boxes, pending):
     particles each piece takes, those no piece takes, left with the piece they
     were on, and per piece ``(seed, x, time)`` for each particle that goes on
     from further along its push out (``_Particles``' ``beyond_*``)."""
-    def holds(g, x):
-        piece = pieces[g - blocks.local.start]
-        with piece.device:
-            cells, held = locators[g]._find_holding(x.astype(piece.dtype.numpy_dtype))
-        cells = arrays.to_host(cells).astype(np.int64)
-        owned = cells >= 0
-        marks = None if piece.ghosts is None else piece.ghosts.cells
-        if marks is not None:
-            owned &= (marks.numpy()[np.maximum(cells, 0)] & Ghosts.SKIPPED_CELLS) == 0
-        # Holding the point ranks ahead of coming within the tolerance, as one
-        # dataset's locator ranks its cells.
-        return np.where(owned, 1 + held.numpy(), 0)
-
+    holds = _holder(blocks, pieces, locators)
     routing = tc.Routing(blocks, {g: pending[g].x for g in blocks.local}, boxes, holds)
     # A particle no piece holds, pushed out of the piece it was on, may be in a
     # sliver between pieces whose shared faces are not one surface (a

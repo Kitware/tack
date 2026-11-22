@@ -239,8 +239,12 @@ class _PolyhedralCells(_CellsById):
     ``cell_faces[cell_offsets[c] + k]`` is cell ``c``'s facet ``k``, and
     ``cell_face_sides`` the same entry's side: 0 when the facet's stored
     direction (a face's winding, an edge's direction) points out of ``c``, 1
-    when into it. ``point_offsets``/``point_ids`` are the cell's points
-    (derived: its facets' points, sorted and unique). Every method reaches the
+    when into it. ``point_offsets``/``point_ids`` are the cell's points, each
+    once: a ``PolyhedralTopology``'s derived from its facets, sorted; a mixed
+    topology's its run of the connectivity, in the order given (VTK's). Nothing
+    relies on their order: per-cell loops take every point, corner keys and point
+    links each corner's own, and faces are matched by their own points, sorted
+    there (``_face_keys``, ``_match_rings``). Every method reaches the
     arrays through ``cell(c)``, so a subgroup can renumber its cells.
     """
 
@@ -452,24 +456,49 @@ class _PolyhedralLocation:
     @tack.func
     def locate_from(self, c, p, x, slack):
         """``locate``, given the cell point ``p``: for a caller testing many points
-        against one cell. The search stops at the first sub-tetrahedron holding
-        ``x``; coordinates are ratios of triple products (Cramer's rule)."""
+        against one cell."""
+        t, pc, inside = self.locate_held_from(c, p, x, slack, 1)
+        return t, pc, inside
+
+    @tack.func
+    def locate_held_from(self, c, p, x, slack, near):
+        """``locate_from``, seeking the nearest sub-tetrahedron only where ``near`` is
+        1 (else ``t`` is -1 where none holds ``x``): a caller that has a cell
+        holding the point, or wants only one that does, asks for no more.
+
+        Two sweeps: the first tests whether each sub-tetrahedron holds ``x`` and
+        stops at the first that does; the second, only where none does, finds the
+        one whose face triangle is nearest. The nearest is wanted only then, so a
+        point inside the cell pays for no nearest-point tests (on Metal they were
+        most of a polyhedron's location, #451)."""
+        tet, pc = self._sweep(c, p, x, slack, 0)
+        inside = 1 if tet >= 0 else 0
+        if tet < 0 and near == 1:
+            tet, pc = self._sweep(c, p, x, slack, 1)
+        return tet, pc, inside
+
+    @tack.func
+    def _sweep(self, c, p, x, slack, nearest):
+        """One sweep over the sub-tetrahedra: with ``nearest`` 0, the first holding
+        ``x`` and its coordinates there (``t`` -1 for none); with ``nearest`` 1, the
+        one whose face triangle is nearest ``x``, within ``slack``, and the
+        coordinates of ``x`` extrapolated in it (so a linear field stays exact).
+        Coordinates are ratios of triple products (Cramer's rule)."""
         d = x - p
         tet = -1
         pc = tack.vec3(0.0, 0.0, 0.0)
-        near = -1
-        near_pc = tack.vec3(0.0, 0.0, 0.0)
         best = slack * slack
         base = 0
+        stop = 0
         nf = self.num_faces(c)
         k = 0
-        while k < nf and tet < 0:
+        while k < nf and stop == 0:
             n = self.side_num_points(c, k)
             f = self.face_point(c, k) - p
             first = self.side_position(c, k, 0) - p
             a = first
             j = 0
-            while j < n and tet < 0:
+            while j < n and stop == 0:
                 b = first
                 if j + 1 < n:
                     b = self.side_position(c, k, j + 1) - p
@@ -477,27 +506,24 @@ class _PolyhedralLocation:
                 det = f.dot(ab)
                 if det > 0.0:
                     w = tack.vec3(d.dot(ab), f.dot(d.cross(b)), f.dot(a.cross(d))) / det
-                    if min(w[0], w[1], w[2]) >= -HOLD_TOLERANCE and w[0] + w[1] + w[2] <= 1.0 + HOLD_TOLERANCE:
-                        tet = base + j
-                        pc = w
+                    if nearest == 0:
+                        if (min(w[0], w[1], w[2]) >= -HOLD_TOLERANCE
+                                and w[0] + w[1] + w[2] <= 1.0 + HOLD_TOLERANCE):
+                            tet = base + j
+                            pc = w
+                            stop = 1
                     else:
-                        # Outside: near if its face triangle is, and then
-                        # extrapolated, as the shapes' coordinates are.
                         r = _closest_on_triangle(d, f, a, b)
                         e = r[0] * f + r[1] * a + r[2] * b - d
                         if e.dot(e) <= best:
                             best = e.dot(e)
-                            near = base + j
-                            near_pc = w
+                            tet = base + j
+                            pc = w
                 a = b
                 j += 1
             base += n
             k += 1
-        inside = 1 if tet >= 0 else 0
-        if tet < 0 and near >= 0:
-            tet = near
-            pc = near_pc
-        return tet, pc, inside
+        return tet, pc
 
 
 class _PolygonLocation:
@@ -618,6 +644,51 @@ class _SelectedPolyhedra(_PolyhedralCells):
 
 
 _PolyhedralCells._selected = _SelectedPolyhedra
+
+
+class _MixedPolyhedra(_PolyhedralCells):
+    """The polyhedra of an unstructured topology that also holds shaped cells: the
+    ``num_cells`` cells ``ids`` (global cell ids). The arrays are the topology's,
+    indexed by global cell id: ``cell_offsets`` has an entry per cell (a shaped
+    cell's range empty), and a cell's points are its run of the connectivity.
+    ``index(c)`` is the cell's position in the group, as a shaped group's is."""
+
+    def __init__(self, cell_offsets, cell_faces, cell_face_sides, face_offsets, face_points,
+                 point_offsets, point_ids, ids, num_cells):
+        super().__init__(cell_offsets, cell_faces, cell_face_sides, face_offsets, face_points,
+                         point_offsets, point_ids, num_cells)
+        self.ids = ids
+
+    @tack.func
+    def cell(self, c):
+        return self.ids[c]
+
+    @tack.func
+    def index(self, c):
+        return c
+
+
+class _SelectedMixedPolyhedra(_MixedPolyhedra):
+    """A subgroup of `_MixedPolyhedra`: ``num_cells`` of the group's positions
+    ``selected`` from ``first``."""
+
+    def __init__(self, cell_offsets, cell_faces, cell_face_sides, face_offsets, face_points,
+                 point_offsets, point_ids, ids, num_cells, selected, first):
+        super().__init__(cell_offsets, cell_faces, cell_face_sides, face_offsets, face_points,
+                         point_offsets, point_ids, ids, num_cells)
+        self.selected = selected
+        self.first = first
+
+    @tack.func
+    def cell(self, c):
+        return self.ids[self.selected[self.first + c]]
+
+    @tack.func
+    def index(self, c):
+        return self.selected[self.first + c]
+
+
+_MixedPolyhedra._selected = _SelectedMixedPolyhedra
 
 
 class _PolylineCells(_CellsById):
@@ -3973,8 +4044,10 @@ def view_class(kind, shape, *mixins):
     if key not in _view_classes:
         _check_names(*mixins, kind, shape)
         name = "".join(m.__name__.strip("_") for m in mixins) + kind.__name__ + shape.__name__
+        # The key, on the class (not its views), for tack.inspect_template.
+        attributes = {**_node_count(mixins, shape), "_tack_composition": key}
         _view_classes[key] = tack.device_class(type(name, (*mixins, kind, shape),
-                                                    _node_count(mixins, shape)))
+                                                    attributes))
     return _view_classes[key]
 
 

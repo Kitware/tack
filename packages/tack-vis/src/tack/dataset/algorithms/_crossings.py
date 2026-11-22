@@ -50,6 +50,23 @@ from tack.dataset.spaces import H1, L2
 #: fixed so the bits are.
 ROOT_STEPS = tack.constant(32)
 
+#: The largest degree a sub-edge's interpolant is made for (``_line_degree``): a
+#: field of higher degree along one is evaluated at each Illinois step instead.
+MAX_DEGREE = tack.constant(8)
+
+
+def chebyshev_nodes(dtype):
+    """Each degree's Chebyshev-Lobatto points on [0, 1] (``sin(pi j / 2n)^2``, exactly
+    0 and 1 at the ends and symmetric), row ``n`` of ``MAX_DEGREE + 1`` entries
+    flat, in ``dtype``: computed here, so every device interpolates at the same
+    points."""
+    m = int(MAX_DEGREE) + 1
+    table = np.zeros((m, m))
+    for n in range(1, m):
+        table[n, :n + 1] = np.sin(np.pi * np.arange(n + 1) / (2 * n)) ** 2
+        table[n, n] = 1.0
+    return tack.array(table.reshape(-1).astype(dtype.numpy_dtype))
+
 
 
 
@@ -244,6 +261,55 @@ def _straight_at(cells, c, kind, m, x, pc, k1, k2, k3, corners):
     return cells.position(c, pc)
 
 
+@tack.func
+def _line_degree(cells, traced, kind, corners, a, b, pa, pb, degree):
+    # The degree of a field of per-axis order `degree` along the sub-edge from a to b
+    # (pa to pb), in the frame _field_at evaluates it in: an edge's trace and a
+    # triangle's (a total-degree space) are of that degree along any line, as is a
+    # simplex's inside; a tensor frame's, that times the axes the line moves along
+    # (a wedge's triangle counting as one). 0 for degree 0, a field of no known order.
+    n = 0
+    if traced == 1 and kind == 0:
+        n = degree
+    elif traced == 1 and kind == 1:
+        if corners == 4:
+            n = degree * ((a[0] != b[0]) + (a[1] != b[1]))
+        else:
+            n = degree
+    elif cells.NUM_POINTS == cells.DIMENSION + 1:
+        n = degree
+    elif cells.NUM_POINTS == 6:
+        n = degree * ((pa[0] != pb[0] or pa[1] != pb[1]) + (pa[2] != pb[2]))
+    else:
+        n = degree * ((pa[0] != pb[0]) + (pa[1] != pb[1]) + (pa[2] != pb[2]))
+    return n
+
+
+@tack.func
+def _interpolated(values, nodes, n, s):
+    # The degree-n polynomial through values at row n of nodes (Chebyshev-Lobatto),
+    # at s: the barycentric formula (weights (-1)^j, halved at the ends), the node's
+    # value where s is one.
+    row = n * (MAX_DEGREE + 1)
+    top = s - s
+    bottom = s - s
+    hit = -1
+    for j in range(n + 1):
+        d = s - nodes[row + j]
+        if d == 0.0:
+            hit = j
+        else:
+            w = 1.0 - 2.0 * (j % 2)
+            if j == 0 or j == n:
+                w = 0.5 * w
+            top += w * values[j] / d
+            bottom += w / d
+    result = top / bottom
+    if hit >= 0:
+        result = values[hit]
+    return result
+
+
 # ── Kernels ─────────────────────────────────────────────────────────
 
 @tack.kernel
@@ -280,12 +346,17 @@ def _holding(ends, firsts, by_key, per_cell, chosen, cell_rank, cell, na, nb):
 
 
 @tack.kernel
-def _roots(cells, u, nodes, traced, offsets, order, na, nb, ends, weights, lattice, levels,
-           nlevels, on_edges, on_faces, ne, nf, level, steps, ijk, out):
+def _roots(cells, u, nodes, traced, degree, chebyshev, offsets, order, na, nb, ends, weights,
+           lattice, levels, nlevels, on_edges, on_faces, ne, nf, level, steps, ijk, out, along):
     # Each crossing's root along its sub-edge, walked from its first end in the
     # entity's frame (_oriented): Illinois steps on the field less the cut's value,
     # bracketed by the lattice values the linear filter crossed between. -1 for a
-    # crossing at a lattice point, which keeps it.
+    # crossing at a lattice point, which keeps it. along: the root from the
+    # filter's first end (its weight for a crossing at a lattice point). A field
+    # of per-axis order `degree` is a polynomial of known degree along the
+    # sub-edge (_line_degree): the steps are taken on its interpolant through the
+    # field at the Chebyshev points (an H1 field's lattice values at the ends),
+    # the same polynomial, rather than evaluating the field at every step.
     for c in cells:
         e = cells.entity_id(c)
         for r in range(offsets[e], offsets[e + 1]):
@@ -309,13 +380,36 @@ def _roots(cells, u, nodes, traced, offsets, order, na, nb, ends, weights, latti
                 ghi = vb - value
                 side = 0
                 if glo * ghi < 0.0:
+                    n = _line_degree(cells, traced, kind, corners, a, b, pa, pb, degree)
+                    if n > MAX_DEGREE:
+                        n = 0
+                    samples = tack.local_array_like(out, MAX_DEGREE + 1)
+                    if n > 0:
+                        # An H1 field's lattice values are its values at the ends; an
+                        # L2 field's at a shared point may be another cell's, so the
+                        # ends are this cell's too.
+                        samples[0] = va
+                        samples[n] = vb
+                        first = 1
+                        last = n
+                        if traced == 0:
+                            first = 0
+                            last = n + 1
+                        for j in range(first, last):
+                            t = chebyshev[n * (MAX_DEGREE + 1) + j]
+                            samples[j] = _field_at(u, c, nodes, traced, kind, m, a + t * (b - a),
+                                                   pa + t * (pb - pa), k1, k2, k3, corners)
                     for _ in range(ROOT_STEPS):
                         mid = (lo * ghi - hi * glo) / (ghi - glo)
                         if mid <= lo or mid >= hi:
                             break
                         s = mid
-                        gm = _field_at(u, c, nodes, traced, kind, m, a + s * (b - a),
-                                       pa + s * (pb - pa), k1, k2, k3, corners) - value
+                        gm = s - s
+                        if n > 0:
+                            gm = _interpolated(samples, chebyshev, n, s) - value
+                        else:
+                            gm = _field_at(u, c, nodes, traced, kind, m, a + s * (b - a),
+                                           pa + s * (pb - pa), k1, k2, k3, corners) - value
                         if gm == 0.0:
                             break
                         if (gm < 0.0) == (glo < 0.0):
@@ -330,6 +424,9 @@ def _roots(cells, u, nodes, traced, offsets, order, na, nb, ends, weights, latti
                             if side == 1:
                                 glo = glo * 0.5
                             side = 1
+                along[i] = 1.0 - s if turned == 1 else s
+            else:
+                along[i] = w
             out[i] = s
 
 
@@ -379,6 +476,114 @@ def _straight_rows(cells, offsets, order, na, nb, roots, on_edges, on_faces, ne,
                                       k1, k2, k3, corners)
 
 
+# ── A second cut, of the first's output ──────────────────────────────
+
+@tack.kernel
+def _chained_ends(ends, weights, first_ends, first_along, first_count, pair, sp, sq):
+    # Each second crossing's sub-edge in the refined dataset, where its ends (points
+    # of the first cut's output) lie on one: a lattice point and another (pair, sp 0
+    # and sq 1), or a lattice point and a first crossing on a sub-edge from it (sp
+    # and sq where each end is along pair). sp -1 for any other (between crossings,
+    # at a centroid, at an end), which keeps its straight crossing.
+    for i in range(ends.shape[0]):
+        p = ends[i][0]
+        q = ends[i][1]
+        w = weights[i]
+        anchor = first_ends[0][0]
+        pair[i] = [anchor, anchor]
+        sp[i] = w - w - 1.0
+        sq[i] = w - w - 1.0
+        if w > 0.0 and w < 1.0 and p < first_count and q < first_count:
+            pa = first_ends[p][0]
+            pb = first_ends[p][1]
+            tp = first_along[p]
+            qa = first_ends[q][0]
+            qb = first_ends[q][1]
+            tq = first_along[q]
+            p_lattice = pa == pb or tp <= 0.0 or tp >= 1.0
+            q_lattice = qa == qb or tq <= 0.0 or tq >= 1.0
+            rp = pb if pa != pb and tp >= 1.0 else pa
+            rq = qb if qa != qb and tq >= 1.0 else qa
+            if p_lattice and q_lattice:
+                pair[i] = [rp, rq]
+                sp[i] = w - w
+                sq[i] = w - w + 1.0
+            elif p_lattice:
+                if rp == qa:
+                    pair[i] = [rp, qb]
+                    sp[i] = w - w
+                    sq[i] = tq
+                elif rp == qb:
+                    pair[i] = [rp, qa]
+                    sp[i] = w - w
+                    sq[i] = 1.0 - tq
+            elif q_lattice:
+                if rq == pb:
+                    pair[i] = [pa, rq]
+                    sp[i] = tp
+                    sq[i] = w - w + 1.0
+                elif rq == pa:
+                    pair[i] = [pb, rq]
+                    sp[i] = 1.0 - tp
+                    sq[i] = w - w + 1.0
+
+
+@tack.kernel
+def _bracketed_roots(cells, u, nodes, traced, offsets, order, na, nb, ends, weights, values,
+                     sp, sq, value, on_edges, on_faces, ne, nf, level, steps, ijk, out):
+    # A second crossing's root on its sub-edge (_chained_ends), between where its
+    # ends are along it, bracketed by the first output's values there: Illinois
+    # steps as _roots takes, in the entity's frame. -1 where it has none.
+    for c in cells:
+        e = cells.entity_id(c)
+        for r in range(offsets[e], offsets[e + 1]):
+            i = order[r]
+            s0 = sp[i]
+            s = s0 - s0 - 1.0
+            if s0 >= 0.0:
+                s1 = sq[i]
+                w = weights[i]
+                kind, m, a, b, pa, pb, k1, k2, k3, corners, turned = _oriented(
+                    cells, c, na[i], nb[i], on_edges, on_faces, ne, nf, level, steps, ijk)
+                if turned == 1:
+                    s0 = 1.0 - s0
+                    s1 = 1.0 - s1
+                s = s0 + w * (s1 - s0)
+                lo = s0
+                hi = s1
+                glo = values[ends[i][0]] - value
+                ghi = values[ends[i][1]] - value
+                if s1 < s0:
+                    lo = s1
+                    hi = s0
+                    glo = values[ends[i][1]] - value
+                    ghi = values[ends[i][0]] - value
+                side = 0
+                if glo * ghi < 0.0:
+                    for _ in range(ROOT_STEPS):
+                        mid = (lo * ghi - hi * glo) / (ghi - glo)
+                        if mid <= lo or mid >= hi:
+                            break
+                        s = mid
+                        gm = _field_at(u, c, nodes, traced, kind, m, a + s * (b - a),
+                                       pa + s * (pb - pa), k1, k2, k3, corners) - value
+                        if gm == 0.0:
+                            break
+                        if (gm < 0.0) == (glo < 0.0):
+                            lo = s
+                            glo = gm
+                            if side == -1:
+                                ghi = ghi * 0.5
+                            side = -1
+                        else:
+                            hi = s
+                            ghi = gm
+                            if side == 1:
+                                glo = glo * 0.5
+                            side = 1
+            out[i] = s
+
+
 # ── The hook ────────────────────────────────────────────────────────
 
 def _nodes_of(space, shape, dtype, geometry=False):
@@ -425,14 +630,31 @@ class Crossings:
         self.lattice = lattice
         self.levels = levels
         self.sources = sources
+        self.placed = None
 
     def located(self, interpolate):
         """``interpolate`` with its crossings' roots: an ``Interpolate`` whose
-        ``exact`` evaluates a refined field's source at them."""
+        ``exact`` evaluates a refined field's source at them. The last one is kept
+        (``placed``), for a second cut of the first's output (``Chained``)."""
         from tack.dataset.carry import Interpolate
 
-        return Interpolate(interpolate.ends, interpolate.weights, interpolate.averages,
-                           interpolate.average_cells, exact=_Located(self, interpolate))
+        self.placed = Interpolate(interpolate.ends, interpolate.weights,
+                                  interpolate.averages, interpolate.average_cells,
+                                  exact=_Located(self, interpolate))
+        return self.placed
+
+
+def _line_order(field):
+    """A field's polynomial order along each reference axis, for ``_roots``'
+    interpolants: an ``H1`` or ``L2`` field's order (its largest, where it varies by
+    cell); 0 for any other space, whose field is evaluated at every step."""
+    space = field.space
+    if not isinstance(space, (H1, L2)):
+        return 0
+    if not space.varies:
+        return int(space.order)
+    orders = space.order
+    return int(orders.max()) if arrays.size_of(orders) else 0
 
 
 class _Located:
@@ -454,16 +676,20 @@ class _Located:
         # root on an f32 mesh is an f64 root.
         wide = tack.f64 in (data.dtype, arrays.dtype_of(x.cut.values))
         self.roots = tack.empty((n,), tack.f64 if wide else tack.f32)
+        self.along = tack.empty((n,), tack.f64 if wide else tack.f32)
         _holding(interpolate.ends, x.firsts, x.by_key, x.per_cell, x.chosen, x.ranks,
                  self.cell, self.na, self.nb)
         self.order, self.offsets = bucket_order(self.cell, data.num_cells)
         cut = x.cut
+        chebyshev = chebyshev_nodes(self.roots.dtype)
         for group in data.launch_groups("cells", [cut]):
             if group.count:
                 cells, tables = self._tables(group)
-                _roots(cells, cut.view(group), *self._basis(cut, group), self.offsets,
+                _roots(cells, cut.view(group), *self._basis(cut, group), _line_order(cut),
+                       chebyshev, self.offsets,
                        self.order, self.na, self.nb, interpolate.ends, interpolate.weights,
-                       x.lattice, x.levels, int(x.levels.shape[0]), *tables, self.roots)
+                       x.lattice, x.levels, int(x.levels.shape[0]), *tables, self.roots,
+                       self.along)
 
     def _tables(self, group):
         data = self.crossings.data
@@ -496,7 +722,7 @@ class _Located:
             return
         data = self.crossings.data
         space = source.space
-        if not isinstance(space, (H1, L2)) or space.varies:
+        if not isinstance(space, (H1, L2)):
             return
         is_geometry = source is data.geometry
         if is_geometry and not isinstance(space, H1):
@@ -517,3 +743,83 @@ class _Located:
                 _field_rows(cells, source.view(group), *self._basis(source, group),
                             self.offsets, self.order, self.na, self.nb, self.roots, *tables,
                             out)
+
+
+
+class Chained:
+    """A second cut's crossings at their roots, on the output ``data`` of a first cut
+    of a refined dataset (``isovolume``'s second clip): ``first`` the refined
+    dataset's ``Crossings``, ``placed`` the first cut's located points, ``refined``
+    the refined dataset and ``name`` the field cut (in ``data``), at ``value``.
+
+    A second crossing whose ends lie on one sub-edge of the refined dataset -- two
+    lattice points, or a lattice point and a first crossing on a sub-edge from it --
+    is at the field's root there, between where its ends are along it; any other
+    (between two first crossings, across a sub-cell's face or inside it) keeps the
+    straight line, as a cut of the sub-cells would."""
+
+    def __init__(self, first, placed, refined, data, name, value):
+        self.data = first.data
+        self.level = first.level
+        self.by_key = first.by_key
+        self.firsts = first.firsts
+        self.per_cell = first.per_cell
+        self.chosen = first.chosen
+        self.ranks = first.ranks
+        self.cut = first.cut
+        self.placed = placed
+        self.values = arrays.materialize(data.fields[name].values)
+        self.value = value
+        # The first output's fields' sources: their refined fields'.
+        self.sources = {}
+        for key, field in data.fields.items():
+            source = first.sources.get(id(refined.fields.get(key)))
+            if source is not None:
+                self.sources[id(field)] = source
+        source = first.sources.get(id(refined.geometry))
+        if source is not None:
+            self.sources[id(data.geometry)] = source
+
+    def located(self, interpolate):
+        """``interpolate`` with the crossings on sub-edges at their roots."""
+        from tack.dataset.carry import Interpolate
+
+        return Interpolate(interpolate.ends, interpolate.weights, interpolate.averages,
+                           interpolate.average_cells, exact=_ChainLocated(self, interpolate))
+
+
+class _ChainLocated(_Located):
+    """A second cut's crossings placed (``Chained``): each one on a sub-edge, its
+    holding cell, its ends' nodes there and its root; -1 for the others."""
+
+    def __init__(self, chained, interpolate):
+        x = chained
+        data = x.data
+        n = int(interpolate.weights.shape[0])
+        self.crossings = x
+        self.count = n
+        if not n:
+            return
+        first = x.placed.exact
+        wide = tack.f64 in (data.dtype, arrays.dtype_of(x.cut.values))
+        real = tack.f64 if wide else tack.f32
+        pair = tack.empty((n,), tack.vec(2, arrays.dtype_of(x.placed.ends)))
+        sp = tack.empty((n,), real)
+        sq = tack.empty((n,), real)
+        _chained_ends(interpolate.ends, interpolate.weights, x.placed.ends, first.along,
+                      first.count, pair, sp, sq)
+        self.cell = tack.empty((n,), data.id_dtype)
+        self.na = tack.empty((n,), tack.i32)
+        self.nb = tack.empty((n,), tack.i32)
+        self.roots = tack.empty((n,), real)
+        _holding(pair, x.firsts, x.by_key, x.per_cell, x.chosen, x.ranks, self.cell,
+                 self.na, self.nb)
+        self.order, self.offsets = bucket_order(self.cell, data.num_cells)
+        cut = x.cut
+        for group in data.launch_groups("cells", [cut]):
+            if group.count:
+                cells, tables = self._tables(group)
+                _bracketed_roots(cells, cut.view(group), *self._basis(cut, group),
+                                 self.offsets, self.order, self.na, self.nb,
+                                 interpolate.ends, interpolate.weights, x.values, sp, sq,
+                                 float(x.value), *tables, self.roots)

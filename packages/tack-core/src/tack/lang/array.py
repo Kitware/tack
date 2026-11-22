@@ -39,6 +39,7 @@ from tack.lang.types import (
     mat,
     vec,
 )
+from tack.runtime import memory_stats
 
 
 class DeviceBuffer:
@@ -226,6 +227,72 @@ def view_buffer(buffer: DeviceBuffer, start: int, count: int) -> DeviceBuffer:
     return view
 
 
+#: A host copy into a CPU buffer of at least this many bytes runs on several
+#: threads (`_host_copy`); a smaller one on the calling thread.
+_PARALLEL_COPY_BYTES = 32 << 20
+#: Each thread's least share of a parallel copy.
+_COPY_CHUNK_BYTES = 8 << 20
+#: At most this many threads copy: a few already take what memory gives (jura,
+#: 174M ids from i64 into fresh i32 pages: 1 thread 0.33 s, 4 0.09, 8 0.13).
+_COPY_THREADS = 8
+_copy_pool = None
+
+
+def _copy_threads():
+    import os
+    env = os.environ.get("TACK_CPU_THREADS")
+    cores = int(env) if env and env.isdigit() and int(env) > 0 else (os.cpu_count() or 1)
+    return max(1, min(_COPY_THREADS, cores))
+
+
+def _reset_copy_pool():
+    global _copy_pool
+    _copy_pool = None
+
+
+def _host_copy(dst: np.ndarray, src: np.ndarray):
+    """``np.copyto(dst, src)`` -- its ``same_kind`` casting, so a conversion such
+    as i64 to i32 happens in the copy -- for arrays of one shape, by up to
+    `_COPY_THREADS` threads of their own when it is large (NumPy leaves the GIL
+    while it copies). A new CPU buffer's pages are first touched here, so the
+    copy also spreads their faults; the buffer's range already has its NUMA
+    policy (`_interleave_range`), whichever thread touches it. On jura a 1 GB
+    copy into new pages took 0.31 s on one thread and 0.11-0.15 on 4-8. Arrays whose
+    memory may overlap take one ``np.copyto``, which reads its source as it was:
+    split, a chunk could be written before another thread read it."""
+    global _copy_pool
+    nbytes = max(dst.nbytes, src.nbytes)
+    threads = _copy_threads()
+    if (nbytes < _PARALLEL_COPY_BYTES or threads < 2 or dst.shape != src.shape
+            or not (dst.flags.c_contiguous and src.flags.c_contiguous)
+            or np.may_share_memory(dst, src)):
+        np.copyto(dst, src)
+        return
+    if not np.can_cast(src.dtype, dst.dtype, "same_kind"):
+        np.copyto(dst, src)                         # raises as it would
+        return
+    if _copy_pool is None:
+        import os
+        from concurrent.futures import ThreadPoolExecutor
+        _copy_pool = ThreadPoolExecutor(max_workers=_COPY_THREADS,
+                                        thread_name_prefix="tack-copy")
+        os.register_at_fork(after_in_child=_reset_copy_pool)
+    d, s = dst.reshape(-1), src.reshape(-1)
+    k = int(min(threads, max(1, nbytes // _COPY_CHUNK_BYTES)))
+    step = -(-d.size // k)
+    for done in [_copy_pool.submit(np.copyto, d[i * step:(i + 1) * step],
+                                   s[i * step:(i + 1) * step]) for i in range(k)]:
+        done.result()
+
+
+def _converts_in_copy(buffer, host: np.ndarray, numpy_dtype) -> bool:
+    """Whether ``host`` may go into ``buffer`` (of ``numpy_dtype``) unconverted, the
+    copy converting it (`_host_copy`): a CPU buffer, and a number type that
+    ``same_kind`` casting takes to ``numpy_dtype`` as ``astype`` would."""
+    return (type(buffer) is NumpyBuffer and host.dtype.kind in "biuf"
+            and np.can_cast(host.dtype, numpy_dtype, "same_kind"))
+
+
 class NumpyBuffer(DeviceBuffer):
     """CPU backend buffer — just a numpy array, uninitialized when new."""
 
@@ -237,7 +304,7 @@ class NumpyBuffer(DeviceBuffer):
     def from_numpy(self, arr: np.ndarray):
         # A reshaped array shares this buffer under another shape; the
         # element count already matches, so copy in the buffer's own shape.
-        np.copyto(self._data, arr.reshape(self._data.shape))
+        _host_copy(self._data, arr.reshape(self._data.shape))
 
     def to_numpy(self) -> np.ndarray:
         return self._data.copy()
@@ -363,7 +430,17 @@ class Array:
         target = backend_of(device)
         if target is self._backend or target.memory_domain == self._backend.memory_domain:
             return self
-        return array(self.numpy(), self.dtype, device=target)
+        return array(self._host_values(), self.dtype, device=target)
+
+    def _host_values(self) -> np.ndarray:
+        """The values as `numpy` gives them, for reading at once: a CPU array's own
+        memory rather than a copy of it (a copy from every other device). For a
+        copy elsewhere, which copies again: `to_device` of 3 GB on jura took
+        0.72 s more in `numpy`'s copy than in the upload."""
+        data = getattr(self._buffer, "_data", None)
+        if type(self._buffer) is not NumpyBuffer or not isinstance(data, np.ndarray):
+            return self.numpy()
+        return data if data.shape == self._host_shape else data.reshape(self._host_shape)
 
     @property
     def scalar_dtype(self):
@@ -1026,16 +1103,18 @@ def _allocate(backend, dtype, shape, **options):
     memory: a 16 GB GPU ran out with dropped meshes still on it. The wait
     lets frees a backend defers (Level Zero's, a device without memory
     pools) complete before the retry, and buffers the collection returned to
-    a backend's cache (HIP's, Metal's) are freed (``release_memory``)."""
+    a backend's cache (HIP's, Metal's) are freed (``release_memory``). The
+    buffer is counted on its device (`tack.runtime.memory_stats`)."""
     try:
-        return backend.allocate_array(dtype, shape, **options)
+        buffer = backend.allocate_array(dtype, shape, **options)
     except MemoryError:
         import gc
 
         gc.collect()
         backend.synchronize()
         backend.release_memory()        # what the collection gave back to a cache
-        return backend.allocate_array(dtype, shape, **options)
+        buffer = backend.allocate_array(dtype, shape, **options)
+    return memory_stats.counted(backend, buffer)
 
 
 def _empty_for_mpi(shape, dtype, device) -> Array:
@@ -1048,8 +1127,8 @@ def _empty_for_mpi(shape, dtype, device) -> Array:
     scalar = dtype.scalar_dtype if isinstance(dtype, ElementType) else dtype
     _check_dtype(backend, scalar)
     storage = (int(math.prod(shape)) * dtype.size,) if isinstance(dtype, ElementType) else shape
-    return _array_view(dtype, shape, backend.allocate_mpi_array(scalar, storage),
-                       device=backend)
+    buffer = memory_stats.counted(backend, backend.allocate_mpi_array(scalar, storage))
+    return _array_view(dtype, shape, buffer, device=backend)
 
 
 def zeros(shape, dtype=None, *, device=None, layout="aos") -> Array:
@@ -1168,7 +1247,11 @@ def array(obj, dtype=None, *, device=None, layout=None) -> Array:
             raise ValueError(f"input shape {shape} must end with element shape {dtype.shape}")
         shape = shape[:-rank]
     out = empty(shape, dtype, device=device, layout=layout or "aos")
-    out._upload(host.astype(out.scalar_dtype.numpy_dtype, copy=False))
+    target = out.scalar_dtype.numpy_dtype
+    # Into the CPU's memory a conversion happens in the copy (`_host_copy`).
+    if not _converts_in_copy(out._buffer, host, target):
+        host = host.astype(target, copy=False)
+    out._upload(host)
     return out
 
 
@@ -1251,7 +1334,12 @@ def copyto(dst: Array, src):
                              f"of {dst.dtype} elements")
         _copy(src.reshape(src.size), dst.reshape(dst.size), dst.size)
         return
-    host = np.asarray(src, dtype=dst.scalar_dtype.numpy_dtype)
+    target = dst.scalar_dtype.numpy_dtype
+    # Into the CPU's memory a NumPy array's conversion happens in the copy
+    # (`_host_copy`), not in a converted copy made first.
+    if not (isinstance(src, np.ndarray) and _converts_in_copy(dst._buffer, src, target)):
+        src = np.asarray(src, dtype=target)
+    host = src
     expected = dst._host_shape
     if host.shape != expected:
         try:
@@ -1260,6 +1348,44 @@ def copyto(dst: Array, src):
             raise ValueError(f"copyto() into an array whose values have shape {expected}: "
                              f"cannot broadcast shape {host.shape}") from None
     dst._upload(host)
+
+
+#: An integer `arange` of at least this many values is filled by a kernel where
+#: the array lives, not made by NumPy on the host and copied there.
+_ARANGE_KERNEL_MIN = 1 << 16
+
+
+def _arange_on_device(start, stop, step, dtype, device):
+    """`arange` of integers, ``i32`` or ``i64``, filled by a kernel on ``device`` --
+    in parallel on the CPU, with no copy to a GPU -- or None for NumPy's way: a
+    short range, floats (whose rounding NumPy's arange defines), another type, or
+    values ``dtype`` cannot hold. Its type without ``dtype`` is the host's: i32
+    unless an end needs i64. On a GPU the host's way filled 22M ids with NumPy,
+    converted and copied them: 0.22 s of a 0.31 s clip on jura."""
+    if not all(isinstance(v, (int, np.integer)) and not isinstance(v, (bool, np.bool_))
+               for v in (start, stop, step)):
+        return None
+    start, stop, step = int(start), int(stop), int(step)
+    if step == 0:
+        return None                                  # NumPy's error
+    n = len(range(start, stop, step))
+    if n < _ARANGE_KERNEL_MIN:
+        return None
+    last = start + step * (n - 1)
+    fits = integer_type_for_value(start) is i32 and integer_type_for_value(last) is i32
+    if dtype is None:
+        dtype = i32 if fits else i64
+    else:
+        dtype = as_dtype(dtype)
+        if dtype not in (i32, i64) or (dtype == i32 and not fits):
+            return None
+    if dtype == i64 and not all(-2**63 <= v < 2**63 for v in (start, last)):
+        return None                              # NumPy's way, as for any other type
+    from tack.algorithms.copy import _affine_kernel
+    out = empty((n,), dtype, device=device)
+    with out.device:
+        _affine_kernel(out, np.int64(start), np.int64(step), n)
+    return out
 
 
 def arange(start, stop=None, step=1, dtype=None, *, device=None) -> Array:
@@ -1272,6 +1398,9 @@ def arange(start, stop=None, step=1, dtype=None, *, device=None) -> Array:
     """
     if stop is None:
         start, stop = 0, start
+    filled = _arange_on_device(start, stop, step, dtype, device)
+    if filled is not None:
+        return filled
     integral = all(isinstance(v, (int, np.integer)) and not isinstance(v, (bool, np.bool_))
                    for v in (start, stop, step))
     if integral and step != 0:

@@ -23,7 +23,7 @@ from tack.dataset.algorithms._common import (
     _with_basis,
 )
 from tack.dataset.buckets import key_order, run_offsets
-from tack.dataset.carry import Interpolate, Pieces, _like, carry
+from tack.dataset.carry import Interpolate, Pieces, _like, _point_values, carry
 from tack.dataset.dataset import Field
 from tack.dataset.spaces import H1, Values
 from tack.dataset.topology import UnstructuredTopology, uniform_cells
@@ -154,6 +154,79 @@ def _contour_points(cells, u, levels, nlevels, per_cell, starts, points, edges, 
                     else:
                         keys[at] = [min(a, b) * nlevels + v, max(a, b)]
                 at += 1
+
+
+@tack.kernel
+def _contour_names(cells, u, levels, nlevels, starts, keys, triangle_cells, triangle_levels):
+    # Each triangle corner's name alone, as _contour_points names it -- (low point *
+    # nlevels + level, high point) for an edge's crossing, (p * nlevels + level, p)
+    # at a corner it lands on (_end_hit) -- and each triangle's cell and level
+    # once. A point's position, ends and weight follow from its name, computed once
+    # a name after the merge (_named_points): carried with every corner, they were
+    # most of contour's memory (the cut filters' memory plan, D4).
+    for c in cells:
+        cell = cells.entity_id(c)
+        at = 3 * starts[cell]
+        for v in range(nlevels):
+            level = levels[v]
+            case = _cell_case(cells, u, c, level)
+            for k in range(3 * cells.contour_count(case)):
+                e = cells.contour_edge(case, k)
+                ja = cells.edge_corner(e, 0)
+                jb = cells.edge_corner(e, 1)
+                if not _first_end(cells.corner_position(c, ja), cells.corner_position(c, jb),
+                                  cells.point_id(c, ja), cells.point_id(c, jb)):
+                    ja, jb = jb, ja
+                a = cells.point_id(c, ja)
+                b = cells.point_id(c, jb)
+                end = _end_hit(level, a, b, u.corner_value(c, ja), u.corner_value(c, jb),
+                               cells.corner_position(c, ja), cells.corner_position(c, jb))
+                if end == a or end == b:
+                    keys[at] = [end * nlevels + v, end]
+                else:
+                    keys[at] = [min(a, b) * nlevels + v, max(a, b)]
+                if at % 3 == 0:
+                    triangle_cells[at // 3] = cell
+                    triangle_levels[at // 3] = v
+                at += 1
+
+
+@tack.kernel
+def _named_points(keys, order, offsets, positions, values, levels, nlevels, points, edges,
+                  weights, count):
+    # Each run's point from its name: a corner where both ids are one, else the
+    # edge's crossing placed from its end first by position, as _contour_points
+    # placed it from every corner naming it.
+    for r in range(count):
+        key = keys[order[offsets[r]]]
+        v = key[0] % nlevels
+        a = key[0] // nlevels
+        b = key[1]
+        if a == b:
+            points[r] = positions[a]
+            edges[r] = [a, a]
+            weights[r] = 0.0
+        else:
+            if not _first_end(positions[a], positions[b], a, b):
+                a, b = b, a
+            xa = positions[a]
+            xb = positions[b]
+            w = _crossing(levels[v], values[a], values[b])
+            points[r] = xa + w * (xb - xa)
+            edges[r] = [a, b]
+            weights[r] = w
+
+
+@tack.kernel
+def _kept_names(keep, slots, keys, triangle_cells, triangle_levels, out_keys, out_cells,
+                out_levels):
+    for t in range(keep.shape[0]):
+        if keep[t] == 1:
+            s = slots[t]
+            out_cells[s] = triangle_cells[t]
+            out_levels[s] = triangle_levels[t]
+            for j in range(3):
+                out_keys[3 * s + j] = keys[3 * t + j]
 
 
 # Within-cell keys of corner hits: (cell, _CORNER_KEY + corner), past every
@@ -460,6 +533,20 @@ def contour(data, field, value, merge_points=True, fields=None, dimension=None,
     vertices): the surface stops at the cells that hold numbers, and no point
     is placed on an edge to a missing value.
 
+    A structured grid of solid cells -- an image, a rectilinear grid or a
+    curvilinear one -- with a point field and positions on the points is
+    contoured by flying edges, as VTK's ``vtkFlyingEdges3D`` and Viskores' flying
+    edges: crossings counted along the grid's rows, numbered by a scan and
+    written once, with no per-corner arrays and no sort. Its triangles, points
+    and carried values are the ones the general path makes, up to their order
+    (``algorithms._flying_edges``). On an 11M-cell image at ten values it peaked
+    at 0.32 GB above the input against the general path's 2.24 (CPU, M1 Max).
+    Hidden and refined cells (an AMR box's) are left out in place, where
+    elsewhere the rest are extracted, a structured grid's into unstructured
+    cells, first. A 2D structured grid's lines go by flying edges too, paired in
+    each cell as the general path pairs them: on a 4096^2 image at ten values it
+    peaked at 0.18 GB above the input against 14.1.
+
     With ``merge_points``, triangles share their points: by global edge when
     the field and the geometry are both continuous (an ``H1`` field, or one of a
     space that declares itself ``continuous``), so the surface is watertight; otherwise only within each cell, so a DG field's surface
@@ -471,7 +558,11 @@ def contour(data, field, value, merge_points=True, fields=None, dimension=None,
     value = _in_unit_of(_field(data, field), value, "contour's value")
     from tack.dataset.ghosts import visible
 
-    data, field = visible(data, field)
+    # Flying edges leaves hidden and refined cells out in place; elsewhere the
+    # rest are extracted, a structured grid's into unstructured cells.
+    flying = _by_flying_edges(data, field, merge_points, dimension, subdivision, tolerance)
+    if not flying:
+        data, field = visible(data, field)
     field = _field(data, field)
     space = field.space
     from tack.dataset.algorithms.subdivide import subdivided_contour, subdivides
@@ -490,7 +581,7 @@ def contour(data, field, value, merge_points=True, fields=None, dimension=None,
             data, field, value, levels, nlevels, subdivision,
             lambda refined, name: contour(refined, name, value, merge_points=merge_points,
                                           fields=fields, dimension=dimension),
-            tolerance=tolerance, exact=exact)
+            tolerance=tolerance, exact=exact, fields=fields)
     if isinstance(space, H1) and space.order != 1:
         from tack.dataset.algorithms.subdivide import _cell_families
 
@@ -502,6 +593,9 @@ def contour(data, field, value, merge_points=True, fields=None, dimension=None,
     _scalar_floating("contour", field)
     levels, nlevels, several = _levels(value, field)
     top = data.topology.dimension
+    if flying:
+        return _structured_contour(data, _with_basis(data, field), levels, nlevels, several,
+                                   fields, shape=shapes.LINE if top == 2 else shapes.TRIANGLE)
     if dimension is None:
         dimension = top if top >= 1 else 3       # no cells (or vertices): no surface
     if dimension not in (1, 2, 3):
@@ -514,9 +608,30 @@ def contour(data, field, value, merge_points=True, fields=None, dimension=None,
         return _contour_lines(data, field, levels, nlevels, several, fields)
     if dimension == 1:
         return _contour_vertices(data, field, levels, nlevels, several, merge_points, fields)
+    if data.topology.mixed:
+        return _mixed_contour(data, field, levels, nlevels, several, fields)
     if not getattr(data.topology, "reference_cells", True):
         return _polyhedral_contour(data, field, levels, nlevels, several, fields)
     field = _with_basis(data, field)
+    (rows, count, edges, weights, points, triangle_cells, triangle_levels,
+     triangles) = _triangle_parts(data, field, levels, nlevels, merge_points)
+    # Every cell a triangle, three points each: the types and offsets are
+    # implicit, and the connectivity is the triangles' rows of merged points.
+    types, tri_offsets = uniform_cells(shapes.TRIANGLE, triangles, arrays.dtype_of(rows))
+    surface = UnstructuredTopology(types, tri_offsets, rows, num_points=count)
+    return _with_levels(carry(data, surface, points=Interpolate(edges, weights),
+                              cells=Pieces(triangle_cells), geometry=Field(H1(surface), points),
+                              fields=fields), levels, triangle_levels, several,
+                        field.unit)
+
+
+def _triangle_parts(data, field, levels, nlevels, merge_points):
+    """The shape path's iso-triangles of ``field`` (with its basis) at ``levels``:
+    ``(rows, count, edges, weights, points, triangle_cells, triangle_levels,
+    triangles)``, each triangle's three output points (``rows``, of ``count``
+    points, merged by name with ``merge_points``), each point's ends, weight and
+    position, and each triangle's cell and level. Cells without contour
+    triangles (polyhedra, polygons) give none."""
     space = field.space
     if not space.interpolated or space.on not in ("cells", "points"):
         raise TypeError(f"contour needs a field with a basis on the cells, not {space!r}")
@@ -533,6 +648,35 @@ def contour(data, field, value, merge_points=True, fields=None, dimension=None,
         _contour_counts(data.domain_view("cells", group), field.view(group), levels, nlevels,
                         counts)
     starts, triangles = _scanned(counts, n_cells, odt)
+    # Points named by their edge (a continuous field numbered by point, on an H1
+    # geometry): each corner keeps its name alone, and each point is computed from
+    # the field's and the geometry's values at the points. Only H1 without a table
+    # stores those, first: an evaluated space's values are placeholders, and a
+    # table numbers the values by cell.
+    if (not per_cell and isinstance(space, H1) and space.dofs is None
+            and data.geometry.space.dofs is None):
+        keys = tack.empty((3 * triangles,), tack.vec(2, kdt))
+        triangle_cells = tack.empty((triangles,), idt)
+        triangle_levels = tack.empty((triangles,), tack.i32)
+        for group in groups:
+            _contour_names(data.domain_view("cells", group), field.view(group), levels,
+                           nlevels, starts, keys, triangle_cells, triangle_levels)
+        del counts, starts                # the cells' bookkeeping, before the merge
+        if triangles:
+            keep = tack.empty((triangles,), tack.i32)
+            _distinct_triangles(keys, keep)
+            slots = tack.empty((triangles,), odt)
+            kept = exclusive_scan(keep, slots, triangles)
+            if kept < triangles:
+                out = (tack.empty((3 * kept,), keys.dtype), tack.empty((kept,), idt),
+                       tack.empty((kept,), tack.i32))
+                _kept_names(keep, slots, keys, triangle_cells, triangle_levels, *out)
+                keys, triangle_cells, triangle_levels = out
+                del out
+                triangles = kept
+            del keep, slots
+        return _named_points_of(data, field, levels, nlevels, merge_points, keys,
+                                triangle_cells, triangle_levels, triangles, idt, odt)
 
     n = 3 * triangles
     points = tack.empty((n,), tack.vec(3, data.dtype))
@@ -583,14 +727,92 @@ def contour(data, field, value, merge_points=True, fields=None, dimension=None,
     else:
         rows, count = CountingArray(n, dtype=odt), n          # each triangle its own points
 
-    # Every cell a triangle, three points each: the types and offsets are
-    # implicit, and the connectivity is the triangles' rows of merged points.
+    return (rows, count, edges, weights, points, triangle_cells, triangle_levels,
+            triangles)
+
+
+def _named_points_of(data, field, levels, nlevels, merge_points, keys, triangle_cells,
+                     triangle_levels, triangles, idt, odt):
+    """The end of `_triangle_parts` where every point is named by its edge (or the
+    corner it lands on) and level (``keys``, three a triangle, the triangles of no
+    area dropped): the names merged, and each point's position, ends and weight
+    computed once from its name."""
+    n = 3 * triangles
+    num_points = data.num_points
+    positions = _point_values(data.geometry.values, num_points)
+    values = _point_values(field.values, num_points)
+    if merge_points and n:
+        order = key_order(keys, num_points * nlevels, odt)
+        offsets, count = run_offsets(keys, order)
+        rows = tack.empty((n,), odt)
+        _run_of_each(order, offsets, rows, count)
+    else:
+        # Each triangle its own points.
+        order, offsets, count = CountingArray(n, dtype=odt), CountingArray(n + 1, dtype=odt), n
+        rows = CountingArray(n, dtype=odt)
+    points = tack.empty((count,), tack.vec(3, data.dtype))
+    edges = tack.empty((count,), tack.vec(2, idt))
+    weights = tack.empty((count,), arrays.dtype_of(field.values))
+    if count:
+        _named_points(keys, order, offsets, positions, values, levels, nlevels, points, edges,
+                      weights, count)
+    return (rows, count, edges, weights, points, triangle_cells, triangle_levels, triangles)
+
+
+def plane_cut(data, function, value, fields=None):
+    """``slice`` of an image or a rectilinear grid by a ``Plane``
+    (``_flying_edges.cuts``): ``contour`` of the plane's distance at ``value``, as
+    ``slice`` makes it, by flying edges over the rows' stretches near the plane,
+    the distance computed where it is read rather than stored for every point.
+    The same triangles, points and values as the general path, up to order."""
+    from tack.dataset import units
+    from tack.dataset.algorithms import _flying_edges
+    from tack.dataset.algorithms._common import _has_quantity
+
+    if _has_quantity(value):            # as contour of a field without a unit takes it
+        value = units.magnitude(value, None, "contour's value")
+    several = np.ndim(value) > 0
+    host = np.asarray(value, data.dtype.numpy_dtype).reshape(-1)
+    if not host.size:
+        raise ValueError("contour needs at least one value")
+    levels, nlevels = tack.array(host), int(host.size)
+    points, edges, weights, rows, sources, which, count, triangles, odt = (
+        _flying_edges.cut(data, function, levels, nlevels))
     types, tri_offsets = uniform_cells(shapes.TRIANGLE, triangles, odt)
     surface = UnstructuredTopology(types, tri_offsets, rows, num_points=count)
     return _with_levels(carry(data, surface, points=Interpolate(edges, weights),
-                              cells=Pieces(triangle_cells), geometry=Field(H1(surface), points),
-                              fields=fields), levels, triangle_levels, several,
-                        field.unit)
+                              cells=Pieces(sources), geometry=Field(H1(surface), points),
+                              fields=fields), levels, which, several, None)
+
+
+def _by_flying_edges(data, field, merge_points, dimension, subdivision, tolerance):
+    """Whether ``contour`` goes by flying edges (``_structured_contour``): a
+    structured grid's cells of its own dimension, a point field of order 1, no
+    subdivision or tolerance, and merged points (a sheet's lines share their
+    points whatever ``merge_points`` says). Decided once, before hidden cells
+    are extracted, since flying edges leaves them out in place and every other
+    path needs them gone."""
+    from tack.dataset.algorithms import _flying_edges
+
+    top = data.topology.dimension
+    return bool((merge_points or top == 2) and dimension in (None, top)
+                and subdivision is None and tolerance is None
+                and _flying_edges.serves(data, _with_basis(data, _field(data, field))))
+
+
+def _structured_contour(data, field, levels, nlevels, several, fields, shape=shapes.TRIANGLE):
+    """``contour`` of a structured grid by flying edges (``_flying_edges``): the
+    general path's triangles (a sheet's lines) and points, numbered along the
+    grid's rows, with no sort."""
+    from tack.dataset.algorithms import _flying_edges
+
+    points, edges, weights, rows, sources, which, count, triangles, odt = (
+        _flying_edges.surface(data, field, levels, nlevels))
+    types, tri_offsets = uniform_cells(shape, triangles, odt)
+    surface = UnstructuredTopology(types, tri_offsets, rows, num_points=count)
+    return _with_levels(carry(data, surface, points=Interpolate(edges, weights),
+                              cells=Pieces(sources), geometry=Field(H1(surface), points),
+                              fields=fields), levels, which, several, field.unit)
 
 
 @tack.func
@@ -843,7 +1065,7 @@ def _renumber_vertices(vertices, vertex_of_pair):
         vertices[i] = vertex_of_pair[vertices[i]]
 
 
-def _lopez_polygons(data, values, levels, nlevels, weight_dtype, snap=True):
+def _lopez_polygons(data, values, levels, nlevels, weight_dtype, snap=True, only=None):
     """A polyhedral topology's iso-polygons of point ``values`` at ``levels``, by López's
     tracing: ``(poly_starts, vertices, poly_cells, poly_levels, polygons, ends,
     weights, positions, count)`` -- each polygon's iso-vertices (CSR, in the
@@ -853,8 +1075,11 @@ def _lopez_polygons(data, values, levels, nlevels, weight_dtype, snap=True):
     position. ``snap`` makes a crossing within half an ulp of a point that point,
     as contour's are (``_end_hit``); clip's caps do not, so they meet its clipped
     faces, whose crossings are named by their edges.
-    Polygons come in cell order."""
+    Polygons come in cell order. ``only`` chooses the groups traced (a mixed
+    topology's polyhedra), by default every group."""
     from tack.dataset.polyhedra import SizeBuckets
+
+    chosen = (lambda g: g.count) if only is None else (lambda g: g.count and only(g))
 
     t = data.topology
     entries = size_of(t.cell_faces)
@@ -864,7 +1089,7 @@ def _lopez_polygons(data, values, levels, nlevels, weight_dtype, snap=True):
     kdt = ids.at_least(idt, data.num_points * nlevels)      # keys hold the level
     counts = tack.zeros((entries,), tack.i32)
     for group in data.launch_groups("cells", []):
-        if group.count:
+        if chosen(group):
             _lopez_counts(data.domain_view("cells", group), values, levels, nlevels, counts)
     pair_offsets = tack.empty((entries + 1,), odt)
     pairs = exclusive_scan(counts, pair_offsets, entries, close=True)
@@ -872,7 +1097,7 @@ def _lopez_polygons(data, values, levels, nlevels, weight_dtype, snap=True):
     pair_to = tack.empty((pairs,), tack.vec(2, kdt))
     if pairs:
         for group in data.launch_groups("cells", []):
-            if group.count:
+            if chosen(group):
                 _lopez_pairs(data.domain_view("cells", group), values, levels, nlevels,
                              pair_offsets, pair_from, pair_to)
     n = data.num_cells
@@ -880,7 +1105,7 @@ def _lopez_polygons(data, values, levels, nlevels, weight_dtype, snap=True):
     poly_offsets = tack.empty((n + 1,), odt)
     bad = tack.zeros((1,), tack.i32)
     buckets = SizeBuckets(t)
-    traced = [g for g in data.launch_groups("cells", [], keys=[buckets]) if g.count]
+    traced = [g for g in data.launch_groups("cells", [], keys=[buckets]) if chosen(g)]
     dummy = tack.empty((1,), odt)
     dummy_levels = tack.empty((1,), tack.i32)
     used = tack.zeros((max(pairs, 1),), tack.i32)
@@ -967,6 +1192,133 @@ def _polyhedral_contour(data, field, levels, nlevels, several, fields=None):
                               cells=Pieces(poly_cells), geometry=Field(H1(surface), positions),
                               fields=fields), levels, poly_levels, several,
                         field.unit)
+
+
+# ── Polyhedra beside shapes ─────────────────────────────────────────
+
+@tack.kernel
+def _triangle_point_levels(rows, cell_levels, out):
+    for t in range(cell_levels.shape[0]):
+        for j in range(3):
+            out[rows[3 * t + j]] = cell_levels[t]
+
+
+@tack.kernel
+def _polygon_point_levels(starts, vertices, cell_levels, out):
+    for p in range(cell_levels.shape[0]):
+        for i in range(starts[p], starts[p + 1]):
+            out[vertices[i]] = cell_levels[p]
+
+
+@tack.kernel
+def _point_names(ends, point_levels, nlevels, first, names):
+    # A point's name as both paths name it: (p * nlevels + level, p) at a point,
+    # (low * nlevels + level, high) on an edge.
+    for i in range(ends.shape[0]):
+        a = ends[i][0]
+        b = ends[i][1]
+        names[first + i] = [min(a, b) * nlevels + point_levels[i], max(a, b)]
+
+
+@tack.kernel
+def _joined_iso_points(names, order, runs, first, ends_a, weights_a, positions_a, ends_b,
+                       weights_b, positions_b, out_ends, out_weights, out_positions,
+                       point_of, count):
+    # One point per run of equal names, from its first entry: of the triangles'
+    # points (below first) or the polygons'.
+    for r in range(count):
+        i = order[runs[r]]
+        if i < first:
+            out_ends[r] = ends_a[i]
+            out_weights[r] = weights_a[i]
+            out_positions[r] = positions_a[i]
+        else:
+            out_ends[r] = ends_b[i - first]
+            out_weights[r] = weights_b[i - first]
+            out_positions[r] = positions_b[i - first]
+        for k in range(runs[r], runs[r + 1]):
+            point_of[order[k]] = r
+
+
+@tack.kernel
+def _joined_cells(rows, vertices, starts, point_of, first, triangles, types, offsets,
+                  connectivity):
+    # The triangles, then the polygons, on the joined points.
+    for c in range(types.shape[0]):
+        if c < triangles:
+            types[c] = tack.u8(shapes.TRIANGLE)
+            offsets[c] = 3 * c
+            for j in range(3):
+                connectivity[3 * c + j] = point_of[rows[3 * c + j]]
+        else:
+            p = c - triangles
+            types[c] = tack.u8(shapes.POLYGON)
+            offsets[c] = 3 * triangles + starts[p]
+            for i in range(starts[p], starts[p + 1]):
+                connectivity[3 * triangles + i] = point_of[first + vertices[i]]
+        if c == types.shape[0] - 1:
+            offsets[c + 1] = connectivity.shape[0]
+
+
+def _mixed_contour(data, field, levels, nlevels, several, fields=None):
+    """``contour`` of polyhedra beside shapes: each shape's iso-triangles by its
+    tables, each polyhedron's iso-polygons by López's tracing, joined into one
+    surface of triangles beside polygons. Both paths name a crossing by its edge
+    (or the point it is) and level, and place it from the edge's end first by
+    position, so a crossing on a face a shape and a polyhedron share is one
+    point, and the surface conforms across the face."""
+    if not (isinstance(field.space, H1) or field.space is Values(data, "points")):
+        raise TypeError("a topology with polyhedra contours point data")
+    field = _with_basis(data, field)
+    values = arrays.materialize(field.values)
+    (rows, count_a, ends_a, weights_a, positions_a, triangle_cells, triangle_levels,
+     triangles) = _triangle_parts(data, field, levels, nlevels, True)
+    (starts, vertices, poly_cells, poly_levels, polygons, ends_b, weights_b, positions_b,
+     count_b) = _lopez_polygons(data, values, levels, nlevels, arrays.dtype_of(field.values),
+                                only=lambda g: not g.shape.REFERENCE)
+    idt = data.id_dtype
+    kdt = ids.at_least(idt, data.num_points * nlevels)
+    total = count_a + count_b
+    names = tack.empty((total,), tack.vec(2, kdt))
+    for first, n, ends, cell_rows, cell_levels, kernel, extra in (
+            (0, count_a, ends_a, rows, triangle_levels, _triangle_point_levels, ()),
+            (count_a, count_b, ends_b, vertices, poly_levels, _polygon_point_levels,
+             (starts,))):
+        if n:
+            point_levels = tack.zeros((n,), tack.i32)
+            if size_of(cell_levels):
+                kernel(*extra, cell_rows, cell_levels, point_levels)
+            _point_names(ends, point_levels, nlevels, first, names)
+    odt = ids.for_output(data, 3 * triangles + size_of(vertices) + total)
+    count = 0
+    point_of = tack.empty((total,), odt)
+    if total:
+        order = key_order(names, data.num_points * nlevels, odt)
+        runs, count = run_offsets(names, order)
+    out_ends = tack.empty((count,), tack.vec(2, idt))
+    out_weights = tack.empty((count,), arrays.dtype_of(field.values))
+    out_positions = tack.empty((count,), tack.vec(3, data.dtype))
+    if count:
+        _joined_iso_points(names, order, runs, count_a, ends_a, weights_a, positions_a,
+                           ends_b, weights_b, positions_b, out_ends, out_weights,
+                           out_positions, point_of, count)
+    cells = triangles + polygons
+    types = tack.empty((cells,), tack.u8)
+    offsets = tack.empty((cells + 1,), odt)
+    connectivity = tack.empty((3 * triangles + size_of(vertices),), odt)
+    if cells:
+        _joined_cells(arrays.materialize(rows), vertices, starts, point_of, count_a, triangles, types,
+                      offsets, connectivity)
+    else:
+        offsets.fill(0)
+    surface = UnstructuredTopology(types, offsets, connectivity, num_points=count)
+    sources = (tack.concat([triangle_cells, poly_cells]) if triangles and polygons
+               else triangle_cells if triangles else poly_cells)
+    cell_levels = (tack.concat([triangle_levels, poly_levels]) if triangles and polygons
+                   else triangle_levels if triangles else poly_levels)
+    return _with_levels(carry(data, surface, points=Interpolate(out_ends, out_weights),
+                              cells=Pieces(sources), geometry=Field(H1(surface), out_positions),
+                              fields=fields), levels, cell_levels, several, field.unit)
 
 
 # ── Lines of 2D meshes ──────────────────────────────────────────────

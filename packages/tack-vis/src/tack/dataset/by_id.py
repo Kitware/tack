@@ -14,8 +14,16 @@ evaluated by cell id (``_PointValues``, ``_CellValues``: ``value(mesh, e, kind,
 pc, tet)``). Each shape's code is compiled in only when the mesh has that
 shape (``_kinds``).
 
+A cell class's ``NO_REFERENCE`` says how its cells are located: 0, every cell
+by its shape's parametric coordinates; 1, every cell in a piece of its fan
+(polyhedra, polygons, polylines); 2, a mixed mesh's, each cell by its type
+(``fanned``), the shapes by their coordinates and the polyhedra or polygons in
+their fans (``_MixedPolyhedralMesh``, ``_MixedPolygonMesh``). The per-cell
+choice is compiled in only for 2.
+
 What it serves: an ``H1`` geometry over unstructured cells of the shapes in
-``_SHAPES``, 2D and 3D structured grids, and polyhedra (order 1 there); point
+``_SHAPES``, 2D and 3D structured grids, and polyhedra and polygons, alone or
+beside shapes (order 1 there); point
 data (``H1`` order 1, values on points), cell data (``Constant``, values on
 cells), and any other interpolated space of one layout per shape. A curved
 geometry (``H1`` above order 1) and the fields of other spaces are read
@@ -24,6 +32,8 @@ through each shape group's own view (``_ByShape``: a cell's place in its group,
 high-order fields evaluated as the cell-side path does it. Anything else keeps
 the cell-side path.
 """
+
+import copy
 
 import tack
 from tack import arrays
@@ -37,6 +47,10 @@ _SHAPES = (shapes.Tetra, shapes.Hexahedron, shapes.Wedge, shapes.Pyramid, shapes
 
 # The kinds bit for polyhedra, past the shapes'.
 _POLYHEDRA = 256
+
+# Cells that hold no points where a search has marks: hidden or refined
+# (``Ghosts.MASKED_CELLS``).
+_MASKED = tack.constant(40, tack.i32)
 
 
 @tack.func
@@ -79,7 +93,15 @@ class _NoPolyhedra:
     NO_REFERENCE = 0
 
     @tack.func
+    def fanned(self, e):
+        return 0
+
+    @tack.func
     def locate(self, e, p, slack):
+        return -1, p - p, 0
+
+    @tack.func
+    def locate_held(self, e, p, slack, near):
         return -1, p - p, 0
 
     @tack.func
@@ -97,6 +119,17 @@ class _FannedCells:
         point_offsets, point_ids = topology.cell_points()
         super().__init__(*topology._cell_walk(), point_offsets, point_ids, topology.num_cells)
         self.positions = positions
+
+    @tack.func
+    def fanned(self, e):
+        return 1
+
+    @tack.func
+    def locate_held(self, c, x, slack, near):
+        """``locate``, where the nearest piece is wanted only if ``near`` is 1: a
+        polygon or polyline seeks both at once, so it gives both always."""
+        t, pc, inside = self.locate(c, x, slack)
+        return t, pc, inside
 
     @tack.func
     def point_position(self, p):
@@ -153,7 +186,14 @@ class _PolyhedralMesh(_FannedCells, views._PolyhedralLocation, views._Polyhedral
     def locate(self, c, x, slack):
         """``_PolyhedralLocation.locate`` from its cell point; a cell the locator found
         no kernel for (``moved_cell_points``' -2) holds nothing."""
-        t, pc, inside = self.locate_from(c, self.cell_point(c), x, slack)
+        t, pc, inside = self.locate_held(c, x, slack, 1)
+        return t, pc, inside
+
+    @tack.func
+    def locate_held(self, c, x, slack, near):
+        """``locate``, seeking the nearest sub-tetrahedron only where ``near`` is 1
+        (``_PolyhedralLocation.locate_held_from``)."""
+        t, pc, inside = self.locate_held_from(c, self.cell_point(c), x, slack, near)
         skipped = self.moved_starts[c] if self.MOVED == 1 else -1
         if skipped == -2:
             t = -1
@@ -215,6 +255,54 @@ class _PolygonMesh(_FannedCells, views._PolygonLocation, views._PolyhedralWalk,
         return shapes.POLYGON
 
 
+class _MixedFans:
+    """For a mixed topology's cells by id (polyhedra or polygons beside shapes): each
+    cell's type from the topology's, and whether it is located in its fan
+    (``fanned``) or by its shape. Its arrays are the topology's, by cell id: a
+    polyhedron's or polygon's points its run of the connectivity, its facets
+    the face arrays (``cell_face_offsets`` an entry a cell, a shape's empty)."""
+
+    NO_REFERENCE = 2
+
+    def _mixed(self, topology, positions):
+        views._PolyhedralCells.__init__(
+            self, topology.cell_face_offsets, topology.cell_faces, topology.cell_face_sides,
+            topology.face_offsets, topology.face_points, topology.offsets,
+            topology.connectivity, topology.num_cells)
+        self.types = topology.types
+        self.positions = positions
+
+    @tack.func
+    def cell_type(self, e):
+        return tack.i32(self.types[e])
+
+    @tack.func
+    def fanned(self, e):
+        t = tack.i32(self.types[e])
+        return 1 if t == shapes.POLYHEDRON or t == shapes.POLYGON else 0
+
+
+@tack.device_class
+class _MixedPolyhedralMesh(_MixedFans, _PolyhedralMesh):
+    """A mixed 3D topology's cells by id: its polyhedra as ``_PolyhedralMesh``'s, cell
+    points moved as the locator moved them, beside its shapes."""
+
+    def __init__(self, topology, positions):
+        self._mixed(topology, positions)
+        device = topology.device
+        self.moved_starts = tack.full((1,), -1, topology.id_dtype, device=device)
+        self.moved_weights = tack.zeros((1,), arrays.dtype_of(positions), device=device)
+
+
+@tack.device_class
+class _MixedPolygonMesh(_MixedFans, _PolygonMesh):
+    """A mixed 2D topology's cells by id: its polygons as ``_PolygonMesh``'s, beside
+    its triangles and quads."""
+
+    def __init__(self, topology, positions):
+        self._mixed(topology, positions)
+
+
 @tack.device_class
 class _PolylineMesh(views._PolylineLocation, views._PolyhedralWalk, views._PolylineCells):
     """A polyline topology's cells by id, located on their segments
@@ -227,6 +315,16 @@ class _PolylineMesh(views._PolylineLocation, views._PolyhedralWalk, views._Polyl
         super().__init__(topology.line_offsets, topology.line_points, point_offsets,
                          point_ids, topology.num_cells)
         self.positions = positions
+
+    @tack.func
+    def fanned(self, e):
+        return 1
+
+    @tack.func
+    def locate_held(self, c, x, slack, near):
+        """``locate``, as ``_FannedCells.locate_held``."""
+        t, pc, inside = self.locate(c, x, slack)
+        return t, pc, inside
 
     @tack.func
     def point_position(self, p):
@@ -325,14 +423,20 @@ def cells_by_id(data, positions, strict=True):
     from tack.dataset.topology import StructuredTopology, UnstructuredTopology
 
     t = data.topology
+    mixed = isinstance(t, UnstructuredTopology) and t.mixed
     present = 0
     for group in t.groups() if hasattr(t, "groups") else ():
         if not group.count:
             continue
         if group.shape in _SHAPES:
             present |= 1 << _SHAPES.index(group.shape)
+        elif mixed and not group.shape.REFERENCE:
+            present |= _POLYHEDRA
         elif strict and isinstance(t, UnstructuredTopology):
             return None
+    if mixed:
+        mesh = _MixedPolyhedralMesh if t.has_polyhedra else _MixedPolygonMesh
+        return mesh(t, positions), present
     if isinstance(t, UnstructuredTopology):
         return _FlatCells(t.types, t.offsets, t.connectivity), present
     if isinstance(t, StructuredTopology) and len(t.point_dims) >= 2:
@@ -503,12 +607,34 @@ class _MeshSearch:
     #: locates through their groups' views (``_CurvedCells``).
     CURVED = 0
 
-    #: 1 (an instance's, compiled in): polyhedra (``_PolyhedralMesh``), which
-    #: ``find_from`` tries in their sub-tetrahedra (``_well_inside_fan``).
+    #: 1 (an instance's, compiled in): polyhedra (``_PolyhedralMesh``, alone or
+    #: beside shapes), which ``find_from`` tries in their sub-tetrahedra
+    #: (``_well_inside_fan``).
     FANNED = 0
+
+    #: 1 (an instance's, compiled in, ``with_masks``): cells whose mark in
+    #: ``marks`` is hidden or refined (``Ghosts.MASKED_CELLS``) hold no points.
+    HIDDEN = 0
 
     def __init__(self, cells, present, positions, locator, tolerance, neighbors=None,
                  curved=None):
+        self._hold_cells(cells, present, positions, locator, tolerance, neighbors, curved)
+        locator._boxes()
+        self.lo = locator.lo
+        self.hi = locator.hi
+        self.bin_offsets, self.bin_cells = locator.cell_bins()
+        self.leaf_dims, self.leaf_starts = locator.leaves()
+        (self.ox, self.oy, self.oz, self.ix, self.iy, self.iz,
+         self.nx, self.ny, self.nz) = locator._coarse_grid()
+        self.slack = float(locator.slack)
+        if isinstance(cells, _PolyhedralMesh):
+            self.FANNED = 1
+
+    def _hold_cells(self, cells, present, positions, locator, tolerance, neighbors,
+                    curved=None):
+        """What every search holds however it finds its candidates: the cells,
+        their kinds, the shapes' functions, the positions, the tolerance and the
+        face neighbours. A new shape goes here, for both searches."""
         self.cells = cells
         self.curved = curved if curved is not None else _NoCurves()
         if curved is not None:
@@ -523,20 +649,12 @@ class _MeshSearch:
         self.quad = shapes.Quad()
         self.pixel = shapes.Pixel()
         self.positions = positions
-        self.lo = locator.lo
-        self.hi = locator.hi
-        self.bin_offsets, self.bin_cells = locator.cell_bins()
-        self.leaf_dims, self.leaf_starts = locator.leaves()
-        (self.ox, self.oy, self.oz, self.ix, self.iy, self.iz,
-         self.nx, self.ny, self.nz) = locator._coarse_grid()
-        self.slack = float(locator.slack)
+        self.marks = tack.zeros((1,), tack.u8, device=locator._device)
         self.tolerance = float(tolerance)
         self.ncells = locator.data.num_cells
         self.neighbors = neighbors if neighbors is not None else tack.zeros((1,), tack.i32)
         if neighbors is not None:
             self.NEIGHBORS = 1
-        if isinstance(cells, _PolyhedralMesh):
-            self.FANNED = 1
 
     @tack.func
     def find(self, p):
@@ -555,7 +673,8 @@ class _MeshSearch:
         ``HOLD_TOLERANCE``: no other cell of a mesh whose cells do not overlap
         holds ``p`` then, so the search would give the same cell, and the same
         coordinates, computed alike. A polyhedron is tried in its sub-tetrahedra
-        (``_well_inside_fan``) by the same rule. Elsewhere, and for pyramids
+        (``_well_inside_fan``) by the same rule, in a mixed mesh too, where a
+        hint's type says which test it takes. Elsewhere, and for pyramids
         (whose coordinates collapse at the apex), surfaces, polygons and
         polylines, the bins are searched.
 
@@ -567,20 +686,39 @@ class _MeshSearch:
         kind = 0
         pc = p - p
         tet = -1
+        if hint < self.ncells and self._left_out(hint):
+            hint = self.ncells
         if self.PREVIOUS_CELL == 1 and self.FANNED == 1 and hint < self.ncells:
-            e, kind, pc, tet = self._well_inside_fan(p, hint)
-        if self.PREVIOUS_CELL == 1 and self.cells.NO_REFERENCE == 0 and hint < self.ncells:
+            if self.cells.NO_REFERENCE == 1 or self.cells.fanned(hint) == 1:
+                e, kind, pc, tet = self._well_inside_fan(p, hint)
+        if (self.PREVIOUS_CELL == 1 and self.cells.NO_REFERENCE != 1 and hint < self.ncells
+                and (self.cells.NO_REFERENCE == 0 or self.cells.fanned(hint) == 0)):
             e, kind, pc = self._well_inside(p, hint)
             if self.NEIGHBORS == 1 and e == self.ncells:
                 for k in range(self.MAX_FACES):
                     f = self.neighbors[self.MAX_FACES * hint + k]
-                    if f >= 0:
+                    if f >= 0 and not self._left_out(f):
                         e, kind, pc = self._well_inside(p, f)
                         if e < self.ncells:
                             break
         if e == self.ncells:
             e, kind, pc, tet = self.find(p)
         return e, kind, pc, tet
+
+    def with_masks(self, marks):
+        """This search with the cells ``marks`` masks (a dataset's ghost marks:
+        hidden or refined) left out: they hold no points, so a point in one is
+        found in a neighbour within its tolerance, or nowhere, as in the dataset
+        with them extracted (``ghosts.visible``), without extracting them. A copy,
+        so a locator's search is shared by datasets of other marks."""
+        out = copy.copy(self)
+        out.marks = marks
+        out.HIDDEN = 1
+        return out
+
+    @tack.func
+    def _left_out(self, e):
+        return self.HIDDEN == 1 and (tack.i32(self.marks[e]) & _MASKED) != 0
 
     @tack.func
     def _well_inside_fan(self, p, e):
@@ -594,7 +732,7 @@ class _MeshSearch:
         a = self.lo[e]
         c = self.hi[e]
         s = self.tolerance * (c - a).norm()
-        tet, tpc, held = self.cells.locate(e, p, s)
+        tet, tpc, held = self.cells.locate_held(e, p, s, 0)
         found = self.ncells
         kind = 0
         pc = p - p
@@ -676,15 +814,20 @@ class _MeshSearch:
                 a = self.lo[e]
                 c = self.hi[e]
                 s = self.tolerance * (c - a).norm()
-                if (e < best_rank and p[0] >= a[0] - s and p[0] <= c[0] + s
+                if (e < best_rank and not self._left_out(e) and p[0] >= a[0] - s
+                        and p[0] <= c[0] + s
                         and p[1] >= a[1] - s and p[1] <= c[1] + s
                         and p[2] >= a[2] - s and p[2] <= c[2] + s):
                     kind = self.cells.cell_type(e)
-                    if self.cells.NO_REFERENCE == 1:
+                    if self.cells.NO_REFERENCE == 1 or (self.cells.NO_REFERENCE == 2
+                                                        and self.cells.fanned(e) == 1):
                         # No parametric coordinates: a piece of the cell's fan (a
                         # polyline's segment) and the point's place in it, within
                         # the cell's tolerance.
-                        tet, tpc, held = self.cells.locate(e, p, s)
+                        # The nearest piece only where it could rank: not
+                        # once a cell holding p is found.
+                        near = 1 if e + self.ncells < best_rank else 0
+                        tet, tpc, held = self.cells.locate_held(e, p, s, near)
                         if tet >= 0:
                             rank = e if held == 1 else e + self.ncells
                             if rank < best_rank:
@@ -694,73 +837,82 @@ class _MeshSearch:
                                 best_tet = tet
                                 best_pc = tpc
                         continue
-                    pc = p - p
-                    converged = 0
-                    inside = 0
-                    near = p - p
-                    surface = 0
-                    if self.CURVED == 1:
-                        # As the cell-side search inverts a curved cell.
-                        pc, converged, inside, near = self.curved.locate(
-                            e, kind, p, shapes.HOLD_TOLERANCE)
-                        if kind == shapes.TRIANGLE or kind == shapes.QUAD or kind == shapes.PIXEL:
-                            surface = 1
-                    else:
+                    if self.CURVED == 0:
                         for j in range(self.cells.num_points(e)):
                             y = self.positions[self.cells.point_id(e, j)]
                             pts[3 * j] = y[0]
                             pts[3 * j + 1] = y[1]
                             pts[3 * j + 2] = y[2]
-                    if self.CURVED == 1:
-                        pass
-                    elif (self.kinds.PRESENT & 1) != 0 and kind == shapes.TETRA:
-                        pc, converged = self.tetra.world_to_parametric(pts, p)
-                        inside = self.tetra.is_inside(pc, shapes.HOLD_TOLERANCE)
-                        near = self.tetra.nearest_point(pts, p, pc)
-                    elif (self.kinds.PRESENT & 2) != 0 and kind == shapes.HEXAHEDRON:
-                        pc, converged = self.hexa.world_to_parametric(pts, p)
-                        inside = self.hexa.is_inside(pc, shapes.HOLD_TOLERANCE)
-                        near = self.hexa.nearest_point(pts, p, pc)
-                    elif (self.kinds.PRESENT & 4) != 0 and kind == shapes.WEDGE:
-                        pc, converged = self.wedge.world_to_parametric(pts, p)
-                        inside = self.wedge.is_inside(pc, shapes.HOLD_TOLERANCE)
-                        near = self.wedge.nearest_point(pts, p, pc)
-                    elif (self.kinds.PRESENT & 8) != 0 and kind == shapes.PYRAMID:
-                        pc, converged = self.pyramid.world_to_parametric(pts, p)
-                        inside = self.pyramid.is_inside(pc, shapes.HOLD_TOLERANCE)
-                        near = self.pyramid.nearest_point(pts, p, pc)
-                    elif (self.kinds.PRESENT & 16) != 0 and kind == shapes.VOXEL:
-                        pc, converged = self.voxel.world_to_parametric(pts, p)
-                        inside = self.voxel.is_inside(pc, shapes.HOLD_TOLERANCE)
-                        near = self.voxel.nearest_point(pts, p, pc)
-                    elif (self.kinds.PRESENT & 32) != 0 and kind == shapes.TRIANGLE:
-                        pc, converged = self.triangle.world_to_parametric(pts, p)
-                        inside = self.triangle.is_inside(pc, shapes.HOLD_TOLERANCE)
-                        surface = 1
-                        near = self.triangle.nearest_point(pts, p, pc)
-                    elif (self.kinds.PRESENT & 64) != 0 and kind == shapes.QUAD:
-                        pc, converged = self.quad.world_to_parametric(pts, p)
-                        inside = self.quad.is_inside(pc, shapes.HOLD_TOLERANCE)
-                        surface = 1
-                        near = self.quad.nearest_point(pts, p, pc)
-                    elif (self.kinds.PRESENT & 128) != 0 and kind == shapes.PIXEL:
-                        pc, converged = self.pixel.world_to_parametric(pts, p)
-                        inside = self.pixel.is_inside(pc, shapes.HOLD_TOLERANCE)
-                        surface = 1
-                        near = self.pixel.nearest_point(pts, p, pc)
-                    # As the locator: inside a solid, or within the tolerance of
-                    # the cell's nearest point; holding it (a surface: over it)
-                    # ranks first.
-                    d = near - p
-                    if converged == 1 and ((inside == 1 and surface == 0)
-                                           or d.dot(d) <= s * s):
-                        rank = e if inside == 1 else e + self.ncells
-                        if rank < best_rank:
-                            best_rank = rank
-                            best = e
-                            best_type = kind
-                            best_pc = pc
+                    rank, pc = self._ranked_in(p, e, kind, s, pts)
+                    if rank < best_rank:
+                        best_rank = rank
+                        best = e
+                        best_type = kind
+                        best_pc = pc
         return best, best_type, best_pc, best_tet, 1 if best_rank < self.ncells else 0
+
+    @tack.func
+    def _ranked_in(self, p, e, kind, s, pts):
+        """``(rank, pc)`` of solid or surface cell ``e`` (of type ``kind``, its
+        corners in ``pts`` unless the geometry is curved) for ``p``: ``e`` if it
+        holds ``p``, ``e + ncells`` if it only comes within its tolerance ``s``,
+        ``2 * ncells`` if neither; and ``p``'s coordinates there. Every search
+        ranks a candidate by this, so they agree bit for bit."""
+        pc = p - p
+        converged = 0
+        inside = 0
+        near = p - p
+        surface = 0
+        if self.CURVED == 1:
+            # As the cell-side search inverts a curved cell.
+            pc, converged, inside, near = self.curved.locate(
+                e, kind, p, shapes.HOLD_TOLERANCE)
+            if kind == shapes.TRIANGLE or kind == shapes.QUAD or kind == shapes.PIXEL:
+                surface = 1
+        elif (self.kinds.PRESENT & 1) != 0 and kind == shapes.TETRA:
+            pc, converged = self.tetra.world_to_parametric(pts, p)
+            inside = self.tetra.is_inside(pc, shapes.HOLD_TOLERANCE)
+            near = self.tetra.nearest_point(pts, p, pc)
+        elif (self.kinds.PRESENT & 2) != 0 and kind == shapes.HEXAHEDRON:
+            pc, converged = self.hexa.world_to_parametric(pts, p)
+            inside = self.hexa.is_inside(pc, shapes.HOLD_TOLERANCE)
+            near = self.hexa.nearest_point(pts, p, pc)
+        elif (self.kinds.PRESENT & 4) != 0 and kind == shapes.WEDGE:
+            pc, converged = self.wedge.world_to_parametric(pts, p)
+            inside = self.wedge.is_inside(pc, shapes.HOLD_TOLERANCE)
+            near = self.wedge.nearest_point(pts, p, pc)
+        elif (self.kinds.PRESENT & 8) != 0 and kind == shapes.PYRAMID:
+            pc, converged = self.pyramid.world_to_parametric(pts, p)
+            inside = self.pyramid.is_inside(pc, shapes.HOLD_TOLERANCE)
+            near = self.pyramid.nearest_point(pts, p, pc)
+        elif (self.kinds.PRESENT & 16) != 0 and kind == shapes.VOXEL:
+            pc, converged = self.voxel.world_to_parametric(pts, p)
+            inside = self.voxel.is_inside(pc, shapes.HOLD_TOLERANCE)
+            near = self.voxel.nearest_point(pts, p, pc)
+        elif (self.kinds.PRESENT & 32) != 0 and kind == shapes.TRIANGLE:
+            pc, converged = self.triangle.world_to_parametric(pts, p)
+            inside = self.triangle.is_inside(pc, shapes.HOLD_TOLERANCE)
+            surface = 1
+            near = self.triangle.nearest_point(pts, p, pc)
+        elif (self.kinds.PRESENT & 64) != 0 and kind == shapes.QUAD:
+            pc, converged = self.quad.world_to_parametric(pts, p)
+            inside = self.quad.is_inside(pc, shapes.HOLD_TOLERANCE)
+            surface = 1
+            near = self.quad.nearest_point(pts, p, pc)
+        elif (self.kinds.PRESENT & 128) != 0 and kind == shapes.PIXEL:
+            pc, converged = self.pixel.world_to_parametric(pts, p)
+            inside = self.pixel.is_inside(pc, shapes.HOLD_TOLERANCE)
+            surface = 1
+            near = self.pixel.nearest_point(pts, p, pc)
+        # As the locator: inside a solid, or within the tolerance of
+        # the cell's nearest point; holding it (a surface: over it)
+        # ranks first.
+        d = near - p
+        rank = 2 * self.ncells
+        if converged == 1 and ((inside == 1 and surface == 0)
+                               or d.dot(d) <= s * s):
+            rank = e if inside == 1 else e + self.ncells
+        return rank, pc
 
     @tack.func
     def weight(self, kind, j, pc):
@@ -785,11 +937,157 @@ class _MeshSearch:
         return w
 
 
-def mesh_search(data, locator, positions=None, strict=True, neighbors=False):
+@tack.func
+def _index_span(u, margin, n):
+    """The cells ``(i0, i1)`` along one axis of an image, of ``n``, within
+    ``margin`` of index coordinate ``u`` (clamped to the grid; ``i1 < i0`` past
+    it)."""
+    f0 = min(max(u - margin, -1.0), n + 1.0)
+    f1 = min(max(u + margin, -1.0), n + 1.0)
+    return max(tack.i64(floor(f0)), 0), min(tack.i64(floor(f1)), n - 1)
+
+
+@tack.func
+def _last_at_most(axis, x, n):
+    """The last of ``n`` increasing coordinates ``axis`` at most ``x``; -1 if none."""
+    low = tack.i64(-1)
+    high = tack.i64(n)
+    while high - low > 1:
+        mid = (low + high) // 2
+        if axis[mid] <= x:
+            low = mid
+        else:
+            high = mid
+    return low
+
+
+@tack.func
+def _axis_span(axis, x, reach, n):
+    """The cells ``(i0, i1)`` along one axis of a rectilinear grid, of ``n``
+    (``n + 1`` coordinates in ``axis``), within ``reach`` of ``x``."""
+    return (max(_last_at_most(axis, x - reach, n + 1), 0),
+            min(_last_at_most(axis, x + reach, n + 1), n - 1))
+
+
+@tack.device_class
+class _GridSearch(_MeshSearch):
+    """A point's cell in an image or a rectilinear grid (``CellLocator``'s
+    ``structured``), its candidates found by arithmetic rather than bins: along
+    each axis, the cells within the reach of the point that a cell holding it
+    or within its tolerance can have -- an image's by its index coordinates, a
+    rectilinear grid's by a binary search of each axis, as VTK's and Viskores'
+    locators for them. Each candidate's box and tolerance are its corners', as
+    ``CellLocator`` makes them, and it is ranked by ``_ranked_in``, as the bins'
+    are: the same cell and coordinates, bit for bit, with nothing built."""
+
+    #: 1 (an instance's, compiled in): a rectilinear grid; 0: an image.
+    RECTILINEAR = 0
+    #: 3: a solid grid; 2: a sheet, whose cells have one layer along z.
+    DIMENSION = 3
+
+    def __init__(self, cells, present, positions, locator, tolerance, neighbors=None):
+        grid = locator.structured
+        self._hold_cells(cells, present, positions, locator, tolerance, neighbors)
+        # The element type of the corners' local array (and _MeshSearch's boxes).
+        self.lo = tack.zeros((1,), tack.vec(3, locator.data.dtype))
+        self.hi = self.lo
+        self.cx, self.cy, self.cz = grid.cells
+        if len(locator.data.topology.point_dims) == 2:
+            self.DIMENSION = 2
+        if grid.axes is not None:
+            self.RECTILINEAR = 1
+            self.xs, self.ys, self.zs = grid.axes
+            self.rx, self.ry, self.rz = grid.reach
+            self.ox = self.oy = self.oz = 0.0
+            self.a00 = self.a01 = self.a02 = self.a10 = self.a11 = self.a12 = 0.0
+            self.a20 = self.a21 = self.a22 = 0.0
+        else:
+            # Never read (RECTILINEAR is 0), but typed as axes are.
+            self.xs = self.ys = self.zs = tack.zeros((1,), locator.data.dtype)
+            self.rx, self.ry, self.rz = grid.reach
+            self.ox, self.oy, self.oz = grid.origin
+            ((self.a00, self.a01, self.a02), (self.a10, self.a11, self.a12),
+             (self.a20, self.a21, self.a22)) = grid.to_index
+
+    @tack.func
+    def _candidates(self, p):
+        """``(i0, i1, j0, j1, k0, k1)``: the cells along each axis to try for ``p``."""
+        i0 = tack.i64(0)
+        i1 = tack.i64(-1)
+        j0 = tack.i64(0)
+        j1 = tack.i64(-1)
+        k0 = tack.i64(0)
+        k1 = tack.i64(0)
+        if self.RECTILINEAR == 1:
+            i0, i1 = _axis_span(self.xs, p[0], self.rx, self.cx)
+            j0, j1 = _axis_span(self.ys, p[1], self.ry, self.cy)
+            if self.DIMENSION == 3:
+                k0, k1 = _axis_span(self.zs, p[2], self.rz, self.cz)
+        else:
+            dx = p[0] - self.ox
+            dy = p[1] - self.oy
+            dz = p[2] - self.oz
+            i0, i1 = _index_span(self.a00 * dx + self.a01 * dy + self.a02 * dz, self.rx,
+                                 self.cx)
+            j0, j1 = _index_span(self.a10 * dx + self.a11 * dy + self.a12 * dz, self.ry,
+                                 self.cy)
+            if self.DIMENSION == 3:
+                k0, k1 = _index_span(self.a20 * dx + self.a21 * dy + self.a22 * dz, self.rz,
+                                     self.cz)
+        return i0, i1, j0, j1, k0, k1
+
+    @tack.func
+    def find_ranked(self, p):
+        """``find``'s ``(e, kind, pc, tet)`` and ``held``, as ``_MeshSearch``'s."""
+        best = self.ncells
+        best_rank = 2 * self.ncells
+        best_type = 0
+        best_pc = p - p
+        pts = tack.local_array_like(self.lo, 24)
+        i0, i1, j0, j1, k0, k1 = self._candidates(p)
+        for k in range(k0, k1 + 1):
+            for j in range(j0, j1 + 1):
+                for i in range(i0, i1 + 1):
+                    e = i + self.cx * (j + self.cy * k)
+                    if e < best_rank and not self._left_out(e):
+                        # The cell's box, as CellLocator's (its corners' least and
+                        # greatest), from the corners the test reads.
+                        a = self.positions[self.cells.point_id(e, 0)]
+                        c = a
+                        for m in range(self.cells.num_points(e)):
+                            y = self.positions[self.cells.point_id(e, m)]
+                            pts[3 * m] = y[0]
+                            pts[3 * m + 1] = y[1]
+                            pts[3 * m + 2] = y[2]
+                            a = min(a, y)
+                            c = max(c, y)
+                        s = self.tolerance * (c - a).norm()
+                        if (p[0] >= a[0] - s and p[0] <= c[0] + s
+                                and p[1] >= a[1] - s and p[1] <= c[1] + s
+                                and p[2] >= a[2] - s and p[2] <= c[2] + s):
+                            kind = self.cells.cell_type(e)
+                            rank, pc = self._ranked_in(p, e, kind, s, pts)
+                            if rank < best_rank:
+                                best_rank = rank
+                                best = e
+                                best_type = kind
+                                best_pc = pc
+        return best, best_type, best_pc, -1, 1 if best_rank < self.ncells else 0
+
+
+def mesh_search(data, locator, positions=None, strict=True, neighbors=False, marks=None):
     """A ``_MeshSearch`` over ``data`` with ``locator``'s bins, or ``None`` where
     this module cannot serve the dataset (see the module's docstring); with
     ``neighbors``, walking to a hint's face neighbours too (where the locator
-    has them, ``CellLocator.cell_neighbors``)."""
+    has them, ``CellLocator.cell_neighbors``), except on an image or a
+    rectilinear grid, whose search by arithmetic is as cheap (``_GridSearch``).
+    ``marks`` (cell ghost marks) leaves hidden and refined cells out
+    (``_MeshSearch.with_masks``)."""
+    search = _search_of(data, locator, positions, strict, neighbors)
+    return search.with_masks(marks) if search is not None and marks is not None else search
+
+
+def _search_of(data, locator, positions, strict, neighbors):
     from tack.dataset.locator import _TOLERANCE
 
     geometry = data.geometry
@@ -809,6 +1107,10 @@ def mesh_search(data, locator, positions=None, strict=True, neighbors=False):
                                                                           _GridCells))):
         return None
     cells, present = found
+    if getattr(locator, "structured", None) is not None and isinstance(cells, _GridCells):
+        # No walk to the neighbours: finding a cell by arithmetic costs about
+        # what trying six neighbours does, and needs no table.
+        return _GridSearch(cells, present, positions, locator, _TOLERANCE)
     if isinstance(cells, _PolyhedralMesh) and locator.moved_cell_points is not None:
         cells.moved(*locator.moved_cell_points)
     return _MeshSearch(cells, present, positions, locator, _TOLERANCE,
@@ -820,7 +1122,7 @@ def mesh_search(data, locator, positions=None, strict=True, neighbors=False):
 @tack.device_class
 class _PointValues:
     """Point data by cell id: interpolated by the cell's shape functions, or in a
-    polyhedron linear on its sub-tetrahedron."""
+    polyhedron linear on its sub-tetrahedron (a polygon, its triangle)."""
 
     def __init__(self, values):
         self.values = values
@@ -828,7 +1130,8 @@ class _PointValues:
     @tack.func
     def value(self, mesh, e, kind, pc, tet):
         v = self.values[mesh.cells.point_id(e, 0)]
-        if mesh.cells.NO_REFERENCE == 1:
+        if mesh.cells.NO_REFERENCE == 1 or (mesh.cells.NO_REFERENCE == 2
+                                            and mesh.cells.fanned(e) == 1):
             v = mesh.cells.tet_value_of(self, e, tet, pc)
         else:
             v = v * mesh.weight(kind, 0, pc)

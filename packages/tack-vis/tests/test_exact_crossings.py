@@ -140,6 +140,23 @@ def test_an_l2_field_is_crossed_in_its_cell():
     assert np.abs(_probed(data, surface.positions(), "w") - 0.3).max() < 1e-12
 
 
+def test_an_l2_field_that_jumps_is_crossed_in_its_cell():
+    """A discontinuous field that jumps between cells: a shared lattice point's value
+    is one cell's, so a sub-edge from it is crossed with the holding cell's own
+    values at both ends. Vertices inside cells (off the cells' faces, where the
+    probe may pick the other cell) are on the level of their cell's polynomial."""
+    data = _mesh("hexahedra", order=2, curved=False)
+    field = td.interpolate(data, _cubic, td.L2(data, order=3), dtype=tack.f64)
+    values = field.values.numpy().reshape(data.num_cells, -1)
+    jumps = np.where(np.arange(data.num_cells) % 2, 0.02, -0.02)
+    data.fields["w"] = td.Field(field.space, tack.array((values + jumps[:, None]).reshape(-1)))
+    surface = td.contour(data, "w", 0.3)
+    x = surface.positions()
+    on_faces = (np.abs(x / 0.25 - np.round(x / 0.25)) < 1e-9).any(axis=1)
+    assert (~on_faces).sum() > 20
+    assert np.abs(_probed(data, x[~on_faces], "w") - 0.3).max() < 1e-12
+
+
 @pytest.mark.parametrize("cells", ["grid", "tetrahedra"])
 def test_pieces_cross_their_shared_edges_alike(cells):
     """With a ghost layer, the pieces' owned vertices are the whole's, bit for bit:

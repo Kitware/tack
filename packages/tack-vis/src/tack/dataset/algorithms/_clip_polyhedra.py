@@ -12,12 +12,13 @@ from tack.algorithms.scan import exclusive_scan
 from tack.arrays import size_of
 from tack.dataset import ids
 from tack.dataset.algorithms._common import _close, _crossing, _first_end
+from tack.dataset.algorithms.clip import _number_points, _renumber, _scanned_map
 from tack.dataset.buckets import key_order, run_offsets
 from tack.dataset.carry import Interpolate, Take, carry
 
 
 @tack.kernel
-def _face_sizes(face_offsets, face_points, values, iso, sizes, kept):
+def _face_sizes(face_offsets, face_points, values, iso, sizes, kept, crossings):
     # Each face's clipped polygon: its kept points, and a crossing on each edge
     # strictly between the sides (a point at the value is kept, so an edge from
     # it has no other crossing). Below is not at or above, so a NaN is below,
@@ -27,6 +28,7 @@ def _face_sizes(face_offsets, face_points, values, iso, sizes, kept):
         start = face_offsets[f]
         n = face_offsets[f + 1] - start
         k = 0
+        x = 0
         for j in range(n):
             va = values[face_points[start + j]]
             vb = values[face_points[start + (j + 1 if j + 1 < n else 0)]]
@@ -34,29 +36,38 @@ def _face_sizes(face_offsets, face_points, values, iso, sizes, kept):
                 k += 1
             if (va > iso and not vb >= iso) or (not va >= iso and vb > iso):
                 k += 1
+                x += 1
         sizes[f] = k if k >= 3 else 0
         kept[f] = 1 if k >= 3 else 0
+        crossings[f] = x if k >= 3 else 0
 
 
 @tack.kernel
-def _face_keys(face_offsets, face_points, values, iso, sizes, starts, keys):
-    # The clipped polygon's points, named as contour names crossings: (a, a) for a
-    # kept point, (low, high) for an edge's crossing.
+def _face_keys(face_offsets, face_points, values, iso, sizes, starts, record_starts, keys,
+               slots, point_of, used, crossing):
+    # The clipped polygon's points: a kept point as its id, marked used; an edge's
+    # crossing as a record named (low, high), as contour names crossings, its
+    # slot holding `crossing` until the records are merged.
     for f in range(sizes.shape[0]):
         if sizes[f] > 0:
             start = face_offsets[f]
             n = face_offsets[f + 1] - start
             at = starts[f]
+            record = record_starts[f]
             for j in range(n):
                 a = face_points[start + j]
                 b = face_points[start + (j + 1 if j + 1 < n else 0)]
                 va = values[a]
                 vb = values[b]
                 if va >= iso:
-                    keys[at] = [a, a]
+                    point_of[at] = a
+                    tack.atomic_max(used, a, 1)
                     at += 1
                 if (va > iso and not vb >= iso) or (not va >= iso and vb > iso):
-                    keys[at] = [min(a, b), max(a, b)]
+                    keys[record] = [min(a, b), max(a, b)]
+                    slots[record] = at
+                    point_of[at] = crossing
+                    record += 1
                     at += 1
 
 
@@ -92,19 +103,22 @@ def _cell_counts(cell_offsets, cell_faces, face_offsets, face_points, values, is
 
 
 @tack.kernel
-def _point_runs(keys, order, offsets, values, positions, iso, ends, weights, point_of, count):
-    # One output point per run of equal names: a kept point (weight 0) or an
-    # edge's crossing, interpolated from its end first by position as contour's.
+def _point_runs(keys, order, offsets, slots, values, positions, iso, ends, weights, used,
+                point_of, count):
+    # One output point per run of equal crossing names, numbered after the used
+    # points up to its low end (`clip`'s `_number_points` numbers those), and
+    # interpolated from its end first by position as contour's.
     for r in range(count):
         key = keys[order[offsets[r]]]
         a = key[0]
         b = key[1]
-        if a != b and not _first_end(positions[a], positions[b], a, b):
+        point = used[a + 1] + r
+        if not _first_end(positions[a], positions[b], a, b):
             a, b = b, a
-        ends[r] = [a, b]
-        weights[r] = 0.0 if a == b else _crossing(iso, values[a], values[b])
+        ends[point] = [a, b]
+        weights[point] = _crossing(iso, values[a], values[b])
         for i in range(offsets[r], offsets[r + 1]):
-            point_of[order[i]] = r
+            point_of[slots[order[i]]] = point
 
 
 @tack.kernel
@@ -171,10 +185,76 @@ def _kept_offsets(counts, kept, starts, slots, out, n_cells):
             out[slots[c]] = starts[c]
 
 
+@tack.kernel
+def _mark_listed(cell_faces, listed):
+    for i in range(cell_faces.shape[0]):
+        listed[cell_faces[i]] = 1
+
+
+@tack.kernel
+def _listed_sizes(face_offsets, listed, sizes):
+    for f in range(listed.shape[0]):
+        sizes[f] = face_offsets[f + 1] - face_offsets[f] if listed[f] == 1 else 0
+
+
+@tack.kernel
+def _listed_out(face_offsets, face_points, listed, slots, starts, out_offsets, out_points):
+    for f in range(listed.shape[0]):
+        if listed[f] == 1:
+            out_offsets[slots[f]] = starts[f]
+            begin = face_offsets[f]
+            for j in range(face_offsets[f + 1] - begin):
+                out_points[starts[f] + j] = face_points[begin + j]
+
+
+@tack.kernel
+def _relisted(cell_faces, slots, out):
+    for i in range(cell_faces.shape[0]):
+        out[i] = slots[cell_faces[i]]
+
+
+def _only_listed(face_offsets, face_points, cell_faces, dtype):
+    """The faces some cell lists, renumbered in order, and ``cell_faces`` on the new
+    numbers; the arrays as given where every face is listed. A clip through a plane
+    of mesh points left the faces and caps of a cell it dropped (one only touching
+    the value) in the plane, with no cell on either side, which ``faces()`` counted
+    as boundary (Jeff Lee's review of #389)."""
+    n_faces = size_of(face_offsets) - 1
+    listed = tack.zeros((n_faces,), tack.i32)
+    if size_of(cell_faces):
+        _mark_listed(cell_faces, listed)
+    slots = tack.empty((n_faces,), dtype)
+    kept = exclusive_scan(listed, slots, n_faces) if n_faces else 0
+    if kept == n_faces:
+        return face_offsets, face_points, cell_faces
+    sizes = tack.empty((n_faces,), dtype)
+    _listed_sizes(face_offsets, listed, sizes)
+    starts = tack.empty((n_faces,), dtype)
+    points = exclusive_scan(sizes, starts, n_faces)
+    out_offsets = tack.empty((kept + 1,), dtype)
+    out_points = tack.empty((points,), dtype)
+    _listed_out(face_offsets, face_points, listed, slots, starts, out_offsets, out_points)
+    _close(out_offsets, kept, points)
+    out_faces = tack.empty((size_of(cell_faces),), dtype)
+    if size_of(cell_faces):
+        _relisted(cell_faces, slots, out_faces)
+    return out_offsets, out_points, out_faces
+
+
 def clip_polyhedra(data, values, iso, inside, fields):
     """``clip`` of ``data``'s polyhedral topology by point ``values`` (a materialized
     scalar array) at ``iso``: the part at or above it, or with ``inside`` at or
     below it."""
+    topology, ends, weights, sources = clip_parts(data, values, iso, inside)
+    return carry(data, topology, points=Interpolate(ends, weights), cells=Take(sources),
+                 fields=fields)
+
+
+def clip_parts(data, values, iso, inside):
+    """`clip_polyhedra`'s output before its fields are carried: ``(topology, ends,
+    weights, sources)``, its ``PolyhedralTopology``, each point's input ends and
+    weight (``Interpolate``'s; a kept point's ends are itself twice, weight 0) and
+    each cell's input cell."""
     from tack.dataset.algorithms.contour import _lopez_polygons
     from tack.dataset.polyhedra import PolyhedralTopology
 
@@ -193,31 +273,64 @@ def clip_polyhedra(data, values, iso, inside, fields):
     n_faces, n_cells = size_of(t.face_offsets) - 1, data.num_cells
     sizes = tack.empty((n_faces,), tack.i32)
     face_kept = tack.empty((n_faces,), tack.i32)
+    face_crossings = tack.empty((n_faces,), tack.i32)
     if n_faces:
-        _face_sizes(t.face_offsets, t.face_points, values, iso, sizes, face_kept)
+        _face_sizes(t.face_offsets, t.face_points, values, iso, sizes, face_kept,
+                    face_crossings)
     odt = ids.for_output(data, 2 * size_of(t.face_points) + cap_count + n_faces)
     starts = tack.empty((n_faces,), odt)
     face_keys = exclusive_scan(sizes, starts, n_faces) if n_faces else 0
     face_slots = tack.empty((n_faces,), odt)
     kept_faces = exclusive_scan(face_kept, face_slots, n_faces) if n_faces else 0
 
-    # Every point's name: the clipped faces' points, then the caps' iso-vertices.
-    keys = tack.empty((face_keys + cap_count,), tack.vec(2, idt))
-    if face_keys:
-        _face_keys(t.face_offsets, t.face_points, values, iso, sizes, starts, keys)
+    # Every point the clipped faces and the caps use: an input point as its id,
+    # numbered through a map of one entry per input point, as `clip`'s shapes
+    # are; a crossing by a record, and only the records are sorted (the cut
+    # filters' memory plan, D2). The faces' points come first, then the caps'.
+    face_records = tack.empty((n_faces,), odt)
+    face_crossing_count = (exclusive_scan(face_crossings, face_records, n_faces)
+                           if n_faces else 0)
+    del face_crossings
+    cap_records = tack.empty((cap_count,), odt)
+    cap_crossing_count = 0
     if cap_count:
-        _cap_names(cap_ends, keys, face_keys, cap_count)
+        flags = tack.empty((cap_count,), tack.i32)
+        _cap_crossings(cap_ends, flags, cap_count)
+        cap_crossing_count = exclusive_scan(flags, cap_records, cap_count)
+        del flags
+    n_records = face_crossing_count + cap_crossing_count
+    keys = tack.empty((n_records,), tack.vec(2, idt))
+    slots = tack.empty((n_records,), odt)
     total = face_keys + cap_count
     point_of = tack.empty((total,), odt)
-    count = 0
-    if total:
-        order = key_order(keys, data.num_points, odt)
-        runs, count = run_offsets(keys, order)
+    num_points = data.num_points
+    # Marked by every face and cap using the point, so atomically (as `clip`'s).
+    used = tack.zeros((num_points + 1,), tack.i32)
+    # One placeholder for every crossing: a polyhedral clip has no centroid points,
+    # so -1 tells a crossing from a kept point. `clip` has centroids, numbered
+    # -1 .. -n_centroids, and so needs -(n_centroids + 1); the two are not one value.
+    crossing = -1
+    if face_keys:
+        _face_keys(t.face_offsets, t.face_points, values, iso, sizes, starts, face_records,
+                   keys, slots, point_of, used, crossing)
+    if cap_count:
+        _cap_names(cap_ends, cap_records, keys, slots, point_of, used, face_keys,
+                   face_crossing_count, crossing, cap_count)
+    del face_records, cap_records
+    used, kept_points = _scanned_map(used, num_points, odt)
+    order = key_order(keys, num_points, odt)
+    runs, crossings = run_offsets(keys, order)
+    count = kept_points + crossings
     ends = tack.empty((count,), tack.vec(2, idt))
     weights = tack.empty((count,), weight_dtype)
-    if count:
-        _point_runs(keys, order, runs, values, data.geometry.values, iso,
-                    ends, weights, point_of, count)
+    if kept_points:
+        number = tack.empty((num_points,), odt)
+        _number_points(used, keys, order, runs, crossings, number, ends, weights)
+        _renumber(point_of, number)
+        del number
+    if crossings:
+        _point_runs(keys, order, runs, slots, values, data.geometry.values, iso,
+                    ends, weights, used, point_of, crossings)
 
     # Cells: each kept one's faces left and caps.
     first = tack.zeros((n_cells,), odt)
@@ -260,10 +373,10 @@ def clip_polyhedra(data, values, iso, inside, fields):
                    side_zero, counts, kept, cell_slots, cell_starts, first, last, kept_faces,
                    out_faces, out_sides, sources, n_cells)
     _close(out_cell_offsets, kept_cells, entries)
+    out_offsets, out_points, out_faces = _only_listed(out_offsets, out_points, out_faces, odt)
     topology = PolyhedralTopology(out_offsets, out_points, out_cell_offsets, out_faces,
                                   out_sides, num_points=count, id_dtype=odt)
-    return carry(data, topology, points=Interpolate(ends, weights), cells=Take(sources),
-                 fields=fields)
+    return topology, ends, weights, sources
 
 
 @tack.kernel
@@ -276,9 +389,248 @@ def _negate(values, out, infinity):
 
 
 @tack.kernel
-def _cap_names(ends, keys, offset, n):
-    # A cap's iso-vertex named as a face's crossing is, (low id, high id): contour
-    # gives its ends first by position, which only interpolation reads.
+def _cap_crossings(ends, flags, n):
     for i in range(n):
         e = ends[i]
-        keys[offset + i] = [min(e[0], e[1]), max(e[0], e[1])]
+        flags[i] = 1 if e[0] != e[1] else 0
+
+
+@tack.kernel
+def _cap_names(ends, record_starts, keys, slots, point_of, used, offset, first_record,
+               crossing, n):
+    # A cap's iso-vertex named as a face's crossing is, (low id, high id): contour
+    # gives its ends first by position, which only interpolation reads. One at a
+    # point whose value is the level (ends (a, a)) is that point, as a face's
+    # kept point is.
+    for i in range(n):
+        e = ends[i]
+        if e[0] == e[1]:
+            point_of[offset + i] = e[0]
+            tack.atomic_max(used, e[0], 1)
+        else:
+            record = first_record + record_starts[i]
+            keys[record] = [min(e[0], e[1]), max(e[0], e[1])]
+            slots[record] = offset + i
+            point_of[offset + i] = crossing
+
+
+# ── Polyhedra beside shapes ─────────────────────────────────────────
+
+@tack.kernel
+def _whole_or_cut(cells, values, iso, whole, cut):
+    # A shape is whole when every point is kept (at or above) and one is strictly
+    # above (a cell flat on the value has no volume there); cut when one is above
+    # and one below; else gone.
+    for c in cells:
+        above = 0
+        below = 0
+        for j in range(cells.NUM_POINTS):
+            v = values[cells.point_id(c, j)]
+            if v > iso:
+                above = 1
+            if not v >= iso:
+                below = 1
+        e = cells.entity_id(c)
+        whole[e] = 1 if above == 1 and below == 0 else 0
+        cut[e] = 1 if above == 1 and below == 1 else 0
+
+
+@tack.kernel
+def _polyhedra_kept(cells, values, iso, whole, cut):
+    # A polyhedron takes the polyhedral path (never whole) when any point is
+    # strictly above; one with none keeps nothing and is gone, as a shape is --
+    # most of a mesh's polyhedra, for a cut far from where they cluster (AhmedML's
+    # 508K went through clip_parts every time).
+    for c in cells:
+        above = 0
+        for j in range(cells.num_points(c)):
+            if values[cells.point_id(c, j)] > iso:
+                above = 1
+        e = cells.entity_id(c)
+        whole[e] = 0
+        cut[e] = above
+
+
+@tack.kernel
+def _own_keys(ids, keys):
+    for i in range(ids.shape[0]):
+        keys[i] = [ids[i], ids[i]]
+
+
+@tack.kernel
+def _clipped_keys(ends, ids, first, keys):
+    # A clipped point's name in the input's ids: (p, p) kept, (low, high) a crossing.
+    for r in range(ends.shape[0]):
+        a = ids[ends[r][0]]
+        b = ids[ends[r][1]]
+        keys[first + r] = [min(a, b), max(a, b)]
+
+
+@tack.kernel
+def _joined_points(keys, order, runs, kept_ids, clipped_ids, ends, weights, first, out_ends,
+                   out_weights, point_of, count):
+    # One output point per run of equal names, its ends and weight from its first
+    # entry: a whole shape's point (itself, weight 0) or a clipped one.
+    for r in range(count):
+        i = order[runs[r]]
+        if i < first:
+            p = kept_ids[i]
+            out_ends[r] = [p, p]
+            out_weights[r] = 0.0
+        else:
+            e = ends[i - first]
+            out_ends[r] = [clipped_ids[e[0]], clipped_ids[e[1]]]
+            out_weights[r] = weights[i - first]
+        for k in range(runs[r], runs[r + 1]):
+            point_of[order[k]] = r
+
+
+@tack.kernel
+def _renumbered(points, point_of, first, out):
+    for i in range(out.shape[0]):
+        out[i] = point_of[first + points[i]]
+
+
+@tack.kernel
+def _joined_offsets(shape_offsets, poly_offsets, shape_entries, n_shapes, out):
+    # The shapes' offsets, then the polyhedra's after the shapes' entries.
+    for i in range(out.shape[0]):
+        out[i] = (shape_offsets[i] if i <= n_shapes
+                  else shape_entries + poly_offsets[i - n_shapes])
+
+
+@tack.kernel
+def _joined_face_offsets(poly_offsets, n_shapes, out):
+    # Per cell: a shape's range empty, then the polyhedra's.
+    for i in range(out.shape[0]):
+        out[i] = 0 if i <= n_shapes else poly_offsets[i - n_shapes]
+
+
+def clip_mixed(data, values, iso, inside, fields):
+    """``clip`` of a topology with polyhedra beside its shapes. A shape whose points
+    are all kept stays as it is; every other kept cell -- each polyhedron and each
+    cut shape -- becomes the polyhedron of its kept part, as a polyhedral
+    topology's cells do (`clip_parts`). A cut shape cannot keep a shape's pieces
+    from the tables: beside a polyhedron, its pieces would split a clipped face
+    the polyhedron holds whole. The two parts share the points named alike (an
+    input point, or the crossing on an edge), and the faces between them are
+    matched by ``faces()``. The output is a mixed ``UnstructuredTopology``, the
+    whole shapes first."""
+    from tack.dataset.algorithms._extract import _keep_cells
+    from tack.dataset.algorithms.as_polyhedra import as_polyhedra
+    from tack.dataset.dataset import DataSet, Field
+    from tack.dataset.shapes import POLYHEDRON
+    from tack.dataset.spaces import Values
+    from tack.dataset.topology import UnstructuredTopology
+
+    if inside:                          # the part below, as the part above of -values
+        negated = tack.empty_like(values)
+        if size_of(values):
+            _negate(values, negated, float("inf"))
+        values, iso = negated, -iso
+    t = data.topology
+    n, idt = data.num_cells, data.id_dtype
+    whole = tack.empty((n,), tack.i32)
+    cut = tack.empty((n,), tack.i32)
+    for group in t.groups():
+        if group.count:
+            if group.shape.REFERENCE:
+                _whole_or_cut(group.view(), values, iso, whole, cut)
+            else:
+                _polyhedra_kept(group.view(), values, iso, whole, cut)
+    # The input's point and cell ids ride along as fields, through both parts.
+    marked = DataSet(t, data.geometry, fields={
+        "point": Field(Values(data, "points"), arrays.CountingArray(data.num_points, dtype=idt)),
+        "cell": Field(Values(data, "cells"), arrays.CountingArray(n, dtype=idt)),
+        "value": Field(Values(data, "points"), values)}, **data._frame())
+    shaped = _keep_cells(marked, whole, shapes_only=True)      # whole cells are shapes
+    kept_ids = arrays.materialize(shaped.fields["point"].values)
+    n_kept, n_shapes = shaped.num_points, shaped.num_cells
+    if int(cut.numpy().max(initial=0)):
+        part = as_polyhedra(_keep_cells(marked, cut))
+        clipped, ends, weights, sources = clip_parts(
+            part, arrays.materialize(part.fields["value"].values), iso, False)
+        clipped_ids = arrays.materialize(part.fields["point"].values)
+        sources = _picked(arrays.materialize(part.fields["cell"].values), sources)
+    else:
+        clipped, ends = None, tack.empty((0,), tack.vec(2, idt))
+        weights = tack.empty((0,), arrays.dtype_of(values))
+        clipped_ids = tack.empty((0,), idt)
+        sources = tack.empty((0,), idt)
+    n_clipped = clipped.num_points if clipped is not None else 0
+    n_poly = clipped.num_cells if clipped is not None else 0
+
+    # The points, named in the input's ids and made one per name.
+    keys = tack.empty((n_kept + n_clipped,), tack.vec(2, idt))
+    if n_kept:
+        _own_keys(kept_ids, keys)
+    if n_clipped:
+        _clipped_keys(ends, clipped_ids, n_kept, keys)
+    total = n_kept + n_clipped
+    count = 0
+    odt = ids.for_output(data, 8 * n_shapes + 2 * total
+                         + (size_of(clipped.face_points) if clipped is not None else 0))
+    point_of = tack.empty((total,), odt)
+    if total:
+        order = key_order(keys, data.num_points, odt)
+        runs, count = run_offsets(keys, order)
+    out_ends = tack.empty((count,), tack.vec(2, idt))
+    out_weights = tack.empty((count,), arrays.dtype_of(weights))
+    if count:
+        _joined_points(keys, order, runs, kept_ids, clipped_ids, ends, weights, n_kept,
+                       out_ends, out_weights, point_of, count)
+
+    # The cells: the whole shapes, then the polyhedra, each on the joined points.
+    s = shaped.topology
+    shape_conn = arrays.materialize(s.connectivity)
+    shape_offsets = arrays.materialize(s.offsets)
+    shape_entries = size_of(shape_conn)
+    pieces = [_renumbered_ids(shape_conn, point_of, 0, odt)]
+    types = [arrays.materialize(s.types)] if n_shapes else []
+    cell_sources = [arrays.materialize(shaped.fields["cell"].values)]
+    polyhedra = None
+    poly_offsets = tack.zeros((1,), odt)
+    if n_poly:
+        point_offsets, poly_points = clipped.cell_points()
+        poly_offsets = point_offsets
+        pieces.append(_renumbered_ids(poly_points, point_of, n_kept, odt))
+        poly_types = tack.empty((n_poly,), tack.u8)
+        poly_types.fill(int(POLYHEDRON))
+        types.append(poly_types)
+        cell_sources.append(sources)
+        cell_face_offsets = tack.empty((n_shapes + n_poly + 1,), odt)
+        _joined_face_offsets(clipped.cell_offsets, n_shapes, cell_face_offsets)
+        polyhedra = (clipped.face_offsets,
+                     _renumbered_ids(clipped.face_points, point_of, n_kept, odt),
+                     cell_face_offsets, clipped.cell_faces, clipped.cell_face_sides)
+    offsets = tack.empty((n_shapes + n_poly + 1,), odt)
+    _joined_offsets(shape_offsets, poly_offsets, shape_entries, n_shapes, offsets)
+    connectivity = tack.concat([p for p in pieces if size_of(p)]) \
+        if any(size_of(p) for p in pieces) else tack.empty((0,), odt)
+    out = UnstructuredTopology(
+        tack.concat(types) if types else tack.empty((0,), tack.u8), offsets, connectivity,
+        num_points=count, polyhedra=polyhedra)
+    return carry(data, out, points=Interpolate(out_ends, out_weights),
+                 cells=Take(tack.concat([c for c in cell_sources if size_of(c)])
+                            if n_shapes + n_poly else tack.empty((0,), idt)),
+                 fields=fields)
+
+
+@tack.kernel
+def _pick(values, at, out):
+    for i in range(out.shape[0]):
+        out[i] = values[at[i]]
+
+
+def _picked(values, at):
+    out = tack.empty((size_of(at),), arrays.dtype_of(values))
+    if size_of(at):
+        _pick(values, at, out)
+    return out
+
+
+def _renumbered_ids(points, point_of, first, dtype):
+    out = tack.empty((size_of(points),), dtype)
+    if size_of(points):
+        _renumbered(points, point_of, first, out)
+    return out

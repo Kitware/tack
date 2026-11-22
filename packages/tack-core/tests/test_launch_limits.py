@@ -81,9 +81,9 @@ def test_native_reduction_counts_every_element(reduction_backend, n):
 
 def test_launch_past_2_32_iterations_reaches_every_index(workgroup_backend):
     # Only the last 256 of 2^32 + 256 iterations store, so the array stays
-    # tiny. A 32-bit index never reaches them, and they stayed zero.
+    # tiny. A 32-bit index never reaches them, and they would stay zero.
     base = 2**32
-    out = tack.empty((256,), tack.i32)
+    out = tack.zeros((256,), tack.i32)
     if get_backend().name in ('hip', 'metal'):
         # One launch there indexes at most 2^32 threads: refuse, not wrap.
         with pytest.raises(ValueError, match="iterations exceed"):

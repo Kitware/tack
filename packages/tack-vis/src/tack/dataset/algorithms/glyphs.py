@@ -212,8 +212,9 @@ def glyphs(data, vectors, scale=1.0, scale_by=None, resolution=8, fields=None, a
 
 def _at_cells(data, field, sizes, scale, resolution, fields):
     """``glyphs`` at each visible cell's centre: the centres as a point cloud carrying
-    every field evaluated there (``values_at_centers``; fields with no value at a
-    centre left out), each point marked as its cell, glyphed at its points."""
+    every field evaluated there (``values_at_centers``), each point marked as its
+    cell, glyphed at its points. A field with no value at a centre (values on faces)
+    is left out when every field is carried, and refused when ``fields`` names it."""
     from tack.dataset.algorithms.cell_centers import cell_centers
     from tack.dataset.algorithms.values_at_centers import values_at_centers
     from tack.dataset.carry import selected
@@ -233,8 +234,11 @@ def _at_cells(data, field, sizes, scale, resolution, fields):
         source = data.fields[name]
         try:
             values = values_at_centers(data, source).values
-        except (TypeError, NotImplementedError):
-            continue                       # no value at a cell's centre (values on faces)
+        except (TypeError, NotImplementedError) as error:
+            if fields is None:
+                continue                   # no value at a cell's centre (values on faces)
+            raise TypeError(f"glyphs at the cells' centres cannot carry field {name!r}, "
+                            f"which has no value at a cell's centre: {error}") from error
         cloud.fields[name] = Field(Values(cloud, "points"), values, source.unit)
     cloud.fields["__tack_glyph__"] = Field(Values(cloud, "points"),
                                            values_at_centers(data, field).values)

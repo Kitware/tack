@@ -250,6 +250,20 @@ def test_glyphs_of_a_dg_field_at_the_cells(curved):
         td.glyphs(data, "h", at="nodes")
 
 
+def test_glyphs_at_the_cells_refuse_a_named_field_with_no_value_at_a_centre():
+    """A field with no value at a cell's centre (values on faces) is left out when
+    every field is carried, but refused when ``fields`` names it, rather than giving
+    arrows without it."""
+    data = td.uniform_grid((4, 4, 4), spacing=(1 / 3, 1 / 3, 1 / 3), dtype=tack.f64)
+    data.fields["w"] = td.Field(td.Constant(data), tack.array(np.ones((data.num_cells, 3)),
+                                                              dtype=tack.vec3(tack.f64)))
+    faces = td.Values(data, "faces")
+    data.fields["flux"] = td.Field(faces, tack.zeros((faces.size,), dtype=tack.f64))
+    assert set(td.glyphs(data, "w", at="cells").fields) == {"w"}
+    with pytest.raises(TypeError, match="cannot carry field 'flux'"):
+        td.glyphs(data, "w", at="cells", fields=["flux"])
+
+
 def test_glyphs_at_the_cells_of_pieces_count_each_cell_once():
     """A centre is its cell's: the arrows of a ghost cell are ghosts, so the owned
     arrows over the pieces are the whole's cells."""

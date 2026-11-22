@@ -209,6 +209,11 @@ contour on tetrahedra to about VTK's peak. Taken after D2 and D3, and after
   call, but the table is kept for the topology's life (about 300 MiB for 5M
   tetrahedra). Worth measuring for repeated filters on one mesh (animation,
   parameter sweeps), after this plan.
+- **Flying edges' flags a value at a time.** Contour keeps one flag byte per
+  point per value, so ten values over 80M points are 800 MB of flags; VTK's
+  `vtkFlyingEdges3D` reuses one byte per point, a value at a time. Worth it
+  when many values over large grids are measured to need it: the passes then
+  run once per value, not once for all.
 
 ## Expected
 

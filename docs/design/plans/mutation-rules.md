@@ -1,11 +1,14 @@
 # Mutation rules, stage 1
 
 **Status: proposed.** Issue [#323](https://github.com/Kitware/tack/issues/323),
-2026-11-10. Berk Geveci has said yes to every recommendation (D1–D6); this
-is for review by the others. Revised 2026-11-16 after Jeff Lee's review, for
-in-situ use: a caller's own structure is handed over, not sealed (D2), writes Tack
-cannot see have an explicit call (D4), a sender may keep its buffer (D5), and
-the seal's limit at DLPack is stated (D1).
+2026-11-10. Berk Geveci has said yes to every recommendation (D1–D6). Revised
+2026-11-16 after Jeff Lee's review, for in-situ use: a caller's own structure
+is handed over, not sealed (D2), writes Tack cannot see have an explicit call
+(D4), a sender may keep its buffer (D5), and the seal's limit at DLPack is
+stated (D1). Jeff Lee approved it on 2026-11-21; his second review's points
+are in: which constructors hand arrays over and fixed sizes (D2), spaces made
+before a rebuild refused (D2), `modified()` on a read-only view and the
+ghosts of a protected field (D4), and an in-situ loop test (Order).
 
 ## Summary
 
@@ -114,7 +117,10 @@ Sealed when built, the structure Tack itself makes:
 **A caller's arrays are handed over, not sealed.** Constructors keep the
 arrays they are given, without a copy, and in situ those are often a
 solver's own (its mesh in Tack arrays, wrapped as a topology for analysis and
-remeshed or refined in place between steps). A seal is one-way and holds the
+moved or remeshed in place between steps). A topology's sizes are fixed (and
+properties, D3), so writing in place covers a mesh whose counts stay the same;
+a remesh or a refinement that changes them builds a new topology over the new
+arrays. A seal is one-way and holds the
 memory, so sealing them would lock the solver out of its own memory for
 good, even after the topology is dropped, and copying would cost the GPU
 memory in situ cannot spare. The per-array flag (`_writable`) is the right
@@ -124,8 +130,11 @@ memory, not the memory itself.
 - **`Array.read_only()`**, public: a view over the same memory that cannot
   write, nor can any view made from it. No copy. Today only
   `array_from_ptr` and read-only DLPack imports make such arrays.
-- **Giving an array to a constructor hands it over**, as D5's sending does:
-  the object given becomes read-only to its caller. So the bug above is
+- **Giving an array to a topology's constructor hands it over**, as D5's
+  sending does: the object given becomes read-only to its caller. Only
+  topologies' constructors do (and what they take: types, offsets,
+  connectivity, faces, loops, lines); `Field(space, u)` leaves `u` the
+  caller's, writable, since values stay writable (D4). So the bug above is
   still caught at the write: `connectivity.fill(0)` after building the
   topology is refused, with a message to copy the array, or to pass
   `connectivity.read_only()` and keep the original.
@@ -139,7 +148,17 @@ memory, not the memory itself.
   cache it keeps checks it on use: one check for the topology, not one per
   cache. When it has moved, the topology drops its derived structure and
   rebuilds it on demand, as D4's value caches do. Writes the owner makes
-  outside Tack's view need D4's explicit call.
+  outside Tack's view need D4's explicit call. The rebuilt structure's ids
+  are checked as at construction: in debug mode, and by `topology.validate()`.
+- **Spaces and fields made before a rebuild are refused.** A space whose
+  layout comes from derived structure (`H1` of order 2 and up, `HDiv`,
+  `HCurl`, values on faces or edges, an `L2` space's offsets) records the
+  topology's structural revision when it is made, and refuses to be used once
+  it has moved, naming the rebuild: an order-2 field's values are laid out by
+  the old edges and faces, and nothing can reinterpret them. Spaces on points
+  and cells (order-1 `H1`, `Constant`, `Values` on points or cells) do not
+  depend on that numbering and go on. The caller makes the refused spaces and
+  fields again on the rebuilt topology.
 
 Derived arrays that are views of a given array (a single-shape group's rows,
 `point_links`' keys, an `L2` space's offsets) take its read-only view; only
@@ -196,9 +215,12 @@ or fields through DLPack or `wrap_ptr`, every step) move no revision, so a
 cached locator would serve the old points. Stage 1 adds an explicit call,
 `Array.modified()` (VTK's `Modified()`), which counts a write to the array's
 buffer as Tack's own writes are counted, so every revision-tracked cache, and
-D2's topology check, notices. The in-situ documentation says to call it on
-each array written outside Tack, each step. D6's checks are the safety net
-for a forgotten call.
+D2's topology check, notices. It counts on the shared buffer, not the one
+`Array` object, and is allowed on a read-only array, since it reports a write
+rather than making one: an adaptor often holds only the read-only view it
+gave Tack (`u.read_only()`), and calls it there. The in-situ documentation
+says to call it on each array written outside Tack, each step. D6's checks
+are the safety net for a forgotten call.
 
 **Protecting a simulation's values.** Values stay writable in stage 1, but
 D2's `read_only()` lets an in-situ adaptor protect them with no copy: it
@@ -206,6 +228,13 @@ wraps the solver's arrays as `Field(space, u.read_only())` (and positions
 alike), so a filter or a script cannot `fill` the simulation's velocity by
 mistake, while the solver writes `u` each step and the caches notice. The
 in-situ documentation shows this as the pattern.
+
+**Ghosts of a protected field are the solver's.** `update_ghosts`,
+communication plans and AMR fills write values in place (Not in stage 1), so
+they cannot write a field wrapped over a read-only view. In situ the solver's
+own halo exchange owns those ghosts, as it does for its own computation; Tack
+refuses an update of a read-only field with a message naming this pattern.
+A field Tack should update is wrapped over a writable array.
 
 *Recommended.*
 
@@ -253,7 +282,8 @@ which D1 refuses. Not needed for stage 1's safety.
 - Values are not locked: no leases, no generations, no `initialize()`,
   `snapshot()` or `with_fields`.
 - `update_ghosts`, communication plans and AMR fills keep writing values in
-  place; their writes are counted, so value caches see them.
+  place; their writes are counted, so value caches see them. A field over a
+  read-only view is refused (D4, ghosts of a protected field).
 
 ## Later stages
 
@@ -328,8 +358,12 @@ smaller than the inventory suggested.
 Each step is its own pull request, linking this plan:
 
 1. D1 and D2, the seal and where it applies, `Array.read_only()` and the
-   handing over, the topology's check of the arrays it was given, and D3's
-   properties.
+   handing over, the topology's check of the arrays it was given, the
+   refusal of spaces made before a rebuild, and D3's properties. Since the
+   handing over is not prototyped, its pull request carries an in-situ loop
+   test: a solver keeps `conn`, writes it each step, and filters see the
+   rebuilt structure; a forgotten `read_only()` gives the refusal message
+   at the solver's write.
 2. D4, the value caches' revisions, with a test per cache, and
    `Array.modified()`.
 3. D5, sent arrays, with `keep=True`.

@@ -44,7 +44,7 @@ from tack import arrays
 from tack.arrays import materialize, size_of, width_of
 from tack.dataset import bases, ids
 from tack.dataset.buckets import bucket_order
-from tack.dataset.dataset import DataSet, Field
+from tack.dataset.dataset import DataSet, Field, _kind_problem
 from tack.dataset.spaces import H1, L2, Constant, Values
 from tack.lang.array import Array as _DeviceArray
 from tack.runtime.dispatch import on_inputs_device
@@ -375,8 +375,12 @@ def _copy_prefix(values, out):
 
 
 def _with_kind(field, kind):
-    """``field`` with ``kind``: a carried field's values are the same quantity."""
+    """``field`` with ``kind``: a carried field's values are the same quantity. A kind
+    that no longer fits (an ``HDiv`` vector carried as one value a face) is left
+    unknown."""
     if field is None or kind is None or field.kind == kind:
+        return field
+    if _kind_problem(kind, field.space, field.values, field.unit) is not None:
         return field
     return Field(field.space, field.values, field.unit, gradient=field.gradient, kind=kind)
 

@@ -221,3 +221,13 @@ def test_a_temporal_step_keeps_the_kind(grid):
 
     grid.fields["p"] = scalar(grid, "Pa")
     assert _Step(grid, ["p"]).fields["p"].kind == td.Kind("Pressure")
+
+
+def test_carrying_leaves_a_kind_that_no_longer_fits_unknown(grid):
+    from tack.dataset.carry import _with_kind
+
+    faces = td.Values(grid, "faces")
+    fluxes = td.Field(faces, tack.zeros((faces.size,)), "m/s")      # an HDiv vector's values
+    assert _with_kind(fluxes, td.Kind("Velocity")).kind is None
+    pressures = td.Field(faces, tack.zeros((faces.size,)), "Pa")
+    assert _with_kind(pressures, td.Kind("Pressure")).kind == td.Kind("Pressure")

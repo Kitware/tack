@@ -1,7 +1,8 @@
 # Mutation rules, stage 1
 
-**Status: proposed.** Issue [#323](https://github.com/Kitware/tack/issues/323),
-2026-11-10. Berk Geveci has said yes to every recommendation (D1–D6). Revised
+**Status: accepted.** Issue [#323](https://github.com/Kitware/tack/issues/323),
+2026-11-10. Accepted in [#417](https://github.com/Kitware/tack/pull/417),
+merged 2026-11-22. Berk Geveci has said yes to every recommendation (D1–D6). Revised
 2026-11-16 after Jeff Lee's review, for in-situ use: a caller's own structure
 is handed over, not sealed (D2), writes Tack cannot see have an explicit call
 (D4), a sender may keep its buffer (D5), and the seal's limit at DLPack is

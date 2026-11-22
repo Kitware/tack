@@ -76,8 +76,19 @@ import pytest
 # hide a test that patches the compiler. test_disk_cache.py turns the cache
 # on for itself; `TACK_CACHE=write pytest` runs the suite through it.
 os.environ.setdefault("TACK_CACHE", "off")
+# Verify the IR at every stage of the pipeline, not only the lowered and the
+# final one as compiles outside debug mode do: a pass that breaks an
+# invariant is then named in the failure (lang/ir_verify.py).
+os.environ.setdefault("TACK_VERIFY_ALL", "1")
 
 import tack
+import tack.lang.ir_verify as _ir_verify
+from tack.runtime.dispatch import env_flag as _env_flag
+
+# The module reads TACK_VERIFY_ALL when it is first imported, which may be
+# before this file runs (CI's Metal job imports tack, then calls pytest.main):
+# take the setting again here.
+_ir_verify.verify_all = _env_flag("TACK_VERIFY_ALL")
 
 _ALL_ARCHES = ["cpu", "metal", "cuda", "hip", "level_zero"]
 
@@ -225,6 +236,27 @@ def no_debug():
     tack.set_debug(False)
     yield
     tack.set_debug(was)
+
+
+@pytest.fixture
+def peak_memory():
+    """A function measuring the most memory Tack's arrays held on a device during
+    one call, above what they held before it: ``result, nbytes = peak_memory(fn,
+    *args, device=None, **kwargs)``. It reads the count of every array Tack makes
+    (`tack.runtime.memory_stats`), the same on every backend; garbage is collected
+    first, so arrays dropped before the call are not in it. For a test that holds a
+    filter's peak to a multiple of its output (the cut filters' memory plan)."""
+    import gc
+
+    from tack.runtime import memory_stats
+
+    def measure(fn, *args, device=None, **kwargs):
+        gc.collect()
+        start = memory_stats.reset_peak(device)
+        result = fn(*args, **kwargs)
+        return result, memory_stats.peak(device) - start
+
+    return measure
 
 
 @pytest.fixture

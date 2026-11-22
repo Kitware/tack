@@ -28,4 +28,5 @@ recommendation, so a review can answer "yes", "no" or "other" per decision.
 |---|---|---|
 | [Cut filters' memory](cut-filters-memory.md) | [#318](https://github.com/Kitware/tack/issues/318) | Accepted |
 | [Inspecting device-class objects](inspect-template.md) | [#324](https://github.com/Kitware/tack/issues/324) | Done |
-| [Mutation rules, stage 1](mutation-rules.md) | [#323](https://github.com/Kitware/tack/issues/323) | Proposed |
+| [Mutation rules, stage 1](mutation-rules.md) | [#323](https://github.com/Kitware/tack/issues/323) | Accepted |
+| [Field quantities](field-quantities.md) | [#467](https://github.com/Kitware/tack/issues/467) | Proposed |

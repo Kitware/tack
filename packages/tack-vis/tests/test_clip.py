@@ -158,3 +158,27 @@ def test_integer_clip_converts_before_subtracting(backend):
     positions = out.positions()
     assert sum(np.all(np.isclose(positions, [1, 0.5, 0]), axis=1)) == 1
     np.testing.assert_array_equal(field.values.numpy(), values)
+
+
+def _clip_output_bytes(out):
+    t = out.topology
+    return sum(a.nbytes for a in (t.types, t.offsets, t.connectivity, out.geometry.values,
+                                  *(f.values for f in out.fields.values())))
+
+
+@pytest.mark.parametrize("kind", ["tetrahedra", "hexahedra"])
+def test_clip_holds_little_more_than_its_output(backend, peak_memory, kind):
+    """The input points cells keep are numbered through a map of one entry per input
+    point, and only the crossings are sorted (the cut filters' memory plan, D2):
+    with a record and a sort for every kept corner, clip held 4.4 to 5 times its
+    output at its peak, where it keeps most of the mesh; now 1.4 to 2.6."""
+    grid = td.uniform_grid((41, 41, 41), spacing=(0.025, 0.025, 0.025))
+    data = (td.tetrahedralize(grid) if kind == "tetrahedra"
+            else td.extract_cells(grid, np.arange(grid.num_cells)))
+    data = td.DataSet(data.topology, data.geometry)
+    x = data.positions()
+    data.fields["p"] = td.Field(td.H1(data), tack.array((x[:, 0] + 0.3 * x[:, 1]).astype(np.float32)))
+    td.clip(data, "p", 0.5)                               # compiled outside the measurement
+    for value in (0.05, 0.5):
+        out, peak = peak_memory(td.clip, data, "p", value)
+        assert peak <= 3 * _clip_output_bytes(out), (value, peak / _clip_output_bytes(out))

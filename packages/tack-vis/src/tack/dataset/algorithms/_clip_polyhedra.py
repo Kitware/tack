@@ -306,6 +306,9 @@ def clip_parts(data, values, iso, inside):
     num_points = data.num_points
     # Marked by every face and cap using the point, so atomically (as `clip`'s).
     used = tack.zeros((num_points + 1,), tack.i32)
+    # One placeholder for every crossing: a polyhedral clip has no centroid points,
+    # so -1 tells a crossing from a kept point. `clip` has centroids, numbered
+    # -1 .. -n_centroids, and so needs -(n_centroids + 1); the two are not one value.
     crossing = -1
     if face_keys:
         _face_keys(t.face_offsets, t.face_points, values, iso, sizes, starts, face_records,

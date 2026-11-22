@@ -26,6 +26,7 @@ from . import parser as P
 from .dictionary import _COMPLEX_SUFFIXES, as_dictionary
 
 _NEEDS = re.compile(r"(?:\d|\.)\s*\[|\d[ij]\b|\b(?:real|imag|conj|phase|complex|arg)\s*\(")
+_COORDS = {"coords", "coordsX", "coordsY", "coordsZ"}
 _SYNTAX_NAMES = {"coords", "coordsX", "coordsY", "coordsZ", "iHat", "jHat", "kHat", "pi", "true", "false",
                  "identity"}
 _OPS = {"&&": "and", "&": "and", "||": "or", "|": "or", "=": "==", "<>": "!="}
@@ -265,6 +266,11 @@ class _Pass:
 _COMPONENTS = {"X": 0, "Y": 1, "Z": 2}
 
 
+def _is_component(suffix):
+    """Whether a name's suffix after its last underscore picks a component: X, or XY of a tensor."""
+    return 1 <= len(suffix) <= 2 and set(suffix) <= set(_COMPONENTS)
+
+
 class _Binder(_Pass):
     def __init__(self, text, data, bindings):
         super().__init__(text)
@@ -297,7 +303,7 @@ class _Binder(_Pass):
             known = base and (base in self.stored or base in self.bindings)
             if known and comp in _COMPONENTS:
                 return _at(O._Index(self.ref(base, node), _COMPONENTS[comp]), getattr(node, "pos", 0))
-            if known and len(comp) == 2 and set(comp) <= set(_COMPONENTS):
+            if known and _is_component(comp):
                 row = O._Index(self.ref(base, node), _COMPONENTS[comp[0]])
                 return _at(O._Index(row, _COMPONENTS[comp[1]]), getattr(node, "pos", 0))
             return node
@@ -345,6 +351,12 @@ def _known_units(node):
     if getattr(node, "unit", None) is not None:
         return True
     return any(_known_units(c) for c in _children(node))
+
+
+def _reads_coords(node):
+    if isinstance(node, O._Name) and node.name in _COORDS:
+        return True
+    return any(_reads_coords(c) for c in _children(node))
 
 
 def _with_unit(node, unit):
@@ -841,7 +853,12 @@ def needs_front(text, fields, units, data=None):
         return False
     stored = dict(data.fields.entries())
     for name in set(re.findall(r"[A-Za-z_]\w*", text)):
+        if name in _COORDS and getattr(data, "unit", None) is not None:
+            return True
         field = stored.get(name)
+        base, _, comp = name.rpartition("_")
+        if field is None and base in stored and _is_component(comp):
+            field = stored[base]
         if field is not None:
             if getattr(field, "unit", None) is not None:
                 return True
@@ -884,10 +901,10 @@ def prepare(source, data, fields=None, units=None, names=None):
         raise P.ExprError("the result is complex: take real(), imag(), abs(), arg() or phase(z, angle)", 0, text)
     tree = _Tensors(text, data).expand(tree)
     unit = None
-    if units is not None or _known_units(tree):
-        length = getattr(data, "unit", None)
-        if length is None and dictionary is not None and dictionary.length is not None:
-            length = U.canonical(dictionary.length)
+    length = getattr(data, "unit", None)
+    if length is None and dictionary is not None and dictionary.length is not None:
+        length = U.canonical(dictionary.length)
+    if units is not None or _known_units(tree) or (length is not None and _reads_coords(tree)):
         tree, unit = _Units(text, length).check(tree)
         if unit is _BARE:
             unit = _NONE_UNIT

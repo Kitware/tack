@@ -31,6 +31,8 @@ def isovolume(data, by, lower, upper, fields=None, subdivision=None, tolerance=N
     shape, cut cells become the pieces the clip tables list at both ends, and point
     data is interpolated onto the new points, cell data goes to each piece. A point
     at either end is kept. Polyhedra are clipped into polyhedra, as ``clip`` does.
+    ``lower`` must be below ``upper``: a range of no width would keep flat cells
+    along the surface where ``by`` takes that value, which ``contour`` gives.
 
     A curved geometry or a field above order 1 (or ``subdivision`` above 1, or a
     ``tolerance``) is cut through subdivision, as ``clip`` cuts it, and the result
@@ -64,10 +66,16 @@ def isovolume(data, by, lower, upper, fields=None, subdivision=None, tolerance=N
         raise TypeError("isovolume needs a scalar field")
     lower = _in_unit_of(field, lower, "isovolume's lower")
     upper = _in_unit_of(field, upper, "isovolume's upper")
-    if not lower <= upper:
+    if lower == upper:
+        raise ValueError(f"isovolume's lower and upper are both {lower}: a range of no "
+                         "width keeps only flat cells; contour gives the surface at a value")
+    if not lower < upper:
         raise ValueError(f"isovolume's lower ({lower}) is above its upper ({upper})")
     if tolerance is not None:
         tolerance = _in_unit_of(field, tolerance, "isovolume's tolerance")
+    # By identity, deliberately: a Field equal to one the dataset holds, but another
+    # object, joins as a second copy under _RANGE, which costs a reference, not a copy,
+    # and leaves with the clips; comparing values to find it would cost a pass over them.
     name = next((k for k, f in data.fields.items() if f is field), None)
     kept = fields
     if name is None:

@@ -90,6 +90,8 @@ def test_what_isovolume_refuses():
     data = _mesh("hexahedra")
     with pytest.raises(ValueError, match="above its upper"):
         td.isovolume(data, "x", 0.6, 0.3)
+    with pytest.raises(ValueError, match="no width.*contour"):
+        td.isovolume(data, "x", 0.4, 0.4)
     data.fields["v"] = data.geometry
     with pytest.raises(TypeError, match="scalar field"):
         td.isovolume(data, "v", 0.0, 1.0)

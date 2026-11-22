@@ -289,7 +289,8 @@ print(f"shell volume {volume:.3f} (the sphere's {4 / 3 * np.pi * (0.6**3 - 0.3**
 assert 0.3 - 1e-6 <= r.min() and r.max() <= 0.6 + 1e-6
 ```
 
-A polyhedral mesh is clipped into polyhedra, as `clip` clips it. See the
+A polyhedral mesh is clipped into polyhedra, as `clip` clips it. `lower` must
+be below `upper`: for the surface where `by` takes one value, use `contour`. See the
 [reference](../vis-guide/reference/algorithms.md#tack.dataset.algorithms.isovolume.isovolume).
 
 ## Extract cells by id, by region or by box

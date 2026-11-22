@@ -5649,6 +5649,11 @@ batches' count, scan and starts are a private helper of <code>tack.dataset</code
 a measurement says they should.</p>
 <p><em>Recommended</em>, with the batch size measured at 64, 256 and 1024 on the CPU
 and a GPU, and fixed per backend kind.</p>
+<p>As carried out (#465), batches index cells flat, so a structured view (an
+image or a structured grid, iterated by <code>(i, j, k)</code>) and a mesh of several
+shapes take a per-cell form instead: each cell's counts (u8) and its start
+within its batch (u16), 15 bytes a cell. Images are the common in-situ case,
+so batching structured views by rows of cells is the next step for them.</p>
 <h3 id="d4-contours-records-carry-their-key-alone">D4. Contour's records carry their key alone<a class="headerlink" href="#d4-contours-records-carry-their-key-alone" title="Permanent link">&para;</a></h3>
 <p>Contour makes one record per triangle corner, carrying the point's position,
 weight, source and level (40 bytes), and sorts them. Records that carry only

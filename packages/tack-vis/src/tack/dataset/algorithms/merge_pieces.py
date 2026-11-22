@@ -205,12 +205,14 @@ def _spec(space, put):
     """What remakes a field's space on the merged dataset: ``None`` for those made
     from the topology alone, an ``H1`` space's parameters (but an element-to-DOF
     table, which numbers another mesh's cells), an ``L2`` space's (an order per
-    cell, an array, sent through ``put`` as ``("array", name)``)."""
+    cell, an array, sent through ``put`` as ``("array", name)``). An ``L2`` space
+    sends the layout it resolved to, not its parameter: ``"auto"`` resolves by the
+    device, and a root on another device would read the values in the other order."""
     if isinstance(space, H1) and space.order > 1:
         return {k: v for k, v in space.params.items() if k != "dofs"}
     if isinstance(space, L2):
         spec = {"basis": space.basis or "gauss_lobatto",
-                "layout": space.params.get("layout", "auto")}
+                "layout": space.layout}
         spec["order"] = ("array", put(space.cell_keys())) if space.varies else space.order
         return spec
     return None

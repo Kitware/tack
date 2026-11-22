@@ -395,3 +395,64 @@ def test_every_case_stays_within_the_bound_the_batches_rest_on():
                 assert max(counts) <= most, (invert, table, entry, counts)
                 largest = max(largest, *counts)
     assert largest <= most and 8 <= most            # a cell kept whole: 8 corners at most
+
+
+# Clips with no corner near the value, as main's clip gave them before the records
+# for corners at the value: sha256 of types, offsets and connectivity (as i64).
+_UNCHANGED = {
+    ("tetrahedra", False): (3570, "49214f57084bdc6546f3bdadeb6a72fcd91b7ce599b8f3dffdfd7f59da8b9752"),
+    ("tetrahedra", True): (1342, "85339becf14b9543c8a2ca267d9b5a2dfc20b0af43b1e9c6be72ec297291e23e"),
+    ("hexahedra", False): (1125, "ac6f4f6572c78b4be81924553439b3b05f0548757285f9b347ab310de6b0fd95"),
+    ("hexahedra", True): (665, "fa314ec7ed226d77ec511e9ba008bb718362ce0d10062ba59c01b799bfb7591e"),
+}
+
+
+@pytest.mark.parametrize("kind", ["tetrahedra", "hexahedra"])
+@pytest.mark.parametrize("inside", [False, True])
+def test_a_clip_with_no_corner_near_the_value_is_unchanged(backend, kind, inside):
+    """Every cell's case goes through the lookup of corners at the value; with none
+    near it (the nearest 7e-4 off), the cells are what the case tables alone made,
+    as stored from the clip before that lookup."""
+    import hashlib
+
+    grid = td.uniform_grid((12, 11, 9), spacing=(0.1, 0.12, 0.15))
+    data = (td.tetrahedralize(grid) if kind == "tetrahedra"
+            else td.extract_cells(grid, np.arange(grid.num_cells)))
+    data = td.DataSet(data.topology, data.geometry)
+    x = data.positions()
+    p = (x[:, 0] + 0.3 * x[:, 1] + 0.17 * x[:, 2] ** 2).astype(np.float32)
+    assert np.abs(p - np.float32(0.537)).min() > 5e-4
+    data.fields["p"] = td.Field(td.H1(data), tack.array(p))
+    out = td.clip(data, "p", 0.537, inside)
+    digest = hashlib.sha256()
+    for ids in (out.topology.types, out.topology.offsets, out.topology.connectivity):
+        digest.update(np.ascontiguousarray(ids.numpy().astype(np.int64)).tobytes())
+    assert (out.num_cells, digest.hexdigest()) == _UNCHANGED[kind, inside]
+
+
+def test_the_snap_tables_are_the_generators(tmp_path):
+    """_clip_snap_tables.py is make_clip_snap_tables.py's output: regenerated and
+    compared decoded, not as bytes (zlib-ng compresses the same tables to other
+    bytes)."""
+    import importlib.util
+    import pathlib
+    import subprocess
+    import sys
+
+    pytest.importorskip("scipy")
+    from tack.dataset import _clip_snap_tables as kept
+    from tack.dataset import _clip_tables as tables
+
+    package = pathlib.Path(__file__).resolve().parents[1]
+    target = tmp_path / "_clip_snap_tables.py"
+    made = subprocess.run([sys.executable, str(package / "tools" / "make_clip_snap_tables.py"),
+                           str(target)], capture_output=True, text=True)
+    assert made.returncode == 0, made.stderr
+    spec = importlib.util.spec_from_file_location("_made_snap_tables", target)
+    fresh = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fresh)
+    for invert in (False, True):
+        np.testing.assert_array_equal(fresh.data(invert), kept.data(invert))
+        for table in tables.CASES[invert]:
+            np.testing.assert_array_equal(fresh.cases(invert, table), kept.cases(invert, table),
+                                          err_msg=f"invert {invert}, table {table}")

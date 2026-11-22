@@ -53,6 +53,7 @@ the site's glossary (`reference/glossary.md`).
 | octree | tree-based AMR | `vtkHyperTreeGrid` |
 | origin | the point positions are stored relative to | |
 | unit | a field's physical unit | `UNITS_LABEL` |
+| kind | what a field's values are: a quantity's name, rank, extent, parity, variance | a CGNS data name |
 
 ## Visualization
 

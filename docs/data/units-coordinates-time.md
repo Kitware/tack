@@ -5,7 +5,7 @@ precision. A temperature means little until you know whether it is in kelvin
 or in degrees Celsius, and a simulation's step means little without its time.
 So besides its cells and fields, a Tack dataset records three facts: where its
 positions are measured from, the units of its positions and fields, and when
-the data are. VTK keeps a unit in an array's `UNITS_LABEL` and a time in
+the data are. A field may also record what its values are, its kind. VTK keeps a unit in an array's `UNITS_LABEL` and a time in
 `DATA_TIME_STEP`. Tack keeps them on the field and on the dataset, and filters
 keep them through a pipeline.
 
@@ -135,6 +135,89 @@ kiloparsec in centimetres, and need nothing registered. Besides unyt's
 units, Tack knows the US survey foot, `"ftUS"`, which State Plane
 coordinates and older LiDAR use.
 
+## What the values are: kinds
+
+A unit says what a field's numbers are measured in, not what they are. A
+pressure and a stress are both in pascals, a torque and an energy are both in
+newton metres, and three numbers per point may be a velocity, a vorticity or
+three unrelated values. A field's **kind**, `Field(..., kind=)`, records what
+the values are, beside the unit. A `td.Kind` has five parts, each optional:
+
+| part | values | what it tells apart |
+|---|---|---|
+| `name` | a registered quantity: `"Pressure"`, `"Velocity"`, `"Stress"` | quantities that share a unit |
+| `rank` | `"scalar"`, `"vector"`, `"tensor"`, `"symmetric tensor"` | one vector from three unrelated numbers |
+| `extent` | `"intensive"` (a density, a velocity), `"extensive"` (a mass, a count) | whether coarsening averages or sums |
+| `parity` | `"polar"`, `"axial"` | whether a reflection turns it the other way (a vorticity, a magnetic field) |
+| `variance` | `"contravariant"` (a velocity), `"covariant"` (a gradient), `"mixed"` (a tensor's) | how it turns under a linear map |
+
+A name fills in the other parts from a registry seeded with CGNS's data
+names, so most fields need only the name. Without a name each part stands
+alone: `Kind(rank="vector")` is a vector and nothing more is known. As for
+units, `None` is unknown, part by part, and nothing is guessed.
+
+<!-- tack-check: field-kinds -->
+```python
+import tack
+import tack.dataset as td
+from tack.dataset import kinds
+
+tack.set_default_device("cpu")
+
+data = td.uniform_grid((4, 4, 4), unit="m")
+n = data.num_points
+x = data.positions()[:, 0]
+
+# One unit, two quantities: a pressure and a stress are both in pascals.
+data.fields["p"] = td.Field(td.H1(data), tack.array(1000.0 + 50.0 * x), "kPa", kind="Pressure")
+data.fields["sigma"] = td.Field(td.H1(data), tack.zeros((n,), tack.vec(6)), "Pa", kind="Stress")
+print(data.fields["p"].kind.rank, data.fields["sigma"].kind.rank)    # scalar symmetric tensor
+
+# A name fills in the rest; parts given beside it must agree.
+print(td.Kind("Vorticity"))
+# Kind(name='Vorticity', rank='vector', extent='intensive', parity='axial', variance='covariant')
+
+# A field is checked against its kind when it is made.
+for unit, values, kind in [("m/s", tack.zeros((n,)), "Pressure"),
+                           ("m/s", tack.zeros((n,)), "Velocity")]:
+    try:
+        td.Field(td.H1(data), values, unit, kind=kind)
+    except ValueError as error:
+        print(error)
+# a Pressure is in units like 'Pa', not 'm/s'
+# a Velocity (a vector) cannot have values of 1 component in H1(order=1)
+
+# Filters that keep the values keep the kind, and converting changes only the unit.
+part = td.threshold(data, "p", 1000.0, 1100.0)
+print(part.fields["p"].kind.name, part.fields["p"].unit)          # Pressure kPa
+psi = td.convert(data, "psi", "p").fields["p"]
+print(psi.kind.name, psi.unit)                                    # Pressure psi
+
+# Kinds of your own, and what a density integrates to.
+kinds.add("Torque", "N*m", "vector", "intensive", parity="axial")
+print(td.Kind("Torque").reference_unit)                           # N*m
+print(kinds.density_of("Density"))
+# Kind(name='Mass', rank='scalar', extent='extensive', parity='polar')
+```
+
+A field is checked against its kind when it is made. Its unit must have the
+dimensions of the kind's reference unit, so a pressure may be in kPa, psi or
+bar, but not in m/s. Its values must fit the rank: a vector has two or three
+components and a symmetric tensor three or six, in VTK's order XX YY ZZ XY
+YZ XZ. A field in `HDiv` or `HCurl` holds a vector, as one value per degree
+of freedom, and must not be covariant in `HDiv` or contravariant in `HCurl`.
+An unknown unit is not checked, and a field without a kind is not checked
+at all.
+
+A kind travels with its field: `to_device`, `convert`, `project` and every
+filter that carries fields (extracts, clip, slice, threshold, shrink) keep
+it. A filter that computes a new quantity, such as a gradient, gives its
+result no kind yet. A kind never converts anything, and no filter reads one
+yet. Later steps of the field quantities plan
+(`docs/design/plans/field-quantities.md`) use the parts: the extent for AMR coarsening, the parity and variance for
+transforms and reflections, and the name to tell a torque's display unit from
+an energy's.
+
 ## What filters do with units
 
 Units matter most in the Visualization layer, which this page only
@@ -188,4 +271,6 @@ gives none pays nothing for it.
   of mesh a dataset can hold.
 - The [units reference](../vis-guide/reference/units.md) has the full rules
   for units kept, derived and refused.
+- The [data model reference](../vis-guide/reference/data-model.md#kinds)
+  documents `td.Kind` and the registry, `tack.dataset.kinds`.
 - [Particles and point clouds](particles.md) builds on `point_cloud`.

@@ -296,6 +296,18 @@ geometry of higher order makes curved cells.
 
 Explained in [higher-order and finite-element data](../data/higher-order.md).
 
+### kind
+
+What a field's values are, beside the unit they are in: a quantity's name
+(`"Pressure"`), its rank, whether it is intensive or extensive, its parity and
+how it turns under a linear map. Each part is optional; a name fills in the
+rest from a registry of CGNS's data names.
+
+*CGNS:* its data names (`Pressure`, `VelocityX`), which the registry uses ·
+*VTK, ParaView, Viskores:* no counterpart
+
+Explained in [coordinates, units and time](../data/units-coordinates-time.md#what-the-values-are-kinds).
+
 ### `L2`
 
 The space of discontinuous fields. Each cell holds its own values, of any

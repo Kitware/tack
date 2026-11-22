@@ -189,7 +189,10 @@ def test_clip_in_batches_is_clip_cell_by_cell(backend, monkeypatch, kind):
     """A mesh of one shape is counted and written in batches of cells (a thread's,
     or a workgroup's 256 lanes), nothing kept per cell; the output is what
     counting every cell gives, bit for bit: a last batch short, hidden cells,
-    both sides, a function (the cut filters' memory plan, D3)."""
+    both sides, a function (the cut filters' memory plan, D3). It holds the
+    batches to the per-cell form as the batches' change left it; that the output
+    is what clip gave before that change was checked once, by the 117 clips of
+    #463 hashing alike before and after it (CPU and Metal), not by this test."""
     import importlib
 
     clip_module = importlib.import_module("tack.dataset.algorithms.clip")
@@ -220,3 +223,48 @@ def test_clip_in_batches_is_clip_cell_by_cell(backend, monkeypatch, kind):
         for name in ("p", "c"):
             np.testing.assert_array_equal(batched.fields[name].values.numpy(),
                                           cellwise.fields[name].values.numpy())
+
+
+def _case_counts(data, at):
+    """One case's outputs of each kind, as ``clip._cell_counts`` counts them: cells,
+    connectivity, crossings, centroids, centroid members."""
+    counts = [0] * 5
+    shapes_left = data[at]
+    at += 1
+    for _ in range(shapes_left):
+        kind, count = data[at], data[at + 1]
+        at += 2
+        entries = data[at:at + count]
+        if kind == 0:
+            counts[3] += 1
+            counts[4] += count
+            counts[2] += sum(1 for p in entries if p >= 8)
+        else:
+            counts[0] += 1
+            counts[1] += count
+            counts[2] += sum(1 for p in entries if p >= 8 and p != 20)
+        at += count
+    return counts
+
+
+def test_every_case_stays_within_the_bound_the_batches_rest_on():
+    """A batch keeps each cell's counts in u8 and its starts within the batch in
+    u16, which rest on ``_MOST``, the most entries of any kind one cell makes (49 in
+    VisIt's tables): a table that broke the bound would wrap silently, so every
+    case of every table is walked here, both sides."""
+    import importlib
+
+    from tack.dataset import _clip_tables as tables
+
+    clip_module = importlib.import_module("tack.dataset.algorithms.clip")
+    most = clip_module._MOST
+    assert most < 2**8 and (clip_module._OFFSET_BATCH - 1) * most < 2**16
+    largest = 0
+    for invert in (0, 1):
+        data = tables.DATA[invert]
+        for table, cases in tables.CASES[invert].items():
+            for case, at in enumerate(cases):
+                counts = _case_counts(data, at)
+                assert max(counts) <= most, (invert, table, case, counts)
+                largest = max(largest, *counts)
+    assert largest <= most and 8 <= most            # a cell kept whole: 8 corners at most

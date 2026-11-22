@@ -28202,8 +28202,9 @@ with outward normals. VTK's <code>vtkTubeFilter</code>.</p>
 
 
 
-        <p><code>td.glyphs</code>: an arrow at each point along the <code>vectors</code> field, scaled by
-<code>scale</code> (and the <code>scale_by</code> field). VTK's <code>vtkGlyph3D</code>.</p>
+        <p><code>td.glyphs</code>: an arrow along the <code>vectors</code> field at each point, or with
+<code>at="cells"</code> at each cell's centre (a DG field's default), scaled by <code>scale</code>
+(and the <code>scale_by</code> field). VTK's <code>vtkGlyph3D</code>.</p>
 
 
 
@@ -32601,13 +32602,13 @@ be on one mesh. VTK's <code>vtkTemporalStatistics</code>.</p>
 
                   <details class="mkdocstrings-source">
                     <summary>Source code in <code>packages/tack-vis/src/tack/interop/vtk/algorithms.py</code></summary>
-                    <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">2869</span>
-<span class="normal">2870</span>
+                    <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">2870</span>
 <span class="normal">2871</span>
 <span class="normal">2872</span>
 <span class="normal">2873</span>
 <span class="normal">2874</span>
-<span class="normal">2875</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">parameters</span><span class="p">):</span>
+<span class="normal">2875</span>
+<span class="normal">2876</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">parameters</span><span class="p">):</span>
     <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="o">**</span><span class="n">parameters</span><span class="p">)</span>
     <span class="bp">self</span><span class="o">.</span><span class="n">_driving</span> <span class="o">=</span> <span class="kc">False</span>
     <span class="bp">self</span><span class="o">.</span><span class="n">_steps</span> <span class="o">=</span> <span class="p">[]</span>
@@ -32671,13 +32672,13 @@ them. Driving, at the time requested, from that step and the one before it
 
                   <details class="mkdocstrings-source">
                     <summary>Source code in <code>packages/tack-vis/src/tack/interop/vtk/algorithms.py</code></summary>
-                    <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">2869</span>
-<span class="normal">2870</span>
+                    <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">2870</span>
 <span class="normal">2871</span>
 <span class="normal">2872</span>
 <span class="normal">2873</span>
 <span class="normal">2874</span>
-<span class="normal">2875</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">parameters</span><span class="p">):</span>
+<span class="normal">2875</span>
+<span class="normal">2876</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">parameters</span><span class="p">):</span>
     <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="o">**</span><span class="n">parameters</span><span class="p">)</span>
     <span class="bp">self</span><span class="o">.</span><span class="n">_driving</span> <span class="o">=</span> <span class="kc">False</span>
     <span class="bp">self</span><span class="o">.</span><span class="n">_steps</span> <span class="o">=</span> <span class="p">[]</span>
@@ -32743,13 +32744,13 @@ it is given.</p>
 
                   <details class="mkdocstrings-source">
                     <summary>Source code in <code>packages/tack-vis/src/tack/interop/vtk/algorithms.py</code></summary>
-                    <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">2869</span>
-<span class="normal">2870</span>
+                    <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">2870</span>
 <span class="normal">2871</span>
 <span class="normal">2872</span>
 <span class="normal">2873</span>
 <span class="normal">2874</span>
-<span class="normal">2875</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">parameters</span><span class="p">):</span>
+<span class="normal">2875</span>
+<span class="normal">2876</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">parameters</span><span class="p">):</span>
     <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="o">**</span><span class="n">parameters</span><span class="p">)</span>
     <span class="bp">self</span><span class="o">.</span><span class="n">_driving</span> <span class="o">=</span> <span class="kc">False</span>
     <span class="bp">self</span><span class="o">.</span><span class="n">_steps</span> <span class="o">=</span> <span class="p">[]</span>
@@ -32812,13 +32813,13 @@ those in <code>time_range</code>), at no time. VTK's <code>vtkParticlePathFilter
 
                   <details class="mkdocstrings-source">
                     <summary>Source code in <code>packages/tack-vis/src/tack/interop/vtk/algorithms.py</code></summary>
-                    <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">2869</span>
-<span class="normal">2870</span>
+                    <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">2870</span>
 <span class="normal">2871</span>
 <span class="normal">2872</span>
 <span class="normal">2873</span>
 <span class="normal">2874</span>
-<span class="normal">2875</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">parameters</span><span class="p">):</span>
+<span class="normal">2875</span>
+<span class="normal">2876</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">parameters</span><span class="p">):</span>
     <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="o">**</span><span class="n">parameters</span><span class="p">)</span>
     <span class="bp">self</span><span class="o">.</span><span class="n">_driving</span> <span class="o">=</span> <span class="kc">False</span>
     <span class="bp">self</span><span class="o">.</span><span class="n">_steps</span> <span class="o">=</span> <span class="p">[]</span>
@@ -32883,13 +32884,13 @@ at the time requested, going on from the steps taken. VTK's
 
                   <details class="mkdocstrings-source">
                     <summary>Source code in <code>packages/tack-vis/src/tack/interop/vtk/algorithms.py</code></summary>
-                    <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">2869</span>
-<span class="normal">2870</span>
+                    <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">2870</span>
 <span class="normal">2871</span>
 <span class="normal">2872</span>
 <span class="normal">2873</span>
 <span class="normal">2874</span>
-<span class="normal">2875</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">parameters</span><span class="p">):</span>
+<span class="normal">2875</span>
+<span class="normal">2876</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">parameters</span><span class="p">):</span>
     <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="o">**</span><span class="n">parameters</span><span class="p">)</span>
     <span class="bp">self</span><span class="o">.</span><span class="n">_driving</span> <span class="o">=</span> <span class="kc">False</span>
     <span class="bp">self</span><span class="o">.</span><span class="n">_steps</span> <span class="o">=</span> <span class="p">[]</span>

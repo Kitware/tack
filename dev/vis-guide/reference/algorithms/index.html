@@ -10738,7 +10738,7 @@ vectors, made by Tack so its fields and marks come along.</p>
 </tr>
 <tr>
 <td><a href="#tack.dataset.algorithms.glyphs.glyphs"><code>glyphs</code></a></td>
-<td>an arrow at each point along a vector field</td>
+<td>an arrow along a vector field at each point, or at each cell's centre (a DG field's)</td>
 <td>dataset</td>
 <td>vtkGlyph3D</td>
 <td>—</td>
@@ -10897,43 +10897,37 @@ point gets a ring and no quads; tubes are open at their ends.</p>
     <span class="n">scale_by</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
     <span class="n">resolution</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span>
     <span class="n">fields</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">at</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span>
 </code></pre></div>
 
     <div class="doc doc-contents first">
 
-        <p>An arrow at each of <code>data</code>'s points along <code>vectors</code> (a 3-vector field on the
-points, or its name), as VTK's <code>vtkGlyph3D</code> places its arrow source: from the
-point toward the vector, <code>scale</code> times its length long, or <code>scale</code> times
-<code>scale_by</code> (a scalar point field, or its name) where given. An arrow of
-length 1 has a shaft 0.65 long and 0.03 in radius and a head 0.1 in radius,
-<code>resolution</code> points round, as triangles wound outward. Its points carry
-the point's fields; cell fields are left behind. A zero vector gives an
-arrow of no size. Glyph a subset (<code>mask_points</code>) or a slice to see
-anything in a dense field. Points only hidden or refined cells use have no
-arrow.</p>
+        <p>An arrow along <code>vectors</code> (a 3-vector field, or its name) at each of <code>data</code>'s
+points, or with <code>at="cells"</code> at each cell's centre, as VTK's <code>vtkGlyph3D</code>
+places its arrow source: from the place toward the vector, <code>scale</code> times its
+length long, or <code>scale</code> times <code>scale_by</code> (a scalar field, or its name) where
+given. An arrow of length 1 has a shaft 0.65 long and 0.03 in radius and a head
+0.1 in radius, <code>resolution</code> points round, as triangles wound outward. A zero
+vector gives an arrow of no size.</p>
+<p>How many arrows there are follows the mesh, not the field's order. At the
+points (the default for point fields), an <code>H1</code> field of any order and a
+curved geometry give their values there, which are their stored corner
+values, and the arrows' points carry the point fields; cell fields are left
+behind. At the cells' centres -- where the geometry maps each cell's
+parametric centre (<code>cell_centers</code>) -- every field is evaluated through its
+basis (<code>values_at_centers</code>), and the arrows carry those values. A field
+with a value per cell, <code>L2</code> (DG) above all, is glyphed there, the default
+for it: a point several such cells share has a value in each, so <code>at="points"</code>
+refuses it (<code>project</code> it into <code>H1</code> to average them).</p>
+<p>Glyph a subset (<code>mask_points</code>) or a slice to see anything in a dense field,
+and other places by probing first (<code>glyphs(probe(data, points), ...)</code>).
+Points only hidden or refined cells use have no arrow, nor have those cells.</p>
 
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/algorithms/glyphs.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">100</span>
-<span class="normal">101</span>
-<span class="normal">102</span>
-<span class="normal">103</span>
-<span class="normal">104</span>
-<span class="normal">105</span>
-<span class="normal">106</span>
-<span class="normal">107</span>
-<span class="normal">108</span>
-<span class="normal">109</span>
-<span class="normal">110</span>
-<span class="normal">111</span>
-<span class="normal">112</span>
-<span class="normal">113</span>
-<span class="normal">114</span>
-<span class="normal">115</span>
-<span class="normal">116</span>
-<span class="normal">117</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">117</span>
 <span class="normal">118</span>
 <span class="normal">119</span>
 <span class="normal">120</span>
@@ -10981,40 +10975,114 @@ arrow.</p>
 <span class="normal">162</span>
 <span class="normal">163</span>
 <span class="normal">164</span>
-<span class="normal">165</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">glyphs</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">vectors</span><span class="p">,</span> <span class="n">scale</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">scale_by</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">resolution</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;An arrow at each of ``data``&#39;s points along ``vectors`` (a 3-vector field on the</span>
-<span class="sd">    points, or its name), as VTK&#39;s ``vtkGlyph3D`` places its arrow source: from the</span>
-<span class="sd">    point toward the vector, ``scale`` times its length long, or ``scale`` times</span>
-<span class="sd">    ``scale_by`` (a scalar point field, or its name) where given. An arrow of</span>
-<span class="sd">    length 1 has a shaft 0.65 long and 0.03 in radius and a head 0.1 in radius,</span>
-<span class="sd">    ``resolution`` points round, as triangles wound outward. Its points carry</span>
-<span class="sd">    the point&#39;s fields; cell fields are left behind. A zero vector gives an</span>
-<span class="sd">    arrow of no size. Glyph a subset (``mask_points``) or a slice to see</span>
-<span class="sd">    anything in a dense field. Points only hidden or refined cells use have no</span>
-<span class="sd">    arrow.&quot;&quot;&quot;</span>
+<span class="normal">165</span>
+<span class="normal">166</span>
+<span class="normal">167</span>
+<span class="normal">168</span>
+<span class="normal">169</span>
+<span class="normal">170</span>
+<span class="normal">171</span>
+<span class="normal">172</span>
+<span class="normal">173</span>
+<span class="normal">174</span>
+<span class="normal">175</span>
+<span class="normal">176</span>
+<span class="normal">177</span>
+<span class="normal">178</span>
+<span class="normal">179</span>
+<span class="normal">180</span>
+<span class="normal">181</span>
+<span class="normal">182</span>
+<span class="normal">183</span>
+<span class="normal">184</span>
+<span class="normal">185</span>
+<span class="normal">186</span>
+<span class="normal">187</span>
+<span class="normal">188</span>
+<span class="normal">189</span>
+<span class="normal">190</span>
+<span class="normal">191</span>
+<span class="normal">192</span>
+<span class="normal">193</span>
+<span class="normal">194</span>
+<span class="normal">195</span>
+<span class="normal">196</span>
+<span class="normal">197</span>
+<span class="normal">198</span>
+<span class="normal">199</span>
+<span class="normal">200</span>
+<span class="normal">201</span>
+<span class="normal">202</span>
+<span class="normal">203</span>
+<span class="normal">204</span>
+<span class="normal">205</span>
+<span class="normal">206</span>
+<span class="normal">207</span>
+<span class="normal">208</span>
+<span class="normal">209</span>
+<span class="normal">210</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@on_inputs_device</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">glyphs</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">vectors</span><span class="p">,</span> <span class="n">scale</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">scale_by</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">resolution</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">at</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;An arrow along ``vectors`` (a 3-vector field, or its name) at each of ``data``&#39;s</span>
+<span class="sd">    points, or with ``at=&quot;cells&quot;`` at each cell&#39;s centre, as VTK&#39;s ``vtkGlyph3D``</span>
+<span class="sd">    places its arrow source: from the place toward the vector, ``scale`` times its</span>
+<span class="sd">    length long, or ``scale`` times ``scale_by`` (a scalar field, or its name) where</span>
+<span class="sd">    given. An arrow of length 1 has a shaft 0.65 long and 0.03 in radius and a head</span>
+<span class="sd">    0.1 in radius, ``resolution`` points round, as triangles wound outward. A zero</span>
+<span class="sd">    vector gives an arrow of no size.</span>
+
+<span class="sd">    How many arrows there are follows the mesh, not the field&#39;s order. At the</span>
+<span class="sd">    points (the default for point fields), an ``H1`` field of any order and a</span>
+<span class="sd">    curved geometry give their values there, which are their stored corner</span>
+<span class="sd">    values, and the arrows&#39; points carry the point fields; cell fields are left</span>
+<span class="sd">    behind. At the cells&#39; centres -- where the geometry maps each cell&#39;s</span>
+<span class="sd">    parametric centre (``cell_centers``) -- every field is evaluated through its</span>
+<span class="sd">    basis (``values_at_centers``), and the arrows carry those values. A field</span>
+<span class="sd">    with a value per cell, ``L2`` (DG) above all, is glyphed there, the default</span>
+<span class="sd">    for it: a point several such cells share has a value in each, so ``at=&quot;points&quot;``</span>
+<span class="sd">    refuses it (``project`` it into ``H1`` to average them).</span>
+
+<span class="sd">    Glyph a subset (``mask_points``) or a slice to see anything in a dense field,</span>
+<span class="sd">    and other places by probing first (``glyphs(probe(data, points), ...)``).</span>
+<span class="sd">    Points only hidden or refined cells use have no arrow, nor have those cells.&quot;&quot;&quot;</span>
     <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.algorithms._refine</span><span class="w"> </span><span class="kn">import</span> <span class="n">_masks</span>
     <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.ghosts</span><span class="w"> </span><span class="kn">import</span> <span class="n">visible</span>
 
+    <span class="n">field</span> <span class="o">=</span> <span class="n">_field</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">vectors</span><span class="p">)</span>
+    <span class="n">sizes</span> <span class="o">=</span> <span class="kc">None</span> <span class="k">if</span> <span class="n">scale_by</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">_field</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">scale_by</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">at</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">at</span> <span class="o">=</span> <span class="s2">&quot;cells&quot;</span> <span class="k">if</span> <span class="n">_cell_wise</span><span class="p">(</span><span class="n">field</span><span class="p">)</span> <span class="ow">or</span> <span class="p">(</span><span class="n">sizes</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">_cell_wise</span><span class="p">(</span><span class="n">sizes</span><span class="p">))</span> \
+            <span class="k">else</span> <span class="s2">&quot;points&quot;</span>
+    <span class="k">if</span> <span class="n">at</span> <span class="o">==</span> <span class="s2">&quot;cells&quot;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">_at_cells</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">field</span><span class="p">,</span> <span class="n">sizes</span><span class="p">,</span> <span class="n">scale</span><span class="p">,</span> <span class="n">resolution</span><span class="p">,</span> <span class="n">fields</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">at</span> <span class="o">!=</span> <span class="s2">&quot;points&quot;</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;glyphs are at the points or the cells, not </span><span class="si">{</span><span class="n">at</span><span class="si">!r}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">f</span> <span class="ow">in</span> <span class="p">((</span><span class="s2">&quot;vectors&quot;</span><span class="p">,</span> <span class="n">field</span><span class="p">),</span> <span class="p">(</span><span class="s2">&quot;scale_by&quot;</span><span class="p">,</span> <span class="n">sizes</span><span class="p">)):</span>
+        <span class="k">if</span> <span class="n">f</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">_cell_wise</span><span class="p">(</span><span class="n">f</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;glyphs at the points: </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2"> is in </span><span class="si">{</span><span class="n">f</span><span class="o">.</span><span class="n">space</span><span class="si">!r}</span><span class="s2">, which has a &quot;</span>
+                            <span class="s2">&quot;value per cell, several where cells share a point; glyph it &quot;</span>
+                            <span class="s2">&quot;at=</span><span class="se">\&quot;</span><span class="s2">cells</span><span class="se">\&quot;</span><span class="s2">, or project it into H1 to average them&quot;</span><span class="p">)</span>
     <span class="n">marks</span><span class="p">,</span> <span class="n">hidden</span> <span class="o">=</span> <span class="n">_masks</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">hidden</span> <span class="ow">and</span> <span class="ow">not</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">topology</span><span class="p">,</span> <span class="s2">&quot;reference_cells&quot;</span><span class="p">,</span> <span class="kc">True</span><span class="p">):</span>
         <span class="n">data</span> <span class="o">=</span> <span class="n">visible</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>                  <span class="c1"># polyhedra and polygons: the cells left</span>
         <span class="n">hidden</span> <span class="o">=</span> <span class="mi">0</span>
-    <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">space</span><span class="p">,</span> <span class="n">H1</span><span class="p">)</span> <span class="ow">or</span> <span class="n">data</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">space</span><span class="o">.</span><span class="n">order</span> <span class="o">!=</span> <span class="mi">1</span><span class="p">:</span>
-        <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="s2">&quot;glyphs places arrows at the points: an H1 order-1 geometry&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">_at_points</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">geometry</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="s2">&quot;glyphs at the points needs an H1 geometry, one position a point; &quot;</span>
+                        <span class="s2">&quot;glyph at=</span><span class="se">\&quot;</span><span class="s2">cells</span><span class="se">\&quot;</span><span class="s2">&quot;</span><span class="p">)</span>
     <span class="n">res</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">resolution</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">res</span> <span class="o">&lt;</span> <span class="mi">3</span><span class="p">:</span>
         <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;an arrow has a resolution of at least 3, not </span><span class="si">{</span><span class="n">res</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-    <span class="n">field</span> <span class="o">=</span> <span class="n">_field</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">vectors</span><span class="p">)</span>
-    <span class="k">if</span> <span class="n">arrays</span><span class="o">.</span><span class="n">width_of</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">values</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">3</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">_on_points</span><span class="p">(</span><span class="n">field</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">arrays</span><span class="o">.</span><span class="n">width_of</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">values</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">3</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">_at_points</span><span class="p">(</span><span class="n">field</span><span class="p">):</span>
         <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="s2">&quot;glyphs takes a 3-vector field on the points&quot;</span><span class="p">)</span>
-    <span class="n">sizes</span> <span class="o">=</span> <span class="kc">None</span>
-    <span class="k">if</span> <span class="n">scale_by</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="n">sizes</span> <span class="o">=</span> <span class="n">_field</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">scale_by</span><span class="p">)</span>
-        <span class="k">if</span> <span class="n">arrays</span><span class="o">.</span><span class="n">width_of</span><span class="p">(</span><span class="n">sizes</span><span class="o">.</span><span class="n">values</span><span class="p">)</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">_on_points</span><span class="p">(</span><span class="n">sizes</span><span class="p">):</span>
-            <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="s2">&quot;scale_by is a scalar field on the points&quot;</span><span class="p">)</span>
-    <span class="n">positions</span><span class="p">,</span> <span class="n">directions</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">values</span><span class="p">,</span> <span class="n">field</span><span class="o">.</span><span class="n">values</span>
-    <span class="n">by</span> <span class="o">=</span> <span class="n">sizes</span><span class="o">.</span><span class="n">values</span> <span class="k">if</span> <span class="n">sizes</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="kc">None</span>
+    <span class="k">if</span> <span class="n">sizes</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="p">(</span><span class="n">arrays</span><span class="o">.</span><span class="n">width_of</span><span class="p">(</span><span class="n">sizes</span><span class="o">.</span><span class="n">values</span><span class="p">)</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">_at_points</span><span class="p">(</span><span class="n">sizes</span><span class="p">)):</span>
+        <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="s2">&quot;scale_by is a scalar field on the points&quot;</span><span class="p">)</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.carry</span><span class="w"> </span><span class="kn">import</span> <span class="n">_point_values</span>
+
+    <span class="c1"># Each point&#39;s position and value: an H1 field of any order (a curved geometry</span>
+    <span class="c1"># too) holds its points&#39; first.</span>
+    <span class="n">n</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">num_points</span>
+    <span class="n">positions</span> <span class="o">=</span> <span class="n">_point_values</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">values</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span>
+    <span class="n">directions</span> <span class="o">=</span> <span class="n">_point_values</span><span class="p">(</span><span class="n">field</span><span class="o">.</span><span class="n">values</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span>
+    <span class="n">by</span> <span class="o">=</span> <span class="n">_point_values</span><span class="p">(</span><span class="n">sizes</span><span class="o">.</span><span class="n">values</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span> <span class="k">if</span> <span class="n">sizes</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="kc">None</span>
     <span class="n">kept</span> <span class="o">=</span> <span class="kc">None</span>
     <span class="k">if</span> <span class="n">hidden</span><span class="p">:</span>
         <span class="c1"># The points some cell that is not hidden or refined uses, in order -- the</span>
@@ -11027,10 +11095,9 @@ arrow.</p>
             <span class="k">if</span> <span class="n">group</span><span class="o">.</span><span class="n">count</span><span class="p">:</span>
                 <span class="n">_used_points</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">domain_view</span><span class="p">(</span><span class="s2">&quot;cells&quot;</span><span class="p">,</span> <span class="n">group</span><span class="p">),</span> <span class="n">marks</span><span class="p">,</span> <span class="n">used</span><span class="p">)</span>
         <span class="n">_</span><span class="p">,</span> <span class="n">kept</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">_compact</span><span class="p">(</span><span class="n">used</span><span class="p">,</span> <span class="n">data</span><span class="o">.</span><span class="n">id_dtype</span><span class="p">)</span>
-        <span class="n">n</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">num_points</span>
-        <span class="n">positions</span> <span class="o">=</span> <span class="n">_take</span><span class="p">(</span><span class="n">arrays</span><span class="o">.</span><span class="n">materialize</span><span class="p">(</span><span class="n">_point_values</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">n</span><span class="p">)),</span> <span class="n">kept</span><span class="p">)</span>
-        <span class="n">directions</span> <span class="o">=</span> <span class="n">_take</span><span class="p">(</span><span class="n">arrays</span><span class="o">.</span><span class="n">materialize</span><span class="p">(</span><span class="n">_point_values</span><span class="p">(</span><span class="n">directions</span><span class="p">,</span> <span class="n">n</span><span class="p">)),</span> <span class="n">kept</span><span class="p">)</span>
-        <span class="n">by</span> <span class="o">=</span> <span class="n">_take</span><span class="p">(</span><span class="n">arrays</span><span class="o">.</span><span class="n">materialize</span><span class="p">(</span><span class="n">_point_values</span><span class="p">(</span><span class="n">by</span><span class="p">,</span> <span class="n">n</span><span class="p">)),</span> <span class="n">kept</span><span class="p">)</span> <span class="k">if</span> <span class="n">by</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="kc">None</span>
+        <span class="n">positions</span> <span class="o">=</span> <span class="n">_take</span><span class="p">(</span><span class="n">arrays</span><span class="o">.</span><span class="n">materialize</span><span class="p">(</span><span class="n">positions</span><span class="p">),</span> <span class="n">kept</span><span class="p">)</span>
+        <span class="n">directions</span> <span class="o">=</span> <span class="n">_take</span><span class="p">(</span><span class="n">arrays</span><span class="o">.</span><span class="n">materialize</span><span class="p">(</span><span class="n">directions</span><span class="p">),</span> <span class="n">kept</span><span class="p">)</span>
+        <span class="n">by</span> <span class="o">=</span> <span class="n">_take</span><span class="p">(</span><span class="n">arrays</span><span class="o">.</span><span class="n">materialize</span><span class="p">(</span><span class="n">by</span><span class="p">),</span> <span class="n">kept</span><span class="p">)</span> <span class="k">if</span> <span class="n">by</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="kc">None</span>
     <span class="n">n</span> <span class="o">=</span> <span class="n">arrays</span><span class="o">.</span><span class="n">size_of</span><span class="p">(</span><span class="n">positions</span><span class="p">)</span>
     <span class="n">total</span> <span class="o">=</span> <span class="n">n</span> <span class="o">*</span> <span class="p">(</span><span class="mi">3</span> <span class="o">*</span> <span class="n">res</span> <span class="o">+</span> <span class="mi">2</span><span class="p">)</span>
     <span class="n">idt</span> <span class="o">=</span> <span class="n">id_types</span><span class="o">.</span><span class="n">at_least</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">id_dtype</span><span class="p">,</span> <span class="n">total</span><span class="p">)</span>

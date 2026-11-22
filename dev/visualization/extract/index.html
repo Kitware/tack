@@ -2646,6 +2646,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#clip-to-a-range" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Clip to a range
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#extract-cells-by-id-by-region-or-by-box" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5307,6 +5318,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#clip-to-a-range" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Clip to a range
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#extract-cells-by-id-by-region-or-by-box" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5476,7 +5498,8 @@
 <p>Most pipelines start by extracting the part of a dataset that matters: an
 isosurface, a cut through the volume, the cells in a range or a region, the
 outer surface. Tack has the extraction filters VTK has: <code>contour</code>, <code>slice</code>,
-<code>clip</code>, <code>threshold</code>, the cell extractors, and the surface and edge filters.
+<code>clip</code>, <code>threshold</code>, the cell extractors, and the surface and edge filters,
+and ParaView's <code>isovolume</code>.
 Three of them can seem to answer one question, so the page starts by setting
 them side by side. The sections after it give each filter's main options and
 show how to choose the fields that come along.</p>
@@ -5562,6 +5585,11 @@ smaller. None of the three is wrong: each answers its own question.</p>
 <td>Cells whose field lies in a range</td>
 <td><code>threshold</code></td>
 <td>whole cells</td>
+</tr>
+<tr>
+<td>The part where a field lies in a range</td>
+<td><code>isovolume</code></td>
+<td>whole cells and pieces of cut cells</td>
 </tr>
 <tr>
 <td>Cells by id, by region or by box</td>
@@ -5764,6 +5792,36 @@ in order.</p>
 </code></pre></div>
 <p>The output is an unstructured mesh, even when the input is an image. See the
 <a href="../../vis-guide/reference/algorithms/#tack.dataset.algorithms.threshold.threshold">reference</a>.</p>
+<h2 id="clip-to-a-range">Clip to a range<a class="headerlink" href="#clip-to-a-range" title="Permanent link">&para;</a></h2>
+<p><code>isovolume(data, by, lower, upper)</code> keeps the part of the mesh where <code>by</code> lies
+in <code>[lower, upper]</code>, as ParaView's Iso Volume does. It is a clip at each end:
+<code>clip</code> at <code>lower</code>, then a clip of what that keeps below <code>upper</code>. Where
+<code>threshold</code> keeps or drops whole cells, <code>isovolume</code> cuts them at both ends.
+<code>by</code> is a point field (or its name), a <code>Field</code> the dataset does not hold, or an
+implicit function, whose values the range is then of.</p>
+<!-- tack-check: isovolume -->
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">tack</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">tack.dataset</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">td</span>
+
+<span class="n">tack</span><span class="o">.</span><span class="n">set_default_device</span><span class="p">(</span><span class="s2">&quot;cpu&quot;</span><span class="p">)</span>
+
+<span class="n">data</span> <span class="o">=</span> <span class="n">td</span><span class="o">.</span><span class="n">uniform_grid</span><span class="p">((</span><span class="mi">21</span><span class="p">,</span> <span class="mi">21</span><span class="p">,</span> <span class="mi">21</span><span class="p">),</span> <span class="n">origin</span><span class="o">=</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">),</span> <span class="n">spacing</span><span class="o">=</span><span class="p">(</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">))</span>
+<span class="n">data</span><span class="o">.</span><span class="n">fields</span><span class="p">[</span><span class="s2">&quot;r&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">td</span><span class="o">.</span><span class="n">Field</span><span class="p">(</span><span class="n">td</span><span class="o">.</span><span class="n">H1</span><span class="p">(</span><span class="n">data</span><span class="p">),</span> <span class="n">tack</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">positions</span><span class="p">(),</span> <span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)))</span>
+
+<span class="n">shell</span> <span class="o">=</span> <span class="n">td</span><span class="o">.</span><span class="n">isovolume</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="s2">&quot;r&quot;</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.6</span><span class="p">)</span>          <span class="c1"># cut cells: the part with 0.3 &lt;= r &lt;= 0.6</span>
+<span class="n">cells</span> <span class="o">=</span> <span class="n">td</span><span class="o">.</span><span class="n">threshold</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="s2">&quot;r&quot;</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.6</span><span class="p">)</span>          <span class="c1"># whole cells, every corner in range</span>
+<span class="n">r</span> <span class="o">=</span> <span class="n">shell</span><span class="o">.</span><span class="n">fields</span><span class="p">[</span><span class="s2">&quot;r&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">values</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
+<span class="n">volume</span> <span class="o">=</span> <span class="n">td</span><span class="o">.</span><span class="n">integrate</span><span class="p">(</span><span class="n">shell</span><span class="p">)</span><span class="o">.</span><span class="n">measure</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;shell volume </span><span class="si">{</span><span class="n">volume</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2"> (the sphere&#39;s </span><span class="si">{</span><span class="mi">4</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">3</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">np</span><span class="o">.</span><span class="n">pi</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="p">(</span><span class="mf">0.6</span><span class="o">**</span><span class="mi">3</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mf">0.3</span><span class="o">**</span><span class="mi">3</span><span class="p">)</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">), &quot;</span>
+      <span class="sa">f</span><span class="s2">&quot;whole cells </span><span class="si">{</span><span class="n">td</span><span class="o">.</span><span class="n">integrate</span><span class="p">(</span><span class="n">cells</span><span class="p">)</span><span class="o">.</span><span class="n">measure</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># shell volume 0.784 (the sphere&#39;s 0.792), whole cells 0.416</span>
+<span class="k">assert</span> <span class="mf">0.3</span> <span class="o">-</span> <span class="mf">1e-6</span> <span class="o">&lt;=</span> <span class="n">r</span><span class="o">.</span><span class="n">min</span><span class="p">()</span> <span class="ow">and</span> <span class="n">r</span><span class="o">.</span><span class="n">max</span><span class="p">()</span> <span class="o">&lt;=</span> <span class="mf">0.6</span> <span class="o">+</span> <span class="mf">1e-6</span>
+</code></pre></div>
+<p>A polyhedral mesh is clipped into polyhedra, as <code>clip</code> clips it. <code>lower</code> must
+be below <code>upper</code>: for the surface where <code>by</code> takes one value, use <code>contour</code>. See the
+<a href="../../vis-guide/reference/algorithms/#tack.dataset.algorithms.isovolume.isovolume">reference</a>.</p>
 <h2 id="extract-cells-by-id-by-region-or-by-box">Extract cells by id, by region or by box<a class="headerlink" href="#extract-cells-by-id-by-region-or-by-box" title="Permanent link">&para;</a></h2>
 <p>Three filters keep whole cells chosen another way. Each keeps only the points
 the cells use, and carries the fields as <code>threshold</code> does.</p>
@@ -5982,12 +6040,15 @@ cell, not a straight line between the corners
   sub-cells' values crosses the level, as a linear contour of the sub-cells
   would.</li>
 </ul>
-<p><code>clip</code> and <code>threshold</code> keep what they need not cut. Cells that lie wholly on
-the kept side stay as they are, curved and of their order. Only the others are
+<p><code>clip</code>, <code>isovolume</code> and <code>threshold</code> keep what they need not cut. Cells that
+lie wholly on the kept side stay as they are, curved and of their order. Only the others are
 cut into linear sub-cells. The result is a <code>PartitionedDataSet</code> of the two
 parts, whole cells first, and their shared points are owned once, so
 summaries over both parts count each point once. A dataset of straight cells
-and order-1 fields clips and thresholds into one dataset, as above.</p>
+and order-1 fields clips and thresholds into one dataset, as above.
+<code>isovolume</code> places its points at the field's roots at both ends: the second
+clip's crossings are found along the sub-cells' edges the first left, between a
+lattice point and the other or the first clip's crossing.</p>
 <p><code>slice</code> and <code>slice_plane</code> cut a function of position, so only a curved
 geometry makes them subdivide. They follow it on segments, quads, hexahedra
 and voxels, and use the corners of other curved cells. The
@@ -6029,7 +6090,7 @@ tetrahedra and triangles each cell is fanned into.</p>
 <td>contour gives vertices</td>
 </tr>
 <tr>
-<td><code>clip</code></td>
+<td><code>clip</code>, <code>isovolume</code></td>
 <td>yes</td>
 <td>polyhedra, into polyhedra, but not polygons yet</td>
 <td>not yet</td>

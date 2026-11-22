@@ -456,3 +456,29 @@ def test_the_snap_tables_are_the_generators(tmp_path):
         for table in tables.CASES[invert]:
             np.testing.assert_array_equal(fresh.cases(invert, table), kept.cases(invert, table),
                                           err_msg=f"invert {invert}, table {table}")
+
+
+@pytest.mark.parametrize("dtype", ["f32", "f64"])
+def test_the_band_at_the_value_follows_the_values_precision(dtype):
+    """A corner is at the value within a millionth of its cell's span in f32 and
+    1e-12 in f64: round-off at the nodes (half an ulp to either side of a plane of
+    them) still gives whole cells, and in f64 an offset of 3e-8 on cells 0.1 wide
+    is a cut, where clip and contour agree."""
+    element, numpy_type = (tack.f64, np.float64) if dtype == "f64" else (tack.f32, np.float32)
+    grid = td.uniform_grid((11, 3, 3), spacing=(0.1, 0.1, 0.1), dtype=element)
+    data = td.extract_cells(grid, np.arange(grid.num_cells))
+    x = data.positions()[:, 0].astype(numpy_type)
+    on = np.isclose(x, 0.5)
+    rounded = x.copy()
+    rounded[on] += np.where(np.arange(on.sum()) % 2, 1, -1) * np.spacing(numpy_type(0.5)) / 2
+    data.fields["x"] = td.Field(td.H1(data), tack.array(rounded))
+    whole = td.clip(data, "x", 0.5)
+    assert whole.num_cells == 20 and whole.positions()[:, 0].min() == 0.5
+    assert whole.num_points == len(np.unique(whole.positions(), axis=0))
+    if dtype == "f64":
+        data.fields["x"] = td.Field(td.H1(data), tack.array(x))
+        value = 0.5 + 3e-8
+        cut = td.clip(data, "x", value).positions()[:, 0].min()
+        surface = td.contour(data, "x", value).positions()[:, 0].min()
+        assert cut == pytest.approx(value, rel=0, abs=1e-15)
+        assert cut == pytest.approx(surface, rel=0, abs=1e-15)

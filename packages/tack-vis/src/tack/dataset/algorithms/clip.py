@@ -55,8 +55,13 @@ _SERIAL_KINDS = 2048
 
 # A corner this close to the value, as a fraction of the farthest of its cell's
 # corners, is at the value: round-off (a node meant to lie on a plane, 1e-16 off it)
-# does not cut its cell through it.
+# does not cut its cell through it. One per precision: about 8 ulps in f32, and
+# in f64 small enough that clip and contour (which snaps a crossing within half an
+# ulp of its coordinates, `_end_hit`) agree but within 1e-12 of a cell, while a
+# symmetry plane's round-off, which grows with the coordinates' size rather than
+# the cell's, stays inside it on meshes up to some 10^4 cells across.
 _AT_VALUE = tack.constant(1e-6)
+_AT_VALUE_F64 = tack.constant(1e-12)
 
 
 @tack.func
@@ -64,7 +69,8 @@ def _cell_case(cells, c, values, value, invert, remap):
     """The cell's case, bit ``k`` set where corner ``k`` is at or above ``value``,
     and its corners at the value, bit ``k`` set where corner ``k`` is.
 
-    A corner within ``_AT_VALUE`` of the value is exactly at it: above, on both
+    A corner within ``_AT_VALUE`` of the cell's span of the value (``_AT_VALUE_F64``
+    for f64 values) is exactly at it: above, on both
     sides of a clip (``inside`` or not), so the two sides take complementary cases
     and fill the cell between them, and the crossings on its edges are the corner
     itself (``_shape_tables``' records for corners at the value), so a cell whose
@@ -82,7 +88,10 @@ def _cell_case(cells, c, values, value, invert, remap):
         a = abs(values[cells.point_id(c, remap[k])] - value)
         if a - a == 0:
             span = max(span, a)
-    near = span * _AT_VALUE
+    # f64 values tell 1 + 1e-10 from 1 (the literal takes the values' precision);
+    # f32 and integer values do not.
+    one = span * 0 + 1
+    near = span * (_AT_VALUE_F64 if one + 1e-10 != one else _AT_VALUE)
     case = 0
     at = 0
     kept = 0
@@ -541,7 +550,8 @@ def clip(data, by, value=0.0, inside=False, fields=None, subdivision=None, toler
     points; point data is interpolated onto them, cell data goes to each piece.
 
     A corner within a millionth of its cell's span of the value (the farthest
-    corner's distance from it) is at the value, above it on either side, so the
+    corner's distance from it; 1e-12 for f64 values, so clip and ``contour`` agree
+    near mesh points but within that) is at the value, above it on either side, so the
     two sides of a clip fill each cell between them. A cell with no corner
     strictly on the kept side but one on the other only touches the value and is
     dropped; one with nothing strictly on the other side is kept whole, and one

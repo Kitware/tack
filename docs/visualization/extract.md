@@ -496,7 +496,8 @@ and voxels, and use the corners of other curved cells. The
 no cells. Check `num_cells` before assuming there is geometry to draw.
 
 **Clips through mesh points.** A mesh point within a millionth of its cell's
-span of the value (round-off, as a symmetry plane's nodes have) is at the
+span of the value (1e-12 for f64 values; round-off, as a symmetry plane's nodes
+have) is at the
 value, above it on either side of `clip`, so the two sides fill each cell
 between them. A plane through a layer of faces keeps the cells on one side
 whole and drops the others. A plane through mesh points but oblique to the

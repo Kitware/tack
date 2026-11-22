@@ -45,19 +45,32 @@ Tack did not allocate with the same `Array` class.
 |---|---|---|---|---|
 | CPU | `NumpyBuffer` | uninitialized NumPy storage | unspecified, untouched | `np.copyto` / `.copy()` |
 | Metal | `MetalBuffer` | `newBufferWithLength_options_`, shared storage mode; 1 MiB or more reused from a pool of freed buffers (`_BufferPool`) | zeros for a new buffer (`starts_zeroed`); a reused one holds what it held | `np.copyto` into the shared view / `.copy()`, after waiting for queued launches |
-| CUDA | `CUDABuffer` | `cuMemAllocAsync` on the context's stream | zeros, from a queued `cuMemsetD8Async` | `cuMemcpyHtoDAsync` (queued) / `cuMemcpyDtoHAsync` and a wait |
-| HIP | `HIPBuffer` | `hipMalloc` through a cache of dropped arrays' buffers, reused in stream order (`hipMallocAsync` with `TACK_HIP_ALLOCATOR=pool`) | zeros, from a queued `hipMemsetAsync` | `hipMemcpyAsync` (queued) / `hipMemcpyAsync` and a wait |
-| Level Zero | `L0Buffer` | `zeMemAllocDevice` (at least one byte) | zeros, from a queued device fill | `zeCommandListAppendMemoryCopy` on the backend's queue, from a snapshot of the array / and a wait |
+| CUDA | `CUDABuffer` | `cuMemAllocAsync` on the context's stream | unspecified, untouched | `cuMemcpyHtoDAsync` (queued) / `cuMemcpyDtoHAsync` and a wait |
+| HIP | `HIPBuffer` | `hipMalloc` through a cache of dropped arrays' buffers, reused in stream order (`hipMallocAsync` with `TACK_HIP_ALLOCATOR=pool`) | unspecified, untouched (a reused one holds what it held) | `hipMemcpyAsync` (queued) / `hipMemcpyAsync` and a wait |
+| Level Zero | `L0Buffer` | `zeMemAllocDevice` (at least one byte) | unspecified, untouched | `zeCommandListAppendMemoryCopy` on the backend's queue, from a snapshot of the array / and a wait |
 
 The contract makes a new array's contents unspecified until a kernel,
 `tack.copyto` or `fill` writes them; `tack.zeros`, `ones` and `full` are the
-calls that fill. The GPU backends happen to zero new buffers, and only
-Metal declares it (`starts_zeroed`), so `tack.zeros` fills on the others
-again -- and on Metal's reused buffers: a freed buffer of 1 MiB or more goes
+calls that fill. CUDA, HIP and Level Zero cleared every new buffer until
+#386, though nothing promised it: each temporary was written once more than
+needed, `tack.zeros` cleared twice, and code that read an array before writing
+it worked on those GPUs. No backend clears one now, and only Metal declares
+its fresh buffers zeroed (`starts_zeroed`, as Metal clears them itself), so
+`tack.zeros` fills everywhere else -- and on Metal's reused buffers: a freed buffer of 1 MiB or more goes
 back to a pool, since a new one's pages are mapped and cleared on first
 touch at about 13 GB/s on an M1 Max (50 ms for a 640 MB temporary, more than
 the filter's kernels), and the next array of its capacity takes it as it
 is. The CPU leaves a new array untouched.
+
+**Finding reads before writes.** `TACK_FILL_NEW=0xFF` (any byte; read when
+Tack is imported) fills every new array, on every backend, with that byte
+(`array._filled_new`: on the device through `fill_bytes` where the buffer
+can, through its storage elsewhere), and debug mode fills with 0xFF unless
+it is set. A float filled with 0xFF reads as NaN and an integer as -1, so code
+that reads an array before writing it gives NaN or an out-of-range index
+instead of whatever the allocator left, which on a Mac's fresh pages, Metal's
+new buffers and most first allocations is zeros. CI's `ids-i64` job runs the
+dataset tests so.
 
 **CPU.** `NumpyBuffer._data` *is* the storage. `CPUBackend.allocate_array`
 (`runtime/cpu.py`) does not fill it: its pages are first touched by the

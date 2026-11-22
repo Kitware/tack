@@ -997,9 +997,8 @@ class L0Buffer(DeviceBuffer):
             raise DeviceMemoryError(f"Level Zero is out of memory for {alloc_size} bytes "
                                     f"(ze_result_t 0x{result:08x})")
         _check_ze(result, "zeMemAllocDevice")
-
-        # Zero-initialize, on the device
-        self.fill_bytes(b"\0")
+        # Not cleared: a new array's contents are unspecified (`tack.empty`);
+        # TACK_FILL_NEW or debug mode fills it (`array._filled_new`).
 
     @property
     def address(self) -> int:

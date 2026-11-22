@@ -553,9 +553,13 @@ jobs:
           echo "TACK_REQUIRE_VTK=1" >> "$GITHUB_ENV"
           echo "TACK_REQUIRE_MFEM=1" >> "$GITHUB_ENV"
 
+      # And with every new array filled with 0xFF (TACK_FILL_NEW, #386): no
+      # backend clears a new buffer, so code that reads an array before writing
+      # it reads NaN and -1 here instead of whatever the allocator left.
       - name: Run the dataset tests with i64 ids
         env:
           SELECTION: ${{ needs.changes.outputs.selection }}
+          TACK_FILL_NEW: "0xFF"
         run: |
           printf '%s\n' "$SELECTION" > "$RUNNER_TEMP/selection.txt"
           uv run pytest -q --ids=i64 --shard ${{ matrix.shard }}/4 \

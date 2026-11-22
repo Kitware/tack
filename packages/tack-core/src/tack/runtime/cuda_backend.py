@@ -406,7 +406,8 @@ class CUDABuffer(DeviceBuffer):
                     and err == driver.CUresult.CUDA_ERROR_OUT_OF_MEMORY):
                 raise DeviceMemoryError(f"CUDA is out of memory for {self._nbytes} bytes")
             _check(err)
-            _check(driver.cuMemsetD8Async(self._device_ptr, 0, self._nbytes, stream))
+            # Not cleared: a new array's contents are unspecified (`tack.empty`);
+            # TACK_FILL_NEW or debug mode fills it (`array._filled_new`).
 
     @property
     def _stream(self):
@@ -609,9 +610,7 @@ class ExportableCUDABuffer(DeviceBuffer):
             driver.CUmemAccess_flags.CU_MEM_ACCESS_FLAGS_PROT_READWRITE)
         _check(driver.cuMemSetAccess(
             self._device_ptr, self._alloc_size, [access], 1))
-
-        # Zero-initialise
-        _check(driver.cuMemsetD8(self._device_ptr, 0, self._alloc_size))
+        # Not cleared, as an ordinary buffer is not (`array._filled_new`).
 
     def _allocation_prop(self, handle_type):
         prop = driver.CUmemAllocationProp()

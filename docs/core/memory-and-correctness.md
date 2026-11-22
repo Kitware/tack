@@ -148,6 +148,12 @@ at zero, and `fill` sets an existing one. The
 [heat tutorial](../users-guide/tutorials/heat.md) develops this pattern in
 two dimensions.
 
+A new array often happens to hold zeros (fresh pages on a Mac, Metal's new
+buffers), which hides an element no kernel wrote. To find one, run with
+`TACK_FILL_NEW=0xFF` in the environment: every new array is then filled with
+that byte, on every device, so such an element reads as NaN in a float array
+and -1 in an integer one. Debug mode fills new arrays the same way.
+
 Some in-place numerical schemes are valid, such as red-black updates in
 two separate calls. They need an argument specific to the algorithm, and
 two arrays are the safe default.

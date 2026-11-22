@@ -391,7 +391,7 @@ def _merged_unstructured(blocks, pieces, names, kind_of, target, device, toleran
     if target not in blocks.local:
         return None
     first = converted[target - blocks.local.start]
-    messages = list(incoming[target].values())
+    messages = _by_piece(incoming[target])
     np_ = sum(m["point_at"].size for m in messages)
     nc = sum(m["cell_at"].size for m in messages)
     with device:
@@ -480,7 +480,7 @@ def _assembled(topology, geometry, like, names, kind_of, parts, messages=()):
         ghosts = Ghosts(cells=marks_cells if marks_cells.any() else None,
                         points=marks_points if marks_points.any() else None)
     out = DataSet(topology, geometry, dtype=like.dtype, ghosts=ghosts, **like._frame())
-    messages = list(messages.values()) if isinstance(messages, dict) else list(messages)
+    messages = _by_piece(messages)
     if kind_of(like.geometry) == "nodes":
         space = H1(out, **_spec(like.geometry.space, None))
         out.geometry = Field(space, _nodes_placed(space, like.geometry.values, messages,
@@ -629,17 +629,33 @@ def _add_nodes(message, name, field, cells, device):
     message[f"\0sizes {name}"] = tack.array(mine, tack.i64, device=device)
 
 
+def _by_piece(messages):
+    """The messages in their pieces' order (a dict by source block, or a list in
+    that order already)."""
+    if isinstance(messages, dict):
+        return [messages[source] for source in sorted(messages)]
+    return list(messages)
+
+
 def _nodes_placed(space, like, messages, name, points=None):
     """The values of a field in ``space`` (on the merged mesh) from every message's
-    cells' nodes, ``points`` (its values at the points, for an ``H1`` field) first."""
-    from tack.communication._kernels import scatter
+    cells' nodes (``messages`` in their pieces' order), ``points`` (its values at
+    the points, for an ``H1`` field) first.
+
+    A node pieces share takes one piece's value, as a point does: a corner keeps
+    ``points``' (the owner's, by the ghost marks, else the lowest piece's), and a
+    node inside a shared edge or face the lowest piece's, its message scattered
+    last."""
+    from tack.communication._kernels import gather, scatter
     from tack.dataset.carry import _copy_prefix, _like
 
     out = _like(like, space.size)
+    corners = 0
     if points is not None:
         _copy_prefix(points, out)
+        corners = arrays.size_of(points)
     sizes, starts, places = _value_places(space, out)
-    for m in messages:
+    for m in reversed(messages):
         key = f"\0nodes {name}"
         if key not in m or not m["cell_at"].size:
             continue
@@ -649,6 +665,10 @@ def _nodes_placed(space, like, messages, name, points=None):
             raise ValueError(f"merge_pieces: the cells' nodes of {name!r} do not match the "
                              "merged mesh's")
         at = places[np.repeat(starts[cells], came) + _ramp(came)]
-        scatter(m[key].to_device(out.device), tack.array(at, tack.i64, device=out.device),
-                out)
+        values = m[key].to_device(out.device)
+        if corners:
+            inner = np.flatnonzero(at >= corners)           # corners are the points'
+            values = gather(values, tack.array(inner, tack.i64, device=out.device))
+            at = at[inner]
+        scatter(values, tack.array(at, tack.i64, device=out.device), out)
     return out

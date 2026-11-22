@@ -331,6 +331,31 @@ def test_a_merged_l2_field_keeps_the_layout_it_resolved_to_on_the_root(f64_backe
                                rtol=0, atol=1e-12)
 
 
+@pytest.mark.parametrize("unstructured", [False, True])
+@pytest.mark.parametrize("layers", [0, 1])
+def test_a_node_pieces_share_takes_the_owners_value(unstructured, layers):
+    """Pieces holding different values where they meet: a node they share takes one
+    piece's, as a point does, the owner's (the lowest piece's here). The corners
+    agree with an order-1 field's points, and the nodes inside the shared face are
+    the lowest piece's; the last piece's used to win at both."""
+    whole = td.uniform_grid((5, 2, 2), dtype=tack.f64)
+    pieces = list(td.split(whole, 2, ghost_layers=layers))
+    if unstructured:
+        pieces = [td.extract_cells(p, np.arange(p.num_cells)) for p in pieces]
+    for k, piece in enumerate(pieces):
+        piece.fields["a"] = td.Field(td.H1(piece), tack.array(np.full(piece.num_points, k + 1.0)))
+        space = td.H1(piece, order=2)
+        piece.fields["b"] = td.Field(space, tack.array(np.full(space.size, k + 1.0)))
+    merged = td.merge_pieces(td.PartitionedDataSet(pieces))
+    points = merged.fields["a"].values.numpy()
+    nodes = merged.fields["b"].values.numpy()
+    np.testing.assert_array_equal(nodes[:merged.num_points], points)
+    shared = np.isclose(merged.positions()[:, 0], 2.0)
+    assert (points[shared] == 1.0).all()
+    # Order 2 on 4 x 1 x 1 cells: 9 x 3 x 3 nodes, those at x <= 2 the first piece's.
+    assert (np.count_nonzero(nodes == 1.0), np.count_nonzero(nodes == 2.0)) == (45, 36)
+
+
 def test_merge_pieces_across_mpi_ranks(mpiexec):
     script = os.path.join(os.path.dirname(__file__), "_merge_pieces_mpi.py")
     for ranks in (2, 3):

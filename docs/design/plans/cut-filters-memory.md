@@ -189,6 +189,12 @@ a measurement says they should.
 *Recommended*, with the batch size measured at 64, 256 and 1024 on the CPU
 and a GPU, and fixed per backend kind.
 
+As carried out (#465), batches index cells flat, so a structured view (an
+image or a structured grid, iterated by `(i, j, k)`) and a mesh of several
+shapes take a per-cell form instead: each cell's counts (u8) and its start
+within its batch (u16), 15 bytes a cell. Images are the common in-situ case,
+so batching structured views by rows of cells is the next step for them.
+
 ### D4. Contour's records carry their key alone
 
 Contour makes one record per triangle corner, carrying the point's position,

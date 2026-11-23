@@ -228,6 +228,39 @@ crossings' merge, near VTK's 116; on the hexahedra from 739 MiB toward VTK's
 290. Contour on tetrahedra from 42 MiB to about VTK's 28. Every output the
 same bits as before.
 
+## Measured after D1-D4
+
+`main` at `ce3353bf` (D1 #462, D2 #463 and #464, D3 #465, D4 #466), the same
+5M-cell meshes and benchmark, which takes `--device` for this, VTK master,
+MiB.
+
+The first table again, the host allocator's peak beyond what it held before
+(the M1 Max CPU, eight threads), VTK / Tack:
+
+| | contour | slice | threshold | clip |
+|---|---|---|---|---|
+| 5M tetrahedra, VTK / Tack | 21 / 33 | 43 / 36 | 279 / 149 | 111 / 97 |
+| 5M hexahedra, VTK / Tack | 62 / 33 | 151 / 62 | 356 / 296 | 210 / 345 |
+
+By D1's count, Tack's arrays on each device at the call's peak beyond what
+they held before (temporaries and output):
+
+| device | tet contour | tet slice | tet threshold | tet clip | hex contour | hex slice | hex threshold | hex clip |
+|---|---|---|---|---|---|---|---|---|
+| CPU (M1 Max) | 34 | 37 | 147 | 80 | 37 | 50 | 249 | 200 |
+
+Clip on the tetrahedra went from 328 to 97 MiB, under VTK's 111, and on the
+hexahedra from 739 to 345 (D1: 574 to 200). Contour on the tetrahedra from 42
+to 33.
+
+On the hexahedra clip's two measures disagree: the allocator sees about 140
+MiB more than D1 counts, throughout the call, at one thread or eight. It is
+not Tack's arrays, nor anything Python traces (`tracemalloc`'s peak, 199 MiB,
+is D1's), and not compiling (the second and third calls in a process show the
+same); where it comes from is not yet known. On the tetrahedra the two are 97
+and 80. Separately, the first call on the 5M hexahedra compiles eight
+variants the 10k-cell warm-up did not, so its time includes compiling.
+
 ## Validation
 
 - Every output before and after each step, equal, on the CPU, Metal, CUDA,

@@ -16,6 +16,7 @@ can go over PCIe.
 """
 
 import math
+import os
 from dataclasses import dataclass
 
 import numpy as np
@@ -39,6 +40,7 @@ from tack.lang.types import (
     mat,
     vec,
 )
+from tack.runtime import memory_stats
 
 
 class DeviceBuffer:
@@ -1059,9 +1061,12 @@ def empty(shape, dtype=None, *, device=None, exportable=False, layout="aos") -> 
     default float type (f32 unless `set_default_float` changed it). A vector
     array of shape ``(n,)`` and dtype ``vec3(f32)`` downloads as ``(n, 3)``.
     Initialize its values with a kernel, ``fill`` or ``tack.copyto`` before
-    reading. ``device`` is a `tack.Device` or a spec such as ``"cuda"``; by
-    default the default device. ``layout="soa"`` stores a vector or matrix
-    array's components in one array each (see `SoaArray`).
+    reading: no backend clears a new array, and ``TACK_FILL_NEW=0xFF`` (or debug
+    mode) fills every one with that byte, so a read before a write shows as NaN,
+    -1 in a signed integer or the largest value of an unsigned one. ``device``
+    is a `tack.Device` or a spec such as ``"cuda"``; by default the default
+    device. ``layout="soa"`` stores a vector or matrix array's components in one
+    array each (see `SoaArray`).
     """
     backend = _target(device)
     shape = _array_shape(shape)
@@ -1102,16 +1107,76 @@ def _allocate(backend, dtype, shape, **options):
     memory: a 16 GB GPU ran out with dropped meshes still on it. The wait
     lets frees a backend defers (Level Zero's, a device without memory
     pools) complete before the retry, and buffers the collection returned to
-    a backend's cache (HIP's, Metal's) are freed (``release_memory``)."""
+    a backend's cache (HIP's, Metal's) are freed (``release_memory``). The
+    buffer is counted on its device (`tack.runtime.memory_stats`)."""
     try:
-        return backend.allocate_array(dtype, shape, **options)
+        buffer = backend.allocate_array(dtype, shape, **options)
     except MemoryError:
         import gc
 
         gc.collect()
         backend.synchronize()
         backend.release_memory()        # what the collection gave back to a cache
-        return backend.allocate_array(dtype, shape, **options)
+        buffer = backend.allocate_array(dtype, shape, **options)
+    return _filled_new(memory_stats.counted(backend, buffer), dtype)
+
+
+#: ``TACK_FILL_NEW=off``: no fill, debug mode's included (unset leaves debug mode's).
+_FILL_OFF = "off"
+
+
+def _fill_setting(text):
+    """``TACK_FILL_NEW``'s byte: ``None`` unset or empty, `_FILL_OFF` for ``off``,
+    else an integer from 0 to 255 in Python's spelling (``0xFF``, ``255``)."""
+    text = (text or "").strip().lower()
+    if text == "":
+        return None
+    if text == "off":
+        return _FILL_OFF
+    try:
+        byte = int(text, 0)
+    except ValueError:
+        byte = -1
+    if not 0 <= byte <= 255:
+        raise ValueError(f"TACK_FILL_NEW is a byte (0xFF, 255) or off, not {text!r}")
+    return byte
+
+
+#: The byte every new array is filled with, `_FILL_OFF`, or ``None``:
+#: ``TACK_FILL_NEW``, read when Tack is imported. Debug mode fills with 0xFF when
+#: this is unset (``None``), not when it is ``off``.
+_FILL_NEW = _fill_setting(os.environ.get("TACK_FILL_NEW"))
+
+
+def _new_fill():
+    """The byte new arrays are filled with now, or ``None``: ``TACK_FILL_NEW``'s, none
+    for ``off``, else 0xFF in debug mode (`tack.set_debug`)."""
+    if _FILL_NEW == _FILL_OFF:
+        return None
+    if _FILL_NEW is not None:
+        return _FILL_NEW
+    from tack.runtime import dispatch
+
+    return 0xFF if dispatch._debug else None
+
+
+def _filled_new(buffer, dtype):
+    """``buffer``, filled with `_new_fill`'s byte when there is one. A new array's
+    contents are unspecified on every backend, and no backend clears them, so code
+    that reads an array before writing it reads what the allocator left, zeros as
+    often as not; filled with 0xFF it reads NaN, -1 (signed) or the type's largest
+    value (unsigned) instead, on every backend alike. On the device where the
+    buffer fills itself (``fill_bytes``: CUDA, HIP, Level Zero), through its
+    storage elsewhere."""
+    byte = _new_fill()
+    if byte is None or buffer.nbytes == 0:
+        return buffer
+    pattern = bytes([byte]) * np.dtype(dtype.numpy_dtype).itemsize
+    if not buffer.fill_bytes(pattern):
+        buffer.fill(np.frombuffer(pattern, dtype.numpy_dtype)[0])
+    if buffer.starts_zeroed and byte:
+        buffer.starts_zeroed = False                # Metal's fresh buffers, filled
+    return buffer
 
 
 def _empty_for_mpi(shape, dtype, device) -> Array:
@@ -1124,8 +1189,10 @@ def _empty_for_mpi(shape, dtype, device) -> Array:
     scalar = dtype.scalar_dtype if isinstance(dtype, ElementType) else dtype
     _check_dtype(backend, scalar)
     storage = (int(math.prod(shape)) * dtype.size,) if isinstance(dtype, ElementType) else shape
-    return _array_view(dtype, shape, backend.allocate_mpi_array(scalar, storage),
-                       device=backend)
+    buffer = _filled_new(memory_stats.counted(backend, backend.allocate_mpi_array(scalar,
+                                                                                 storage)),
+                         scalar)
+    return _array_view(dtype, shape, buffer, device=backend)
 
 
 def zeros(shape, dtype=None, *, device=None, layout="aos") -> Array:

@@ -33,6 +33,8 @@ high-order fields evaluated as the cell-side path does it. Anything else keeps
 the cell-side path.
 """
 
+import copy
+
 import tack
 from tack import arrays
 from tack.dataset import shapes, views
@@ -45,6 +47,10 @@ _SHAPES = (shapes.Tetra, shapes.Hexahedron, shapes.Wedge, shapes.Pyramid, shapes
 
 # The kinds bit for polyhedra, past the shapes'.
 _POLYHEDRA = 256
+
+# Cells that hold no points where a search has marks: hidden or refined
+# (``Ghosts.MASKED_CELLS``).
+_MASKED = tack.constant(40, tack.i32)
 
 
 @tack.func
@@ -95,6 +101,10 @@ class _NoPolyhedra:
         return -1, p - p, 0
 
     @tack.func
+    def locate_held(self, e, p, slack, near):
+        return -1, p - p, 0
+
+    @tack.func
     def tet_value_of(self, field, e, t, pc):
         return field.values[0]
 
@@ -113,6 +123,13 @@ class _FannedCells:
     @tack.func
     def fanned(self, e):
         return 1
+
+    @tack.func
+    def locate_held(self, c, x, slack, near):
+        """``locate``, where the nearest piece is wanted only if ``near`` is 1: a
+        polygon or polyline seeks both at once, so it gives both always."""
+        t, pc, inside = self.locate(c, x, slack)
+        return t, pc, inside
 
     @tack.func
     def point_position(self, p):
@@ -169,7 +186,14 @@ class _PolyhedralMesh(_FannedCells, views._PolyhedralLocation, views._Polyhedral
     def locate(self, c, x, slack):
         """``_PolyhedralLocation.locate`` from its cell point; a cell the locator found
         no kernel for (``moved_cell_points``' -2) holds nothing."""
-        t, pc, inside = self.locate_from(c, self.cell_point(c), x, slack)
+        t, pc, inside = self.locate_held(c, x, slack, 1)
+        return t, pc, inside
+
+    @tack.func
+    def locate_held(self, c, x, slack, near):
+        """``locate``, seeking the nearest sub-tetrahedron only where ``near`` is 1
+        (``_PolyhedralLocation.locate_held_from``)."""
+        t, pc, inside = self.locate_held_from(c, self.cell_point(c), x, slack, near)
         skipped = self.moved_starts[c] if self.MOVED == 1 else -1
         if skipped == -2:
             t = -1
@@ -295,6 +319,12 @@ class _PolylineMesh(views._PolylineLocation, views._PolyhedralWalk, views._Polyl
     @tack.func
     def fanned(self, e):
         return 1
+
+    @tack.func
+    def locate_held(self, c, x, slack, near):
+        """``locate``, as ``_FannedCells.locate_held``."""
+        t, pc, inside = self.locate(c, x, slack)
+        return t, pc, inside
 
     @tack.func
     def point_position(self, p):
@@ -582,6 +612,10 @@ class _MeshSearch:
     #: (``_well_inside_fan``).
     FANNED = 0
 
+    #: 1 (an instance's, compiled in, ``with_masks``): cells whose mark in
+    #: ``marks`` is hidden or refined (``Ghosts.MASKED_CELLS``) hold no points.
+    HIDDEN = 0
+
     def __init__(self, cells, present, positions, locator, tolerance, neighbors=None,
                  curved=None):
         self._hold_cells(cells, present, positions, locator, tolerance, neighbors, curved)
@@ -615,6 +649,7 @@ class _MeshSearch:
         self.quad = shapes.Quad()
         self.pixel = shapes.Pixel()
         self.positions = positions
+        self.marks = tack.zeros((1,), tack.u8, device=locator._device)
         self.tolerance = float(tolerance)
         self.ncells = locator.data.num_cells
         self.neighbors = neighbors if neighbors is not None else tack.zeros((1,), tack.i32)
@@ -651,6 +686,8 @@ class _MeshSearch:
         kind = 0
         pc = p - p
         tet = -1
+        if hint < self.ncells and self._left_out(hint):
+            hint = self.ncells
         if self.PREVIOUS_CELL == 1 and self.FANNED == 1 and hint < self.ncells:
             if self.cells.NO_REFERENCE == 1 or self.cells.fanned(hint) == 1:
                 e, kind, pc, tet = self._well_inside_fan(p, hint)
@@ -660,13 +697,28 @@ class _MeshSearch:
             if self.NEIGHBORS == 1 and e == self.ncells:
                 for k in range(self.MAX_FACES):
                     f = self.neighbors[self.MAX_FACES * hint + k]
-                    if f >= 0:
+                    if f >= 0 and not self._left_out(f):
                         e, kind, pc = self._well_inside(p, f)
                         if e < self.ncells:
                             break
         if e == self.ncells:
             e, kind, pc, tet = self.find(p)
         return e, kind, pc, tet
+
+    def with_masks(self, marks):
+        """This search with the cells ``marks`` masks (a dataset's ghost marks:
+        hidden or refined) left out: they hold no points, so a point in one is
+        found in a neighbour within its tolerance, or nowhere, as in the dataset
+        with them extracted (``ghosts.visible``), without extracting them. A copy,
+        so a locator's search is shared by datasets of other marks."""
+        out = copy.copy(self)
+        out.marks = marks
+        out.HIDDEN = 1
+        return out
+
+    @tack.func
+    def _left_out(self, e):
+        return self.HIDDEN == 1 and (tack.i32(self.marks[e]) & _MASKED) != 0
 
     @tack.func
     def _well_inside_fan(self, p, e):
@@ -680,7 +732,7 @@ class _MeshSearch:
         a = self.lo[e]
         c = self.hi[e]
         s = self.tolerance * (c - a).norm()
-        tet, tpc, held = self.cells.locate(e, p, s)
+        tet, tpc, held = self.cells.locate_held(e, p, s, 0)
         found = self.ncells
         kind = 0
         pc = p - p
@@ -762,7 +814,8 @@ class _MeshSearch:
                 a = self.lo[e]
                 c = self.hi[e]
                 s = self.tolerance * (c - a).norm()
-                if (e < best_rank and p[0] >= a[0] - s and p[0] <= c[0] + s
+                if (e < best_rank and not self._left_out(e) and p[0] >= a[0] - s
+                        and p[0] <= c[0] + s
                         and p[1] >= a[1] - s and p[1] <= c[1] + s
                         and p[2] >= a[2] - s and p[2] <= c[2] + s):
                     kind = self.cells.cell_type(e)
@@ -771,7 +824,10 @@ class _MeshSearch:
                         # No parametric coordinates: a piece of the cell's fan (a
                         # polyline's segment) and the point's place in it, within
                         # the cell's tolerance.
-                        tet, tpc, held = self.cells.locate(e, p, s)
+                        # The nearest piece only where it could rank: not
+                        # once a cell holding p is found.
+                        near = 1 if e + self.ncells < best_rank else 0
+                        tet, tpc, held = self.cells.locate_held(e, p, s, near)
                         if tet >= 0:
                             rank = e if held == 1 else e + self.ncells
                             if rank < best_rank:
@@ -993,7 +1049,7 @@ class _GridSearch(_MeshSearch):
             for j in range(j0, j1 + 1):
                 for i in range(i0, i1 + 1):
                     e = i + self.cx * (j + self.cy * k)
-                    if e < best_rank:
+                    if e < best_rank and not self._left_out(e):
                         # The cell's box, as CellLocator's (its corners' least and
                         # greatest), from the corners the test reads.
                         a = self.positions[self.cells.point_id(e, 0)]
@@ -1019,12 +1075,19 @@ class _GridSearch(_MeshSearch):
         return best, best_type, best_pc, -1, 1 if best_rank < self.ncells else 0
 
 
-def mesh_search(data, locator, positions=None, strict=True, neighbors=False):
+def mesh_search(data, locator, positions=None, strict=True, neighbors=False, marks=None):
     """A ``_MeshSearch`` over ``data`` with ``locator``'s bins, or ``None`` where
     this module cannot serve the dataset (see the module's docstring); with
     ``neighbors``, walking to a hint's face neighbours too (where the locator
     has them, ``CellLocator.cell_neighbors``), except on an image or a
-    rectilinear grid, whose search by arithmetic is as cheap (``_GridSearch``)."""
+    rectilinear grid, whose search by arithmetic is as cheap (``_GridSearch``).
+    ``marks`` (cell ghost marks) leaves hidden and refined cells out
+    (``_MeshSearch.with_masks``)."""
+    search = _search_of(data, locator, positions, strict, neighbors)
+    return search.with_masks(marks) if search is not None and marks is not None else search
+
+
+def _search_of(data, locator, positions, strict, neighbors):
     from tack.dataset.locator import _TOLERANCE
 
     geometry = data.geometry

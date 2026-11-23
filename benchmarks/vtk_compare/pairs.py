@@ -104,6 +104,16 @@ def _threshold(grid, mesh, form):
     return f
 
 
+def _table_clip(grid, mesh, form):
+    from vtkmodules.vtkFiltersGeneral import vtkTableBasedClipDataSet
+
+    # Keeps p above the value, as td.clip keeps it at or above (off every
+    # point's value, as the contour is).
+    f = vtkTableBasedClipDataSet(input_data=grid, value=CONTOUR_ISOVALUE)
+    f.SetInputArrayToProcess(0, 0, 0, 0, "p")
+    return f
+
+
 def _geometry_filter(grid, mesh, form):
     from vtkmodules.vtkFiltersGeometry import vtkGeometryFilter
 
@@ -208,6 +218,10 @@ PAIRS = [
          vtk=_plane_cutter,
          tack=lambda d, m: _tack()[0].slice_plane(d, tuple(_center(m)), tuple(NORMAL)),
          point_fields=("p",), output="surface"),
+    Pair("clip",
+         vtk=_table_clip,
+         tack=lambda d, m: _tack()[0].clip(d, "p", CONTOUR_ISOVALUE),
+         point_fields=("p",), forms=("shape",), output="volume"),
     Pair("threshold",
          vtk=_threshold,
          tack=lambda d, m: _tack()[0].threshold(d, "c", *THRESHOLD),

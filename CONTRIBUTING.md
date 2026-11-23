@@ -305,7 +305,10 @@ Record what the PR changes for users in a file of its own in `changelog.d/`
 (`python tools/changelog.py release VERSION DATE`), so two PRs never conflict
 over it.
 
-Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md).
+Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md). What a
+review checks is in [GOVERNANCE.md](GOVERNANCE.md#reviewing-a-pull-request). A
+security vulnerability is reported privately, as [SECURITY.md](SECURITY.md) says,
+not in an issue or a pull request.
 
 Open a PR against `main`. CI runs lint (with `tools/changelog.py check` and `tools/spdx_headers.py check`), the suite on Python 3.11/3.12/3.13, the
 packaging gate, the example sweep, and a Metal job on an Apple Silicon runner.

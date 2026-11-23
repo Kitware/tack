@@ -579,7 +579,7 @@ READY = {
     "jump", "upwind_flux", "divergence",
     # Phase 3: filters that build a topology.
     "as_polyhedra", "merge_points", "merge_points_polyhedra", "clip", "clip_polyhedra",
-    "clip_boolean", "tetrahedralize", "extract_surface", "external_faces", "surface_normals",
+    "clip_boolean", "isovolume", "tetrahedralize", "extract_surface", "external_faces", "surface_normals",
     "feature_edges", "contour_2d", "contour", "slice",
     # Phase 4: cells by id.
     "probe", "voxelize", "advect", "streamlines",
@@ -588,7 +588,7 @@ READY = {
 #: Calls of `READY` whose answer is not the shaped mesh's but that of the same call
 #: on ``as_polyhedra`` of it: clip makes every cut cell a polyhedron, where the
 #: shapes' tables cut it into shapes, and keeps whole cells as they are.
-AS_POLYHEDRA = {"clip", "clip_boolean"}
+AS_POLYHEDRA = {"clip", "clip_boolean", "isovolume"}
 
 #: Calls of `READY` with tests of their own: tetrahedralize adds points.
 OWN_TESTS = {"tetrahedralize"}
@@ -1220,8 +1220,8 @@ def test_the_bucketed_mixed_faces_of_polygons_beside_quads(chosen):
 
 #: The calls of `test_dataset_devices.CALLS` that take a surface of polygons beside
 #: triangles and quads, each held to the shaped surface's answer.
-READY_2D = set(READY) - {"clip", "clip_boolean", "clip_polyhedra", "as_polyhedra",
-                         "merge_points_polyhedra"} | {"triangulate", "as_polygons"}
+READY_2D = set(READY) - {"clip", "clip_boolean", "clip_polyhedra", "isovolume",
+                         "as_polyhedra", "merge_points_polyhedra"} | {"triangulate", "as_polygons"}
 
 #: Calls made otherwise on surfaces: perot of a flux out of each face's side 0
 #: (the sweep's ones are not turned with the sides, which the shaped and mixed

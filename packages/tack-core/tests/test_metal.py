@@ -440,8 +440,13 @@ def test_sync_waits_for_queued_launches():
 def test_zeros_do_not_wait_for_queued_launches(monkeypatch):
     """A new buffer is already zero and no queued launch can use it, so
     ``tack.zeros`` neither fills it nor waits: waiting cost a GPU round trip
-    per call, most of a small filter's time on Metal."""
+    per call, most of a small filter's time on Metal. The ordinary fast path:
+    with new arrays filled (TACK_FILL_NEW, debug mode), ``zeros`` overwrites the
+    pattern, so that fill is turned off here."""
+    from tack.lang import array as array_module
     from tack.runtime import metal
+
+    monkeypatch.setattr(array_module, "_FILL_NEW", array_module._FILL_OFF)
 
     @tack.kernel
     def dirty(a):

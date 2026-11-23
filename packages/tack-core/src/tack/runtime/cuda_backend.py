@@ -263,6 +263,35 @@ _DEAD_CONTEXT_MSG = (
 )
 
 
+def _fill_on_stream(device_ptr, nbytes, pattern, stream):
+    """Fill ``nbytes`` at ``device_ptr`` with ``pattern`` (one element's bytes,
+    repeated), queued on ``stream``: a memset where the pattern is one byte, two or
+    four, else ``device_fill``'s doubling copies. Nothing goes through a host buffer
+    the size of the array."""
+    base = int(device_ptr)
+
+    def native(pattern):
+        byte = device_fill.uniform_byte(pattern)
+        if byte is not None:
+            _check(driver.cuMemsetD8Async(device_ptr, byte, nbytes, stream))
+        elif len(pattern) == 2:
+            _check(driver.cuMemsetD16Async(device_ptr, device_fill.as_unsigned(pattern),
+                                           nbytes // 2, stream))
+        elif len(pattern) == 4:
+            _check(driver.cuMemsetD32Async(device_ptr, device_fill.as_unsigned(pattern),
+                                           nbytes // 4, stream))
+        else:
+            return False
+        return True
+
+    device_fill.fill(
+        nbytes, pattern, native,
+        lambda offset, data: _check(driver.cuMemcpyHtoDAsync(
+            base + offset, np.frombuffer(data, np.uint8), len(data), stream)),
+        lambda dst, src, size: _check(driver.cuMemcpyDtoDAsync(
+            base + dst, base + src, size, stream)))
+
+
 def _drain(stream):
     """Wait for the stream before a copy to pageable host memory.
 
@@ -299,16 +328,20 @@ def _has_memory_pools(ordinal):
 
 
 def _free_dropped(token, wait=False):
-    """``cuMemFree`` the ``cuMemAlloc`` buffers dropped in ``token``'s context
-    (every buffer on a device without memory pools, and memory for a GPU-aware
-    MPI on one with them), once its stream is idle, or after waiting for it.
+    """Free what was dropped in ``token``'s context, once its stream is idle, or
+    after waiting for it: ``cuMemFree`` the ``cuMemAlloc`` buffers (every buffer
+    on a device without memory pools, and memory for a GPU-aware MPI on one with
+    them), and run the releases of exportable buffers (`_release_mapping`).
 
     ``cuMemFree`` waits for the whole device: on the T4 it took 1.26 s
     behind an unrelated launch. Freeing as a buffer is dropped would make a
     garbage collection wait for every queued launch, so a dropped buffer is
     only queued here (`CUDABuffer.__del__`), and freed when the host waits
     anyway or the stream has nothing left: at the next allocation, at a
-    sync, or when an allocation runs out of memory.
+    sync, or when an allocation runs out of memory. Exportable memory cannot
+    be unmapped in stream order at all: unmapped under a queued launch, fill
+    or copy, the launch faults (``CUDA_ERROR_ILLEGAL_ADDRESS``) and takes the
+    context with it.
     """
     if not token.dropped or not token.alive:
         return
@@ -320,10 +353,28 @@ def _free_dropped(token, wait=False):
             return
         while True:
             try:
-                ptr = token.dropped.popleft()
+                dropped = token.dropped.popleft()
             except IndexError:
                 return
-            driver.cuMemFree(ptr)
+            if callable(dropped):
+                dropped()
+            else:
+                driver.cuMemFree(dropped)
+
+
+def _release_mapping(device_ptr, size, mem_handle):
+    """What frees an exportable buffer's memory (`ExportableCUDABuffer.__del__`):
+    unmap and free its address range, release its physical memory. Queued on the
+    token's ``dropped`` and run by `_free_dropped` once the stream is idle, since
+    only Tack's stream writes the buffer (launches, fills, ``from_numpy``, the
+    export's copy and clear) and nothing orders an unmap after its work."""
+    def release():
+        if device_ptr is not None:
+            driver.cuMemUnmap(device_ptr, size)
+            driver.cuMemAddressFree(device_ptr, size)
+        if mem_handle is not None:
+            driver.cuMemRelease(mem_handle)
+    return release
 
 
 def _has_virtual_memory(ordinal):
@@ -392,12 +443,13 @@ class CUDABuffer(DeviceBuffer):
         self._pooled = pools if pooled is None else (pooled and pools)
         stream = token.queue()
         with _in_context(token):
+            # Exportable memory dropped is freed here too, on a device with pools.
+            _free_dropped(token)
             # A zero-byte request is rejected; an empty array gets one byte
             # it never reads, as on Level Zero.
             if self._pooled:
                 err, self._device_ptr = driver.cuMemAllocAsync(max(self._nbytes, 1), stream)
             else:
-                _free_dropped(token)
                 err, self._device_ptr = driver.cuMemAlloc(max(self._nbytes, 1))
                 if err == driver.CUresult.CUDA_ERROR_OUT_OF_MEMORY and token.dropped:
                     _free_dropped(token, wait=True)
@@ -406,7 +458,8 @@ class CUDABuffer(DeviceBuffer):
                     and err == driver.CUresult.CUDA_ERROR_OUT_OF_MEMORY):
                 raise DeviceMemoryError(f"CUDA is out of memory for {self._nbytes} bytes")
             _check(err)
-            _check(driver.cuMemsetD8Async(self._device_ptr, 0, self._nbytes, stream))
+            # Not cleared: a new array's contents are unspecified (`tack.empty`);
+            # TACK_FILL_NEW or debug mode fills it (`array._filled_new`).
 
     @property
     def _stream(self):
@@ -490,31 +543,7 @@ class CUDABuffer(DeviceBuffer):
             return self._fill_bytes(pattern)
 
     def _fill_bytes(self, pattern):
-        base = int(self._device_ptr)
-        stream = self._stream
-
-        def native(pattern):
-            byte = device_fill.uniform_byte(pattern)
-            if byte is not None:
-                _check(driver.cuMemsetD8Async(self._device_ptr, byte, self._nbytes, stream))
-            elif len(pattern) == 2:
-                _check(driver.cuMemsetD16Async(self._device_ptr,
-                                               device_fill.as_unsigned(pattern),
-                                               self._nbytes // 2, stream))
-            elif len(pattern) == 4:
-                _check(driver.cuMemsetD32Async(self._device_ptr,
-                                               device_fill.as_unsigned(pattern),
-                                               self._nbytes // 4, stream))
-            else:
-                return False
-            return True
-
-        device_fill.fill(
-            self._nbytes, pattern, native,
-            lambda offset, data: _check(driver.cuMemcpyHtoDAsync(
-                base + offset, np.frombuffer(data, np.uint8), len(data), stream)),
-            lambda dst, src, size: _check(driver.cuMemcpyDtoDAsync(
-                base + dst, base + src, size, stream)))
+        _fill_on_stream(self._device_ptr, self._nbytes, pattern, self._stream)
         return True
 
     def _view_fields(self, start, count):
@@ -530,10 +559,12 @@ class CUDABuffer(DeviceBuffer):
         if not hasattr(self, '_export_buf'):
             self._export_buf = ExportableCUDABuffer(self._numpy_dtype, self._shape,
                                                     self._token)
-            self.synchronize()
+            # Queued after the launches that write this array; the export waits
+            # for the stream before its handle leaves Tack.
             with _in_context(self._token):
-                _check(driver.cuMemcpyDtoD(
-                    self._export_buf._device_ptr, self._device_ptr, self._nbytes))
+                _check(driver.cuMemcpyDtoDAsync(
+                    self._export_buf._device_ptr, self._device_ptr, self._nbytes,
+                    self._stream))
         return self._export_buf.export_memory()
 
     def __del__(self):
@@ -580,6 +611,7 @@ class ExportableCUDABuffer(DeviceBuffer):
         self._handle_type_name = None
         self._token = token = token or _current_context_token()
         with _in_context(token):
+            _free_dropped(token)
             self._map()
 
     def _map(self):
@@ -609,9 +641,8 @@ class ExportableCUDABuffer(DeviceBuffer):
             driver.CUmemAccess_flags.CU_MEM_ACCESS_FLAGS_PROT_READWRITE)
         _check(driver.cuMemSetAccess(
             self._device_ptr, self._alloc_size, [access], 1))
-
-        # Zero-initialise
-        _check(driver.cuMemsetD8(self._device_ptr, 0, self._alloc_size))
+        # Not cleared, as an ordinary buffer is not (`array._filled_new`); the
+        # padding past the array is, before the first export (`_clear_padding`).
 
     def _allocation_prop(self, handle_type):
         prop = driver.CUmemAllocationProp()
@@ -674,9 +705,13 @@ class ExportableCUDABuffer(DeviceBuffer):
         return self._device_ptr
 
     def from_numpy(self, arr: np.ndarray):
+        # On Tack's stream, as every write to this buffer is, so that the stream
+        # idle means nothing touches it (`_release_mapping`). The host array is
+        # pageable, so the driver has staged it before this returns.
         src = np.ascontiguousarray(arr, dtype=self._numpy_dtype)
         with _in_context(self._token):
-            _check(driver.cuMemcpyHtoD(self._device_ptr, src, self._nbytes))
+            _check(driver.cuMemcpyHtoDAsync(self._device_ptr, src, self._nbytes,
+                                            self._queued_stream or driver.CUstream(0)))
 
     def to_numpy(self) -> np.ndarray:
         out = np.empty(self._shape, dtype=self._numpy_dtype)
@@ -709,8 +744,17 @@ class ExportableCUDABuffer(DeviceBuffer):
                                       start, count)
 
     def fill(self, value):
-        arr = np.full(self._shape, value, dtype=self._numpy_dtype)
-        self.from_numpy(arr)
+        self.fill_bytes(device_fill.scalar_pattern(value, self._numpy_dtype))
+
+    def fill_bytes(self, pattern):
+        """On the device, queued on the context's stream (``_fill_on_stream``), as an
+        ordinary buffer fills: never a host array the size of this one, which
+        ``TACK_FILL_NEW`` would otherwise make for every exportable array. The
+        legacy-stream copies that read and write this buffer wait for that stream."""
+        with _in_context(self._token):
+            _fill_on_stream(self._device_ptr, self._nbytes, pattern,
+                            self._queued_stream or driver.CUstream(0))
+        return True
 
     def _view_fields(self, start, count):
         return pointer_view_fields(self, start, count)
@@ -719,10 +763,33 @@ class ExportableCUDABuffer(DeviceBuffer):
     def nbytes(self) -> int:
         return self._nbytes
 
+    def _clear_padding(self, stream):
+        """Zero the allocation past the array, queued on ``stream``, before its handle
+        first leaves Tack: the handle shares the whole allocation (``allocation_size``,
+        rounded up to the granularity), and nothing writes that padding, which would
+        otherwise carry the memory's earlier contents out. The array is the caller's,
+        as any new array's contents are; only the padding is cleared, so allocation
+        stays free of a clear."""
+        padding = self._alloc_size - self._nbytes
+        if padding > 0:
+            _check(driver.cuMemsetD8Async(int(self._device_ptr) + self._nbytes, 0,
+                                          padding, stream))
+
     def export_memory(self):
-        """Export as ExportedMemory (handle + size + UUID). The handle is cached."""
+        """Export as ExportedMemory (handle + size + UUID). The handle is cached.
+
+        The first export waits for Tack's stream, with or without padding to clear:
+        the copy an ordinary array's export makes (`CUDABuffer.export_memory`) and
+        the padding's clear are queued there, and both must be done before the handle
+        leaves Tack. It waits for that stream alone: a whole-context wait would also
+        wait for other libraries' streams, which may be waiting on the host. Later
+        launches and fills are the caller's to order (`tack.sync`)."""
         from tack.lang.array import ExportedMemory
         if self._exported_handle is None:
+            stream = self._queued_stream or driver.CUstream(0)
+            with _in_context(self._token):
+                self._clear_padding(stream)
+                _check(driver.cuStreamSynchronize(stream))
             err, handle = driver.cuMemExportToShareableHandle(
                 self._mem_handle, self._handle_type, 0)
             _check(err)
@@ -749,14 +816,14 @@ class ExportableCUDABuffer(DeviceBuffer):
             # The fd is ours whatever happened to the context, but the
             # mapping and the handle went down with it.
             token = getattr(self, "_token", None)
-            if token is not None and not token.alive:
+            if token is None or not token.alive:
                 return
-            with _in_context(token):
-                if self._device_ptr is not None:
-                    driver.cuMemUnmap(self._device_ptr, self._alloc_size)
-                    driver.cuMemAddressFree(self._device_ptr, self._alloc_size)
-                if self._mem_handle is not None:
-                    driver.cuMemRelease(self._mem_handle)
+            # Not unmapped now: launches, fills and copies queued on the stream
+            # may still use the memory. Freed once the stream is idle, at once if
+            # it is now.
+            token.dropped.append(_release_mapping(
+                self._device_ptr, getattr(self, "_alloc_size", 0), self._mem_handle))
+            _free_dropped(token)
         except Exception:
             pass
 
@@ -1478,6 +1545,9 @@ class CUDABackend(GPUBackend):
             if token.stream is not None:
                 with _in_context(token):
                     driver.cuStreamSynchronize(token.stream)
+                    # A primary context other libraries hold outlives this
+                    # backend, and so would what was dropped but not yet freed.
+                    _free_dropped(token)
                     driver.cuStreamDestroy(token.stream)
                 token.stream = None
             if token.owned:

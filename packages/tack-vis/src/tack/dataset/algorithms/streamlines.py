@@ -80,29 +80,28 @@ def streamlines(data, field, seeds, step_size, steps, integrator="rk4", locator=
     or below it, so a path stops where the flow does instead of wandering
     through near-still fluid.
 
-    Over a ``PartitionedDataSet`` (``field`` by name), paths cross from piece to
+    Over a ``PartitionedDataSet`` (``field`` by name, or an object whose
+    ``on(piece)`` gives each piece's field, as a field expression does), paths cross from piece to
     piece, each piece holding the stretches it traced."""
     # A step as a time ("0.5 s") is in the spatial unit over the velocity's; as
     # a length ("1 mm"), in the spatial unit.
     if step_unit not in ("time", "length"):
         raise ValueError(f"step_unit is 'time' or 'length', not {step_unit!r}")
-    step_size, tolerance, min_step, max_step, max_length, terminal_speed = _parameters(
-        data, field, step_unit, "streamlines", step_size, tolerance, min_step, max_step,
-        max_length, terminal_speed)
-    adaptive = {"tolerance": tolerance, "min_step": min_step, "max_step": max_step,
-                "max_length": max_length, "terminal_speed": terminal_speed}
     from tack.dataset.partitioned import PartitionedDataSet
 
     if isinstance(data, PartitionedDataSet):
         from tack.dataset.algorithms._particles import streamlines_pieces
         return streamlines_pieces(data, field, seeds, step_size, steps, integrator, step_unit,
-                                  neighbors, **adaptive)
-    from tack.dataset.ghosts import refuse_hidden, visible
+                                  neighbors, tolerance=tolerance, min_step=min_step,
+                                  max_step=max_step, max_length=max_length,
+                                  terminal_speed=terminal_speed)
 
-    if locator is None:
-        data, field = visible(data, field)
-    else:
-        refuse_hidden(data, "streamlines with a locator")
+    step_size, tolerance, min_step, max_step, max_length, terminal_speed = _parameters(
+        data, field, step_unit, "streamlines", step_size, tolerance, min_step, max_step,
+        max_length, terminal_speed)
+    adaptive = {"tolerance": tolerance, "min_step": min_step, "max_step": max_step,
+                "max_length": max_length, "terminal_speed": terminal_speed}
+    # Hidden and refined cells are left out by the search (_run, masked_marks).
     from tack.dataset.polyhedra import PolylineTopology
 
     _, _, _, _, (trace, trace_times), lengths, capacity, _ = _run(

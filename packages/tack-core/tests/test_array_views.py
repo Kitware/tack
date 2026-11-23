@@ -234,7 +234,7 @@ def test_a_metal_view_handed_out_comes_back_at_its_offset(backend):
 
 
 def test_numpy_reads_a_cpu_view_through_dlpack():
-    a = _floats(10)
+    a = tack.array(np.arange(10, dtype=np.float32), device="cpu")
     np.testing.assert_array_equal(np.from_dlpack(a[3:6]), [3, 4, 5])
 
 

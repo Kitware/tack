@@ -189,6 +189,12 @@ a measurement says they should.
 *Recommended*, with the batch size measured at 64, 256 and 1024 on the CPU
 and a GPU, and fixed per backend kind.
 
+As carried out (#465), batches index cells flat, so a structured view (an
+image or a structured grid, iterated by `(i, j, k)`) and a mesh of several
+shapes take a per-cell form instead: each cell's counts (u8) and its start
+within its batch (u16), 15 bytes a cell. Images are the common in-situ case,
+so batching structured views by rows of cells is the next step for them.
+
 ### D4. Contour's records carry their key alone
 
 Contour makes one record per triangle corner, carrying the point's position,
@@ -209,6 +215,11 @@ contour on tetrahedra to about VTK's peak. Taken after D2 and D3, and after
   call, but the table is kept for the topology's life (about 300 MiB for 5M
   tetrahedra). Worth measuring for repeated filters on one mesh (animation,
   parameter sweeps), after this plan.
+- **Flying edges' flags a value at a time.** Contour keeps one flag byte per
+  point per value, so ten values over 80M points are 800 MB of flags; VTK's
+  `vtkFlyingEdges3D` reuses one byte per point, a value at a time. Worth it
+  when many values over large grids are measured to need it: the passes then
+  run once per value, not once for all.
 
 ## Expected
 

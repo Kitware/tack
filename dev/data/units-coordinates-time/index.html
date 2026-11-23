@@ -2082,6 +2082,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#what-the-values-are-kinds" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the values are: kinds
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-filters-do-with-units" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5241,6 +5252,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#what-the-values-are-kinds" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the values are: kinds
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-filters-do-with-units" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5390,7 +5412,7 @@ precision. A temperature means little until you know whether it is in kelvin
 or in degrees Celsius, and a simulation's step means little without its time.
 So besides its cells and fields, a Tack dataset records three facts: where its
 positions are measured from, the units of its positions and fields, and when
-the data are. VTK keeps a unit in an array's <code>UNITS_LABEL</code> and a time in
+the data are. A field may also record what its values are, its kind. VTK keeps a unit in an array's <code>UNITS_LABEL</code> and a time in
 <code>DATA_TIME_STEP</code>. Tack keeps them on the field and on the dataset, and filters
 keep them through a pipeline.</p>
 <h2 id="a-survey-far-from-zero-in-metres-at-one-time">A survey far from zero, in metres, at one time<a class="headerlink" href="#a-survey-far-from-zero-in-metres-at-one-time" title="Permanent link">&para;</a></h2>
@@ -5500,6 +5522,110 @@ field is made. <code>td.units</code> has the helpers you need to work with them:
 kiloparsec in centimetres, and need nothing registered. Besides unyt's
 units, Tack knows the US survey foot, <code>"ftUS"</code>, which State Plane
 coordinates and older LiDAR use.</p>
+<h2 id="what-the-values-are-kinds">What the values are: kinds<a class="headerlink" href="#what-the-values-are-kinds" title="Permanent link">&para;</a></h2>
+<p>A unit says what a field's numbers are measured in, not what they are. A
+pressure and a stress are both in pascals, a torque and an energy are both in
+newton metres, and three numbers per point may be a velocity, a vorticity or
+three unrelated values. A field's <strong>kind</strong>, <code>Field(..., kind=)</code>, records what
+the values are, beside the unit. A <code>td.Kind</code> has five parts, each optional:</p>
+<table>
+<thead>
+<tr>
+<th>part</th>
+<th>values</th>
+<th>what it tells apart</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>name</code></td>
+<td>a registered quantity: <code>"Pressure"</code>, <code>"Velocity"</code>, <code>"Stress"</code></td>
+<td>quantities that share a unit</td>
+</tr>
+<tr>
+<td><code>rank</code></td>
+<td><code>"scalar"</code>, <code>"vector"</code>, <code>"tensor"</code>, <code>"symmetric tensor"</code></td>
+<td>one vector from three unrelated numbers</td>
+</tr>
+<tr>
+<td><code>extent</code></td>
+<td><code>"intensive"</code> (a density, a velocity), <code>"extensive"</code> (a mass, a count)</td>
+<td>whether coarsening averages or sums</td>
+</tr>
+<tr>
+<td><code>parity</code></td>
+<td><code>"polar"</code>, <code>"axial"</code></td>
+<td>whether a reflection turns it the other way (a vorticity, a magnetic field)</td>
+</tr>
+<tr>
+<td><code>variance</code></td>
+<td><code>"contravariant"</code> (a velocity), <code>"covariant"</code> (a gradient), <code>"mixed"</code> (a tensor's)</td>
+<td>how it turns under a linear map</td>
+</tr>
+</tbody>
+</table>
+<p>A name fills in the other parts from a registry seeded with CGNS's data
+names, so most fields need only the name. Without a name each part stands
+alone: <code>Kind(rank="vector")</code> is a vector and nothing more is known. As for
+units, <code>None</code> is unknown, part by part, and nothing is guessed.</p>
+<!-- tack-check: field-kinds -->
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">tack</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">tack.dataset</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">td</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset</span><span class="w"> </span><span class="kn">import</span> <span class="n">kinds</span>
+
+<span class="n">tack</span><span class="o">.</span><span class="n">set_default_device</span><span class="p">(</span><span class="s2">&quot;cpu&quot;</span><span class="p">)</span>
+
+<span class="n">data</span> <span class="o">=</span> <span class="n">td</span><span class="o">.</span><span class="n">uniform_grid</span><span class="p">((</span><span class="mi">4</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">4</span><span class="p">),</span> <span class="n">unit</span><span class="o">=</span><span class="s2">&quot;m&quot;</span><span class="p">)</span>
+<span class="n">n</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">num_points</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">positions</span><span class="p">()[:,</span> <span class="mi">0</span><span class="p">]</span>
+
+<span class="c1"># One unit, two quantities: a pressure and a stress are both in pascals.</span>
+<span class="n">data</span><span class="o">.</span><span class="n">fields</span><span class="p">[</span><span class="s2">&quot;p&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">td</span><span class="o">.</span><span class="n">Field</span><span class="p">(</span><span class="n">td</span><span class="o">.</span><span class="n">H1</span><span class="p">(</span><span class="n">data</span><span class="p">),</span> <span class="n">tack</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="mf">1000.0</span> <span class="o">+</span> <span class="mf">50.0</span> <span class="o">*</span> <span class="n">x</span><span class="p">),</span> <span class="s2">&quot;kPa&quot;</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">&quot;Pressure&quot;</span><span class="p">)</span>
+<span class="n">data</span><span class="o">.</span><span class="n">fields</span><span class="p">[</span><span class="s2">&quot;sigma&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">td</span><span class="o">.</span><span class="n">Field</span><span class="p">(</span><span class="n">td</span><span class="o">.</span><span class="n">H1</span><span class="p">(</span><span class="n">data</span><span class="p">),</span> <span class="n">tack</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n</span><span class="p">,),</span> <span class="n">tack</span><span class="o">.</span><span class="n">vec</span><span class="p">(</span><span class="mi">6</span><span class="p">)),</span> <span class="s2">&quot;Pa&quot;</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">&quot;Stress&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">fields</span><span class="p">[</span><span class="s2">&quot;p&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">kind</span><span class="o">.</span><span class="n">rank</span><span class="p">,</span> <span class="n">data</span><span class="o">.</span><span class="n">fields</span><span class="p">[</span><span class="s2">&quot;sigma&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">kind</span><span class="o">.</span><span class="n">rank</span><span class="p">)</span>    <span class="c1"># scalar symmetric tensor</span>
+
+<span class="c1"># A name fills in the rest; parts given beside it must agree.</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">td</span><span class="o">.</span><span class="n">Kind</span><span class="p">(</span><span class="s2">&quot;Vorticity&quot;</span><span class="p">))</span>
+<span class="c1"># Kind(name=&#39;Vorticity&#39;, rank=&#39;vector&#39;, extent=&#39;intensive&#39;, parity=&#39;axial&#39;, variance=&#39;covariant&#39;)</span>
+
+<span class="c1"># A field is checked against its kind when it is made.</span>
+<span class="k">for</span> <span class="n">unit</span><span class="p">,</span> <span class="n">values</span><span class="p">,</span> <span class="n">kind</span> <span class="ow">in</span> <span class="p">[(</span><span class="s2">&quot;m/s&quot;</span><span class="p">,</span> <span class="n">tack</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n</span><span class="p">,)),</span> <span class="s2">&quot;Pressure&quot;</span><span class="p">),</span>
+                           <span class="p">(</span><span class="s2">&quot;m/s&quot;</span><span class="p">,</span> <span class="n">tack</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n</span><span class="p">,)),</span> <span class="s2">&quot;Velocity&quot;</span><span class="p">)]:</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">td</span><span class="o">.</span><span class="n">Field</span><span class="p">(</span><span class="n">td</span><span class="o">.</span><span class="n">H1</span><span class="p">(</span><span class="n">data</span><span class="p">),</span> <span class="n">values</span><span class="p">,</span> <span class="n">unit</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="n">kind</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">ValueError</span> <span class="k">as</span> <span class="n">error</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="n">error</span><span class="p">)</span>
+<span class="c1"># a Pressure is in units like &#39;Pa&#39;, not &#39;m/s&#39;</span>
+<span class="c1"># a Velocity (a vector) cannot have values of 1 component in H1(order=1)</span>
+
+<span class="c1"># Filters that keep the values keep the kind, and converting changes only the unit.</span>
+<span class="n">part</span> <span class="o">=</span> <span class="n">td</span><span class="o">.</span><span class="n">threshold</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="s2">&quot;p&quot;</span><span class="p">,</span> <span class="mf">1000.0</span><span class="p">,</span> <span class="mf">1100.0</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">part</span><span class="o">.</span><span class="n">fields</span><span class="p">[</span><span class="s2">&quot;p&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">kind</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">part</span><span class="o">.</span><span class="n">fields</span><span class="p">[</span><span class="s2">&quot;p&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">unit</span><span class="p">)</span>          <span class="c1"># Pressure kPa</span>
+<span class="n">psi</span> <span class="o">=</span> <span class="n">td</span><span class="o">.</span><span class="n">convert</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="s2">&quot;psi&quot;</span><span class="p">,</span> <span class="s2">&quot;p&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">fields</span><span class="p">[</span><span class="s2">&quot;p&quot;</span><span class="p">]</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">psi</span><span class="o">.</span><span class="n">kind</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">psi</span><span class="o">.</span><span class="n">unit</span><span class="p">)</span>                                    <span class="c1"># Pressure psi</span>
+
+<span class="c1"># Kinds of your own, and what a density integrates to.</span>
+<span class="n">kinds</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s2">&quot;Torque&quot;</span><span class="p">,</span> <span class="s2">&quot;N*m&quot;</span><span class="p">,</span> <span class="s2">&quot;vector&quot;</span><span class="p">,</span> <span class="s2">&quot;intensive&quot;</span><span class="p">,</span> <span class="n">parity</span><span class="o">=</span><span class="s2">&quot;axial&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">td</span><span class="o">.</span><span class="n">Kind</span><span class="p">(</span><span class="s2">&quot;Torque&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">reference_unit</span><span class="p">)</span>                           <span class="c1"># N*m</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">kinds</span><span class="o">.</span><span class="n">density_of</span><span class="p">(</span><span class="s2">&quot;Density&quot;</span><span class="p">))</span>
+<span class="c1"># Kind(name=&#39;Mass&#39;, rank=&#39;scalar&#39;, extent=&#39;extensive&#39;, parity=&#39;polar&#39;)</span>
+</code></pre></div>
+<p>A field is checked against its kind when it is made. Its unit must have the
+dimensions of the kind's reference unit, so a pressure may be in kPa, psi or
+bar, but not in m/s. Its values must fit the rank: a vector has two or three
+components and a symmetric tensor three or six, in VTK's order XX YY ZZ XY
+YZ XZ. A field in <code>HDiv</code> or <code>HCurl</code> holds a vector, as one value per degree
+of freedom, and must not be covariant in <code>HDiv</code> or contravariant in <code>HCurl</code>.
+An unknown unit is not checked, and a field without a kind is not checked
+at all.</p>
+<p>A kind travels with its field: <code>to_device</code>, <code>convert</code>, <code>project</code> and every
+filter that carries fields (extracts, clip, slice, threshold, shrink) keep
+it. A filter that computes a new quantity, such as a gradient, gives its
+result no kind yet. A kind never converts anything, and no filter reads one
+yet. Later steps of the field quantities plan
+(<code>docs/design/plans/field-quantities.md</code>) use the parts: the extent for AMR coarsening, the parity and variance for
+transforms and reflections, and the name to tell a torque's display unit from
+an energy's.</p>
 <h2 id="what-filters-do-with-units">What filters do with units<a class="headerlink" href="#what-filters-do-with-units" title="Permanent link">&para;</a></h2>
 <p>Units matter most in the Visualization layer, which this page only
 previews. A filter that keeps a quantity keeps its unit, so a contour's
@@ -5543,6 +5669,8 @@ gives none pays nothing for it.</p>
   of mesh a dataset can hold.</li>
 <li>The <a href="../../vis-guide/reference/units/">units reference</a> has the full rules
   for units kept, derived and refused.</li>
+<li>The <a href="../../vis-guide/reference/data-model/#kinds">data model reference</a>
+  documents <code>td.Kind</code> and the registry, <code>tack.dataset.kinds</code>.</li>
 <li><a href="../particles/">Particles and point clouds</a> builds on <code>point_cloud</code>.</li>
 </ul>
 

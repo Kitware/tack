@@ -3886,6 +3886,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#kinds" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Kinds
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5235,6 +5246,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#kinds" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Kinds
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5473,6 +5495,36 @@ they must be relative to one origin: probe's points, pieces of a
 <code>PartitionedDataSet</code>, the boxes of an <code>AMRDataSet</code> and an octree's probe
 refuse two known units, naming both and <code>convert</code>. An unknown unit cannot be
 checked, so it is not refused.</p>
+<h2 id="kinds">Kinds<a class="headerlink" href="#kinds" title="Permanent link">&para;</a></h2>
+<p>A field's kind (<code>Field.kind</code>, a <code>td.Kind</code>) is what its values are, beside
+the unit they are in; see <a href="../../../data/units-coordinates-time/#what-the-values-are-kinds">what the values are</a>
+for the parts and an example. Kinds and units meet in three places:</p>
+<ul>
+<li><strong>Each registered kind has a reference unit</strong> (<code>Kind.reference_unit</code>), the
+  registry's: Pa for a <code>Pressure</code>, m/s for a <code>Velocity</code>. A field's unit must
+  have its dimensions, <code>units.same_dimensions(unit, kind.reference_unit)</code>, so
+  any unit of pressure will do. An unknown unit is not checked.</li>
+<li><strong>Converting changes the unit and keeps the kind</strong>: <code>convert(data, "psi",
+  "p")</code> rescales a <code>Pressure</code> field and leaves it a <code>Pressure</code>.</li>
+<li><strong>Quantities as parameters do not involve kinds.</strong> A parameter such as
+  <code>"10 cm"</code> is converted to the unit of the field or positions it applies to,
+  whatever their kind.</li>
+</ul>
+<p>The registry (<code>tack.dataset.kinds</code>) is seeded with CGNS's data names and
+their units, the same names tack-expr's <code>fx.cgns()</code> reads, and a few
+extensive totals the densities integrate to (<code>kinds.density_of("Density")</code>
+is <code>Kind("Mass")</code>). <code>kinds.add(name, unit, rank, ...)</code> registers another.
+Flux densities (<code>MagneticFluxDensity</code>, <code>CurrentDensity</code>, <code>HeatFlux</code>, the
+<code>Momentum</code> density) have no variance yet: they turn as <code>HDiv</code> fields do, by
+the contravariant Piola map, which needs a density weight a kind does not
+record.</p>
+<p>Filters keep a kind where they keep the values (see <a href="#what-keeps-a-unit">What keeps a
+unit</a>): <code>carry</code> keeps a carried field's kind where it
+still fits the field, <code>project</code> keeps it, and so do <code>to_device</code> and
+<code>convert</code>. A derived unit's kind is unknown: a gradient of a <code>Pressure</code> has
+no kind. <code>units.named</code> still folds a unit by its dimensions alone, so a
+torque in <code>N*m</code> shows as <code>J</code>; telling them apart by kind is planned
+(<code>docs/design/plans/field-quantities.md</code>).</p>
 <p>For conversion, see <a href="../../../data/connect-simulation-data/">Connect Simulation Data</a>.</p>
 
 

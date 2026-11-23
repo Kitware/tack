@@ -319,6 +319,57 @@ def test_an_export_without_padding_waits_for_its_copy():
         assert err == driver.CUresult.CUDA_SUCCESS, err
 
 
+_DROPPED_SCRIPT = """
+import tack
+from tack.runtime.dispatch import get_backend
+
+@tack.kernel
+def spin(out, iters: tack.i32):
+    for i in range(out.shape[0]):
+        acc = 0.0
+        for k in range(iters):
+            acc = acc * 0.999 + 1.0
+        out[i] = acc
+
+tack.set_default_device("cuda")
+spin(tack.empty((16,), exportable=True), 1)            # compiled before the drops
+tack.sync()
+for work in ("fill", "launch", "export"):
+    for _ in range(5):
+        if work == "fill":                              # TACK_FILL_NEW's, or fill's
+            a = tack.empty((64 << 20,), exportable=True)
+            a.fill(2.0)
+        elif work == "launch":
+            a = tack.empty((1 << 20,), exportable=True)
+            spin(a, 20000)
+        else:                                           # the export's copy
+            a = tack.empty((64 << 20,))
+            a.fill(1.0)
+            a.export_memory()
+        del a
+        tack.sync()
+assert not get_backend()._token.dropped                # every one freed by the syncs
+print("ok")
+"""
+
+
+def test_an_exportable_array_dropped_under_queued_work(tmp_path):
+    """Dropping an exportable array while a launch, a fill or the export's copy
+    on it is queued frees its memory once they are done. Unmapped at once, as it
+    was, the queued work faulted (``CUDA_ERROR_ILLEGAL_ADDRESS``) and took the
+    context with it, every time on an RTX 4060 Ti; in a fresh process, since that
+    fault would leave this one's context unusable."""
+    _skip_without_exportable_memory()
+    import subprocess
+    import sys
+
+    script = tmp_path / "dropped.py"
+    script.write_text(_DROPPED_SCRIPT)
+    proc = subprocess.run([sys.executable, "-u", str(script)],
+                          capture_output=True, text=True, timeout=300)
+    assert proc.returncode == 0 and proc.stdout.strip() == "ok", proc.stderr[-3000:]
+
+
 def test_exportable_memory_fills_on_the_device(monkeypatch):
     """An exportable array takes TACK_FILL_NEW's fill, and any fill, on the device
     (``fill_bytes``), not through a host array the size of it."""

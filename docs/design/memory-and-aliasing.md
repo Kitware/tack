@@ -159,6 +159,12 @@ explicitly in `__del__`:
   [below](#when-the-cuda-context-goes-away)). On a device without memory
   pools (a GPU in TCC mode on Windows) it queues the pointer on the
   context instead, for a `cuMemFree` once the stream is idle.
+- `ExportableCUDABuffer.__del__` closes the exported descriptor and queues
+  the unmapping and release of its memory the same way (`_release_mapping`),
+  run once the stream is idle: virtual memory cannot be unmapped in stream
+  order, and an unmap under a queued launch, fill or copy faulted the
+  context. Every write to an exportable buffer goes through that stream,
+  host copies included, so an idle stream means none is left.
 - `HIPBuffer.__del__` calls `hipFreeAsync` on the device's stream, or
   `hipFree` on a device without memory pools.
 - `L0Buffer.__del__` frees through `LevelZeroBackend._free`, against

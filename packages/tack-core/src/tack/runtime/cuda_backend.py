@@ -328,16 +328,20 @@ def _has_memory_pools(ordinal):
 
 
 def _free_dropped(token, wait=False):
-    """``cuMemFree`` the ``cuMemAlloc`` buffers dropped in ``token``'s context
-    (every buffer on a device without memory pools, and memory for a GPU-aware
-    MPI on one with them), once its stream is idle, or after waiting for it.
+    """Free what was dropped in ``token``'s context, once its stream is idle, or
+    after waiting for it: ``cuMemFree`` the ``cuMemAlloc`` buffers (every buffer
+    on a device without memory pools, and memory for a GPU-aware MPI on one with
+    them), and run the releases of exportable buffers (`_release_mapping`).
 
     ``cuMemFree`` waits for the whole device: on the T4 it took 1.26 s
     behind an unrelated launch. Freeing as a buffer is dropped would make a
     garbage collection wait for every queued launch, so a dropped buffer is
     only queued here (`CUDABuffer.__del__`), and freed when the host waits
     anyway or the stream has nothing left: at the next allocation, at a
-    sync, or when an allocation runs out of memory.
+    sync, or when an allocation runs out of memory. Exportable memory cannot
+    be unmapped in stream order at all: unmapped under a queued launch, fill
+    or copy, the launch faults (``CUDA_ERROR_ILLEGAL_ADDRESS``) and takes the
+    context with it.
     """
     if not token.dropped or not token.alive:
         return
@@ -349,10 +353,28 @@ def _free_dropped(token, wait=False):
             return
         while True:
             try:
-                ptr = token.dropped.popleft()
+                dropped = token.dropped.popleft()
             except IndexError:
                 return
-            driver.cuMemFree(ptr)
+            if callable(dropped):
+                dropped()
+            else:
+                driver.cuMemFree(dropped)
+
+
+def _release_mapping(device_ptr, size, mem_handle):
+    """What frees an exportable buffer's memory (`ExportableCUDABuffer.__del__`):
+    unmap and free its address range, release its physical memory. Queued on the
+    token's ``dropped`` and run by `_free_dropped` once the stream is idle, since
+    only Tack's stream writes the buffer (launches, fills, ``from_numpy``, the
+    export's copy and clear) and nothing orders an unmap after its work."""
+    def release():
+        if device_ptr is not None:
+            driver.cuMemUnmap(device_ptr, size)
+            driver.cuMemAddressFree(device_ptr, size)
+        if mem_handle is not None:
+            driver.cuMemRelease(mem_handle)
+    return release
 
 
 def _has_virtual_memory(ordinal):
@@ -421,12 +443,13 @@ class CUDABuffer(DeviceBuffer):
         self._pooled = pools if pooled is None else (pooled and pools)
         stream = token.queue()
         with _in_context(token):
+            # Exportable memory dropped is freed here too, on a device with pools.
+            _free_dropped(token)
             # A zero-byte request is rejected; an empty array gets one byte
             # it never reads, as on Level Zero.
             if self._pooled:
                 err, self._device_ptr = driver.cuMemAllocAsync(max(self._nbytes, 1), stream)
             else:
-                _free_dropped(token)
                 err, self._device_ptr = driver.cuMemAlloc(max(self._nbytes, 1))
                 if err == driver.CUresult.CUDA_ERROR_OUT_OF_MEMORY and token.dropped:
                     _free_dropped(token, wait=True)
@@ -588,6 +611,7 @@ class ExportableCUDABuffer(DeviceBuffer):
         self._handle_type_name = None
         self._token = token = token or _current_context_token()
         with _in_context(token):
+            _free_dropped(token)
             self._map()
 
     def _map(self):
@@ -681,9 +705,13 @@ class ExportableCUDABuffer(DeviceBuffer):
         return self._device_ptr
 
     def from_numpy(self, arr: np.ndarray):
+        # On Tack's stream, as every write to this buffer is, so that the stream
+        # idle means nothing touches it (`_release_mapping`). The host array is
+        # pageable, so the driver has staged it before this returns.
         src = np.ascontiguousarray(arr, dtype=self._numpy_dtype)
         with _in_context(self._token):
-            _check(driver.cuMemcpyHtoD(self._device_ptr, src, self._nbytes))
+            _check(driver.cuMemcpyHtoDAsync(self._device_ptr, src, self._nbytes,
+                                            self._queued_stream or driver.CUstream(0)))
 
     def to_numpy(self) -> np.ndarray:
         out = np.empty(self._shape, dtype=self._numpy_dtype)
@@ -788,14 +816,14 @@ class ExportableCUDABuffer(DeviceBuffer):
             # The fd is ours whatever happened to the context, but the
             # mapping and the handle went down with it.
             token = getattr(self, "_token", None)
-            if token is not None and not token.alive:
+            if token is None or not token.alive:
                 return
-            with _in_context(token):
-                if self._device_ptr is not None:
-                    driver.cuMemUnmap(self._device_ptr, self._alloc_size)
-                    driver.cuMemAddressFree(self._device_ptr, self._alloc_size)
-                if self._mem_handle is not None:
-                    driver.cuMemRelease(self._mem_handle)
+            # Not unmapped now: launches, fills and copies queued on the stream
+            # may still use the memory. Freed once the stream is idle, at once if
+            # it is now.
+            token.dropped.append(_release_mapping(
+                self._device_ptr, getattr(self, "_alloc_size", 0), self._mem_handle))
+            _free_dropped(token)
         except Exception:
             pass
 
@@ -1517,6 +1545,9 @@ class CUDABackend(GPUBackend):
             if token.stream is not None:
                 with _in_context(token):
                     driver.cuStreamSynchronize(token.stream)
+                    # A primary context other libraries hold outlives this
+                    # backend, and so would what was dropped but not yet freed.
+                    _free_dropped(token)
                     driver.cuStreamDestroy(token.stream)
                 token.stream = None
             if token.owned:

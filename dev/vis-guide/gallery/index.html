@@ -5915,8 +5915,8 @@ blocks), each given a layer of its neighbours' cells as ghosts, and drawn pulled
 apart: a piece's own cells in its color, its ghosts faint, reaching into the
 pieces around it. Polyhedra are not drawn here, though <code>ghost_cells</code> takes
 polyhedral pieces too (<a href="../../visualization/over-pieces/">Filters over pieces</a>).
-Curved and high-order cells are not drawn either: ghost cells do not carry
-their geometry and fields yet, so <code>ghost_cells</code> refuses them.</p>
+Curved and high-order cells are not drawn either, though <code>ghost_cells</code> carries
+them on unstructured pieces, each ghost cell with its nodes.</p>
 <div class="grid cards">
 <ul>
 <li>

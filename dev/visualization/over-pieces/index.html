@@ -5805,6 +5805,13 @@ piece holding it. <code>ghost_cells</code> takes unstructured, polyhedral or str
 pieces, all of one kind. Structured pieces stay structured, each its block
 grown by the layers. <code>as_polyhedra</code> makes shaped pieces polyhedral, for a
 reader that gives both kinds.</p>
+<p>On unstructured pieces, fields of higher order and a curved geometry come
+along too: an <code>H1</code> field above order 1, an <code>L2</code> field (an order per cell
+too). Each ghost cell brings its nodes, placed through the grown piece's own
+numbering, so a node it shares with the piece's cells is one value.
+Structured pieces carry point and cell fields only, and <code>update_ghosts</code>
+refreshes point and cell fields only: a field of higher order comes with
+its ghost cells.</p>
 <div class="grid cards">
 <ul>
 <li>

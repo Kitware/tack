@@ -159,6 +159,14 @@ pieces, all of one kind. Structured pieces stay structured, each its block
 grown by the layers. `as_polyhedra` makes shaped pieces polyhedral, for a
 reader that gives both kinds.
 
+On unstructured pieces, fields of higher order and a curved geometry come
+along too: an `H1` field above order 1, an `L2` field (an order per cell
+too). Each ghost cell brings its nodes, placed through the grown piece's own
+numbering, so a node it shares with the piece's cells is one value.
+Structured pieces carry point and cell fields only, and `update_ghosts`
+refreshes point and cell fields only: a field of higher order comes with
+its ghost cells.
+
 <div class="grid cards" markdown>
 
 -   ![Pieces of an image with ghost cells](../assets/gallery/pieces-image.jpg){ loading=lazy width=240 height=210 }

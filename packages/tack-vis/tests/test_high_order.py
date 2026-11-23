@@ -725,17 +725,17 @@ def test_gradients_at_an_l2_spaces_nodes_on_simplices(f64_backend):
     np.testing.assert_allclose(g, _cubic_gradient_at(nodes), atol=1e-9)
 
 
-def test_pieces_of_curved_cells_are_refused_where_they_would_come_out_straight(f64_backend):
-    """``ghost_cells`` moves cells and points with positions at the points: it refuses
-    a curved geometry, which it made straight with no word (``merge_pieces`` carries
-    each cell's nodes: ``test_merge_pieces``)."""
+def test_pieces_of_curved_cells_stay_curved(f64_backend):
+    """``ghost_cells`` and ``merge_pieces`` move each cell's nodes with it, so a curved
+    geometry stays curved (``test_ghost_cells_high_order``, ``test_merge_pieces``);
+    they made it straight with no word, and then refused it."""
     grid = td.uniform_grid((3, 3, 3), spacing=(0.5, 0.5, 0.5), dtype=tack.f64)
     data = td.extract_cells(grid, np.arange(8))
     data.geometry = td.interpolate(data, _bend, td.H1(data, order=2), dtype=tack.vec3(tack.f64))
     pieces = td.PartitionedDataSet([td.extract_cells(data, np.arange(4)),
                                     td.extract_cells(data, np.arange(4, 8))])
-    with pytest.raises(NotImplementedError, match="come out straight"):
-        td.ghost_cells(pieces, fields=[])
+    assert all(p.geometry.space.order == 2 for p in td.ghost_cells(pieces, fields=[]))
+    assert td.merge_pieces(pieces, fields=[]).geometry.space.order == 2
 
 
 def _hexahedron_and_wedges():

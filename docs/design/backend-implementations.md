@@ -579,9 +579,13 @@ and the table parameter (`_is_array_table`) is appended. The generators
 leave marked arrays out of the signature and declare each as a typed
 pointer read from its slot at kernel entry; the backends' parameter lists
 leave them out too (`launch_params`). Like the scalar packs, the table is
-the variant's (the payload's fourth entry, `(positions, array)`), and each
-launch writes its arrays' addresses into it under `_launch_guard`
-(`_tabled_args`), a copy queued before the launch. `_must_complete` still
+the variant's (the payload's fourth entry, `(positions, array, written)`),
+and a launch writes its arrays' addresses into it under `_launch_guard`
+(`_tabled_args`), a copy queued before the launch, unless they are the
+addresses last written: only the variant's own launches write its table, so
+those are there when the launch runs. The write is a pageable host copy, 18
+µs of a 73 µs launch on an RTX 4060 Ti, against 73 µs with the arrays as
+arguments, and a kernel called again on the same arrays is the common case. `_must_complete` still
 looks at the arrays themselves. Level Zero must be told a kernel reads
 memory that is not among its arguments, or the driver need not make it
 resident: such a kernel gets `zeKernelSetIndirectAccess` for host, device

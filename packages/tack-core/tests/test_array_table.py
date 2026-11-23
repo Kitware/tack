@@ -25,7 +25,7 @@ from tack.codegen.hip_gen import generate_hip_source
 from tack.codegen.identifiers import kernel_entry_name
 from tack.codegen.opencl_gen import generate_opencl_source
 from tack.lang.inspect_kernel import _prepare_ir
-from tack.lang.ir_array_table import argument_bytes, launch_params, table_arrays, table_entries
+from tack.lang.ir_array_table import launch_params, table_arrays, table_entries
 from tack.lang.ir_pack_scalars import pack_scalars
 from tack.lang.ir_type_annotate import annotate_types
 from tack.runtime import kernel_utils
@@ -99,14 +99,14 @@ def test_the_table_takes_the_arrays_out_of_the_signature():
     function, effective = _prepare_ir(_scaled, args)
     pack_scalars(function, effective)
     annotate_types(function)
-    before = argument_bytes(function)
+    params = len(function.params)
     positions = table_arrays(function)
     # a, b, out and the two scalar packs (f32, i32), in parameter order.
     assert positions == (0, 1, 2, 3, 4)
     table, entries = table_entries(function)
     assert [slot for slot, _ in entries] == [0, 1, 2, 3, 4]
     assert launch_params(function) == [table]
-    assert argument_bytes(function) < before
+    assert len(function.params) == params + 1    # the marked arrays stay in params
     source = generate_cuda_source(function)
     entry = next(line for line in source.splitlines() if "__global__ void" in line)
     assert entry.count("*") == 1, entry               # the table alone

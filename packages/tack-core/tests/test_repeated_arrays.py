@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 
 import tack
+from tack.lang.ir_bounds import HIDDEN_PARAMS
 from tack.runtime import dispatch, kernel_utils
 from tack.runtime.dispatch import get_backend
 
@@ -93,9 +94,22 @@ def mixed(x, g, out, n):
         out[i] = x[i] + 2.0 * g.values[i]
 
 
-def _array_params(kernel):
-    variants = kernel_utils.kernel_cache_slot(get_backend()._cache, kernel).values()
-    return sorted(sum(1 for p in v.ir.params if p._is_array) for v in variants)
+def _variants(kernel):
+    return kernel_utils.kernel_cache_slot(get_backend()._cache, kernel).values()
+
+
+def _array_params(kernel, debug=None):
+    """Each variant's array parameters of its own, sorted: the two debug mode adds
+    (`ir_bounds.HIDDEN_PARAMS`) left out, so the counts hold under TACK_DEBUG=1;
+    ``debug`` True or False keeps only the variants with or without them."""
+    counts = []
+    for v in _variants(kernel):
+        names = {p.name for p in v.ir.params}
+        hidden = set(HIDDEN_PARAMS) <= names
+        if debug is None or debug == hidden:
+            counts.append(sum(1 for p in v.ir.params
+                              if p._is_array and p.name not in HIDDEN_PARAMS))
+    return sorted(counts)
 
 
 def test_shared_arrays_are_one_parameter(backend):
@@ -188,8 +202,8 @@ def test_debug_mode_shares_them_too(backend):
     finally:
         tack.set_debug(saved)
     np.testing.assert_allclose(out.numpy(), np.full(n, 17.0))
-    # Five arrays and the two hidden ones bounds checks take.
-    assert 7 in _array_params(combine)
+    # Five arrays of its own, beside the two hidden ones bounds checks take.
+    assert 5 in _array_params(combine, debug=True)
 
 
 def test_inspect_shows_the_shared_parameters(backend):

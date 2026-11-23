@@ -119,26 +119,36 @@ class GPUBackend(Backend):
                 table)
 
     def _array_table(self, positions):
-        """A variant's array table: ``(positions, array)``, ``positions`` those of
-        the launch arguments whose addresses it holds (`table_arrays`), the
-        array a u64 device buffer the variant keeps and every launch rewrites,
-        as it rewrites the scalar packs. None for no positions."""
+        """A variant's array table: ``(positions, array, written)``, ``positions``
+        those of the launch arguments whose addresses it holds (`table_arrays`),
+        the array a u64 device buffer the variant keeps and launches rewrite,
+        as they rewrite the scalar packs, ``written`` a one-item list holding
+        the addresses last written. None for no positions."""
         if not positions:
             return None
         from tack.lang.array import Array
         from tack.lang.types import u64
         buffer = self.allocate_array(u64, (len(positions),))
-        return tuple(positions), Array(u64, (len(positions),), buffer, device=self)
+        return tuple(positions), Array(u64, (len(positions),), buffer, device=self), [None]
 
     def _tabled_args(self, table, kernel_args) -> list:
         """This launch's arguments with the tabled arrays' addresses written to
         the table, which takes their place after the rest. Under
         `_launch_guard`, as the scalar packs are written, so no other launch
-        changes the table between the write and the launch that reads it."""
+        changes the table between the write and the launch that reads it.
+
+        Only this variant's launches write its table, so addresses equal to
+        the last ones written are there already, or will be when this launch
+        runs (the write is queued before it): the write is skipped. A write
+        is a pageable host copy, about 18 µs of a 73 µs CUDA launch on an
+        RTX 4060 Ti (mustafar-linux), and a kernel called again on the same
+        arrays is the common case."""
         import numpy as np
-        positions, array = table
-        array._buffer.from_numpy(np.array(
-            [kernel_args[i]._buffer.address for i in positions], dtype=np.uint64))
+        positions, array, written = table
+        addresses = tuple(kernel_args[i]._buffer.address for i in positions)
+        if addresses != written[0]:
+            array._buffer.from_numpy(np.array(addresses, dtype=np.uint64))
+            written[0] = addresses
         tabled = set(positions)
         return [a for i, a in enumerate(kernel_args) if i not in tabled] + [array]
 

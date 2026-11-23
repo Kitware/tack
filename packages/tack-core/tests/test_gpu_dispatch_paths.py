@@ -397,6 +397,18 @@ b.execute(elementwise, (y, other, 32), {})
 check("one variant", len(b.compiled) == 1)
 check("rewritten for the next launch's arrays",
       table.numpy().tolist()[:2] == [y._buffer.address, other._buffer.address])
+writes = []
+real_write = type(table._buffer).from_numpy
+type(table._buffer).from_numpy = lambda self, a: (
+    writes.append(self is table._buffer), real_write(self, a))[1]   # packs write too
+b.execute(elementwise, (y, other, 32), {})
+b.execute(elementwise, (y, other, 32), {})
+b.execute(elementwise, (x, other, 32), {})
+type(table._buffer).from_numpy = real_write
+check("written only when the addresses change, got %d writes" % sum(writes),
+      sum(writes) == 1)
+check("and then right", table.numpy().tolist()[:2] == [x._buffer.address,
+                                                        other._buffer.address])
 b = make_backend()
 b._max_argument_bytes = 4096
 b.execute(elementwise, (x, out, 32), {})

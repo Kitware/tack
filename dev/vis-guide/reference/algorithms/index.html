@@ -20277,6 +20277,11 @@ input back -- with its offset and its coordinates (uniform, rectilinear
 or explicit); other pieces give an unstructured dataset. Polyhedra beside
 shapes come along with their faces, matched again by their points, so a
 face two pieces' polyhedra share is one face.</p>
+<p>Fields of higher order come along at their order: an <code>H1</code> field above
+order 1, an <code>L2</code> field and a curved (<code>H1</code>) geometry travel as each owned
+cell's nodes and are placed through the merged mesh's own numbering, so a
+node two pieces hold is one value, as a point is. Every piece must hold a
+field in the same space (its family, order and basis).</p>
 <p>Across MPI ranks every rank passes its pieces and the result is on the
 <code>root</code> rank (<code>None</code> elsewhere), on <code>device</code> (by default the device
 of the root rank's first piece). A root with no pieces gets the merge made
@@ -20350,7 +20355,13 @@ on the first rank that has some, moved to it (on its default device).</p>
 <span class="normal">85</span>
 <span class="normal">86</span>
 <span class="normal">87</span>
-<span class="normal">88</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">merge_pieces</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">root</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">tolerance</span><span class="o">=</span><span class="mf">0.0</span><span class="p">):</span>
+<span class="normal">88</span>
+<span class="normal">89</span>
+<span class="normal">90</span>
+<span class="normal">91</span>
+<span class="normal">92</span>
+<span class="normal">93</span>
+<span class="normal">94</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">merge_pieces</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">root</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">tolerance</span><span class="o">=</span><span class="mf">0.0</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;``data``&#39;s pieces as one dataset: every cell a piece owns, once, and every point</span>
 <span class="sd">    once, with the point and cell fields (``fields`` choosing them as filters</span>
 <span class="sd">    do), as VTK&#39;s vtkMergeBlocks after vtkRemoveGhosts.</span>
@@ -20369,26 +20380,32 @@ on the first rank that has some, moved to it (on its default device).</p>
 <span class="sd">    shapes come along with their faces, matched again by their points, so a</span>
 <span class="sd">    face two pieces&#39; polyhedra share is one face.</span>
 
+<span class="sd">    Fields of higher order come along at their order: an ``H1`` field above</span>
+<span class="sd">    order 1, an ``L2`` field and a curved (``H1``) geometry travel as each owned</span>
+<span class="sd">    cell&#39;s nodes and are placed through the merged mesh&#39;s own numbering, so a</span>
+<span class="sd">    node two pieces hold is one value, as a point is. Every piece must hold a</span>
+<span class="sd">    field in the same space (its family, order and basis).</span>
+
 <span class="sd">    Across MPI ranks every rank passes its pieces and the result is on the</span>
 <span class="sd">    ``root`` rank (``None`` elsewhere), on ``device`` (by default the device</span>
 <span class="sd">    of the root rank&#39;s first piece). A root with no pieces gets the merge made</span>
 <span class="sd">    on the first rank that has some, moved to it (on its default device).&quot;&quot;&quot;</span>
     <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">PartitionedDataSet</span><span class="p">):</span>
         <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;merge_pieces takes a PartitionedDataSet, not </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">data</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-    <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.algorithms.ghost_cells</span><span class="w"> </span><span class="kn">import</span> <span class="n">_carried</span><span class="p">,</span> <span class="n">_kind</span>
+    <span class="n">_kind</span> <span class="o">=</span> <span class="n">_merge_kind</span>
 
     <span class="n">pieces</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
     <span class="n">names</span> <span class="o">=</span> <span class="p">[]</span>
     <span class="c1"># On every rank, in the origin&#39;s gather: the fields, and their one unit each.</span>
     <span class="n">_</span><span class="p">,</span> <span class="n">agreed_units</span> <span class="o">=</span> <span class="n">common_origin</span><span class="p">(</span>
-        <span class="n">data</span><span class="p">,</span> <span class="s2">&quot;merge_pieces&quot;</span><span class="p">,</span> <span class="n">check</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="n">names</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">_carried</span><span class="p">(</span><span class="n">pieces</span><span class="p">,</span> <span class="n">fields</span><span class="p">,</span>
-                                                                  <span class="s2">&quot;merge_pieces&quot;</span><span class="p">)),</span>
+        <span class="n">data</span><span class="p">,</span> <span class="s2">&quot;merge_pieces&quot;</span><span class="p">,</span> <span class="n">check</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="n">names</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">_chosen</span><span class="p">(</span><span class="n">pieces</span><span class="p">,</span> <span class="n">fields</span><span class="p">)),</span>
         <span class="n">units_of</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="n">field_units</span><span class="p">(</span><span class="s2">&quot;merge_pieces&quot;</span><span class="p">,</span> <span class="n">pieces</span><span class="p">,</span> <span class="n">names</span><span class="p">))</span>
     <span class="n">tolerance</span> <span class="o">=</span> <span class="n">_tolerance</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">tolerance</span><span class="p">,</span> <span class="s2">&quot;merge_pieces&quot;</span><span class="p">)</span>
     <span class="n">blocks</span> <span class="o">=</span> <span class="n">tc</span><span class="o">.</span><span class="n">Blocks</span><span class="p">([</span><span class="n">piece</span><span class="o">.</span><span class="n">device</span> <span class="k">for</span> <span class="n">piece</span> <span class="ow">in</span> <span class="n">pieces</span><span class="p">],</span> <span class="n">data</span><span class="o">.</span><span class="n">world</span><span class="p">)</span>
     <span class="n">world</span> <span class="o">=</span> <span class="n">blocks</span><span class="o">.</span><span class="n">world</span>
     <span class="k">if</span> <span class="ow">not</span> <span class="mi">0</span> <span class="o">&lt;=</span> <span class="n">root</span> <span class="o">&lt;</span> <span class="n">world</span><span class="o">.</span><span class="n">size</span><span class="p">:</span>
         <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;root is a rank, 0 to </span><span class="si">{</span><span class="n">world</span><span class="o">.</span><span class="n">size</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="si">}</span><span class="s2">, not </span><span class="si">{</span><span class="n">root</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">_same_spaces</span><span class="p">(</span><span class="n">blocks</span><span class="p">,</span> <span class="n">pieces</span><span class="p">,</span> <span class="n">names</span><span class="p">)</span>
     <span class="n">firsts</span> <span class="o">=</span> <span class="n">blocks</span><span class="o">.</span><span class="n">all_gather</span><span class="p">({</span><span class="n">g</span><span class="p">:</span> <span class="n">g</span> <span class="o">==</span> <span class="n">blocks</span><span class="o">.</span><span class="n">local</span><span class="o">.</span><span class="n">start</span> <span class="k">for</span> <span class="n">g</span> <span class="ow">in</span> <span class="n">blocks</span><span class="o">.</span><span class="n">local</span><span class="p">})</span>
     <span class="n">starts</span> <span class="o">=</span> <span class="p">[</span><span class="n">g</span> <span class="k">for</span> <span class="n">g</span><span class="p">,</span> <span class="n">first</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">firsts</span><span class="p">)</span> <span class="k">if</span> <span class="n">first</span><span class="p">]</span>
     <span class="k">if</span> <span class="ow">not</span> <span class="n">starts</span><span class="p">:</span>

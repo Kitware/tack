@@ -1120,12 +1120,18 @@ def _allocate(backend, dtype, shape, **options):
     return _filled_new(memory_stats.counted(backend, buffer), dtype)
 
 
+#: ``TACK_FILL_NEW=off``: no fill, debug mode's included (unset leaves debug mode's).
+_FILL_OFF = "off"
+
+
 def _fill_setting(text):
-    """``TACK_FILL_NEW``'s byte: unset, empty or ``off`` for none, else an integer
-    from 0 to 255 in Python's spelling (``0xFF``, ``255``)."""
+    """``TACK_FILL_NEW``'s byte: ``None`` unset or empty, `_FILL_OFF` for ``off``,
+    else an integer from 0 to 255 in Python's spelling (``0xFF``, ``255``)."""
     text = (text or "").strip().lower()
-    if text in ("", "off"):
+    if text == "":
         return None
+    if text == "off":
+        return _FILL_OFF
     try:
         byte = int(text, 0)
     except ValueError:
@@ -1135,14 +1141,17 @@ def _fill_setting(text):
     return byte
 
 
-#: The byte every new array is filled with, or ``None``: ``TACK_FILL_NEW``, read
-#: when Tack is imported. Debug mode fills with 0xFF when this is unset.
+#: The byte every new array is filled with, `_FILL_OFF`, or ``None``:
+#: ``TACK_FILL_NEW``, read when Tack is imported. Debug mode fills with 0xFF when
+#: this is unset (``None``), not when it is ``off``.
 _FILL_NEW = _fill_setting(os.environ.get("TACK_FILL_NEW"))
 
 
 def _new_fill():
-    """The byte new arrays are filled with now, or ``None``: ``TACK_FILL_NEW``, else
-    0xFF in debug mode (`tack.set_debug`)."""
+    """The byte new arrays are filled with now, or ``None``: ``TACK_FILL_NEW``'s, none
+    for ``off``, else 0xFF in debug mode (`tack.set_debug`)."""
+    if _FILL_NEW == _FILL_OFF:
+        return None
     if _FILL_NEW is not None:
         return _FILL_NEW
     from tack.runtime import dispatch

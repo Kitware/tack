@@ -610,7 +610,8 @@ class ExportableCUDABuffer(DeviceBuffer):
             driver.CUmemAccess_flags.CU_MEM_ACCESS_FLAGS_PROT_READWRITE)
         _check(driver.cuMemSetAccess(
             self._device_ptr, self._alloc_size, [access], 1))
-        # Not cleared, as an ordinary buffer is not (`array._filled_new`).
+        # Not cleared, as an ordinary buffer is not (`array._filled_new`); the
+        # padding past the array is, before the first export (`_clear_padding`).
 
     def _allocation_prop(self, handle_type):
         prop = driver.CUmemAllocationProp()
@@ -718,10 +719,24 @@ class ExportableCUDABuffer(DeviceBuffer):
     def nbytes(self) -> int:
         return self._nbytes
 
+    def _clear_padding(self):
+        """Zero the allocation past the array, before its handle first leaves Tack:
+        the handle shares the whole allocation (``allocation_size``, rounded up to
+        the granularity), and nothing writes that padding, which would otherwise
+        carry the memory's earlier contents out. The array is the caller's, as any
+        new array's contents are; only the padding is cleared, so allocation
+        stays free of a clear."""
+        padding = self._alloc_size - self._nbytes
+        if padding > 0:
+            with _in_context(self._token):
+                _check(driver.cuMemsetD8(int(self._device_ptr) + self._nbytes, 0, padding))
+                _check(driver.cuCtxSynchronize())
+
     def export_memory(self):
         """Export as ExportedMemory (handle + size + UUID). The handle is cached."""
         from tack.lang.array import ExportedMemory
         if self._exported_handle is None:
+            self._clear_padding()
             err, handle = driver.cuMemExportToShareableHandle(
                 self._mem_handle, self._handle_type, 0)
             _check(err)

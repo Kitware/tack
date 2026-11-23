@@ -69,10 +69,39 @@ def test_debug_mode_fills_with_0xff_unless_a_byte_is_set(monkeypatch):
     assert array_module._new_fill() is None
 
 
-@pytest.mark.parametrize("text, byte", [(None, None), ("", None), ("off", None), (" OFF ", None),
+@pytest.mark.parametrize("text, byte", [(None, None), ("", None), ("off", "off"), (" OFF ", "off"),
                                         ("0xFF", 255), ("255", 255), ("0", 0), ("0xab", 0xAB)])
 def test_the_setting_is_a_byte_or_off(text, byte):
     assert array_module._fill_setting(text) == byte
+
+
+def test_off_turns_the_fill_off_in_debug_mode_too(monkeypatch):
+    """``TACK_FILL_NEW=off`` keeps debug mode's bounds checks and drops its fill;
+    unset, debug mode fills. In a process of its own, as the variable is read when
+    Tack is imported."""
+    import os
+    import subprocess
+    import sys
+
+    probe = ("import tack; from tack.lang import array; from tack.runtime import dispatch; "
+             "print(dispatch.debug_enabled(), array._new_fill())")
+    for setting, expected in (("off", "True None"), ("", "True 255")):
+        env = {**os.environ, "TACK_DEBUG": "1", "TACK_FILL_NEW": setting}
+        run = subprocess.run([sys.executable, "-c", probe], env=env, capture_output=True,
+                             text=True)
+        assert run.returncode == 0, run.stderr
+        assert run.stdout.split() == expected.split(), (setting, run.stdout)
+    monkeypatch.setattr(array_module, "_FILL_NEW", array_module._FILL_OFF)
+    monkeypatch.setattr(dispatch, "_debug", True)
+    assert array_module._new_fill() is None
+
+    @tack.kernel
+    def past_the_end(a):
+        for i in range(a.shape[0]):
+            a[i + 1] = 1.0
+
+    with pytest.raises(IndexError):
+        past_the_end(tack.zeros((4,), tack.f32))
 
 
 @pytest.mark.parametrize("text", ["256", "-1", "on", "0x100", "nan"])

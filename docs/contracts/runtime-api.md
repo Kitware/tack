@@ -196,7 +196,7 @@ Turns debug mode on or off for every kernel launched from then on.
 `TACK_DEBUG` (a boolean flag, read like `TACK_NO_REINIT`) turns it on when
 Tack is imported. `tack.runtime.dispatch.debug_enabled()` reports the
 current setting. Debug mode also fills every new array with 0xFF, unless
-`TACK_FILL_NEW` gives another byte (below).
+`TACK_FILL_NEW` gives another byte or `off` (below).
 
 **Debug mode** checks every index of every array access, one
 dimension at a time: an array's leading dimension against its length, the
@@ -750,7 +750,7 @@ it is queued (see [Host operations](#host-operations)).
 | `TACK_CPU_POOL_SPIN` | The JIT'd pool, when it is made | How many pause iterations a pool worker spins before sleeping (default 20000). For experiments |
 | `TACK_CPU_MALLOC` | `CPUBackend.__init__` | **Linux.** A boolean flag read like `TACK_NO_REINIT`. When on, the first CPU backend sets glibc's `malloc` thresholds so freed blocks keep their pages (`cpu._tune_malloc`), process-wide. Off by default |
 | `TACK_DEBUG` | `import tack` (`runtime/dispatch.py`) | A boolean flag read like `TACK_NO_REINIT`: turns on debug mode's bounds checks. `tack.set_debug` overrides it (above) |
-| `TACK_FILL_NEW` | `import tack` (`lang/array.py`) | A byte, `0xFF` or `255` (Python's integer spelling), or unset, empty or `off`. Every new array (`tack.empty` and every constructor over it) is filled with that byte on every backend, so code that reads an array before writing it reads NaN floats and -1 integers with `0xFF`. Unset, debug mode fills with 0xFF. Anything else raises `ValueError` at import. No backend clears a new array otherwise (#386) |
+| `TACK_FILL_NEW` | `import tack` (`lang/array.py`) | A byte, `0xFF` or `255` (Python's integer spelling), `off`, or unset or empty. Every new array (`tack.empty` and every constructor over it) is filled with that byte on every backend, so code that reads an array before writing it reads NaN floats and -1 integers with `0xFF`. Unset, debug mode fills with 0xFF; `off` fills nothing, debug mode included, which keeps its bounds checks. Anything else raises `ValueError` at import. No backend clears a new array otherwise (#386) |
 | `TACK_NO_REINIT` | `tack.set_default_device` | A boolean flag (`dispatch.env_flag`): when on, `set_default_device` leaves an existing default alone. `0`, `false`, `no`, `off` and empty mean off. See above |
 | `TACK_CACHE` | The disk cache, at the first kernel compiled | `write` (default), `read`, `bundle` (default under MPI) or `off`; also `0`, `false`, `no`, `none` for off. Any other value raises `ValueError`. See [The Kernel Cache](../core/kernel-cache.md) |
 | `TACK_CACHE_SIZE` | The disk cache, at the first kernel compiled | The most the entries of every Tack version may take: bytes, a size such as `500M` or `2G` (binary units), or `unlimited`; default `1G`. Past it, a process that stores entries deletes the least recently used, at most once an hour. Any other value raises `ValueError` |

@@ -10,4 +10,5 @@
 
 - `TACK_FILL_NEW=0xFF` (any byte) fills every new array with that byte on every
   backend, so a read before a write reads NaN floats and -1 integers instead of
-  zeros that hide it; debug mode fills with 0xFF unless it is set (#386).
+  zeros that hide it; debug mode fills with 0xFF unless it gives another byte or
+  `off` (#386).

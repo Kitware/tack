@@ -66,7 +66,7 @@ is. The CPU leaves a new array untouched.
 Tack is imported) fills every new array, on every backend, with that byte
 (`array._filled_new`: on the device through `fill_bytes` where the buffer
 can, through its storage elsewhere), and debug mode fills with 0xFF unless
-it is set. A float filled with 0xFF reads as NaN and an integer as -1, so code
+it gives another byte or `off`. A float filled with 0xFF reads as NaN and an integer as -1, so code
 that reads an array before writing it gives NaN or an out-of-range index
 instead of whatever the allocator left, which on a Mac's fresh pages, Metal's
 new buffers and most first allocations is zeros. CI's `ids-i64` job runs the

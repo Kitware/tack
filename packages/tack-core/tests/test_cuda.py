@@ -257,6 +257,19 @@ def test_export_memory():
     # Exporting copies into VMM-backed memory; the array itself is untouched.
     assert np.allclose(f.numpy(), np.arange(n, dtype=np.float32))
 
+    # The handle shares the whole allocation: what lies past the array is
+    # cleared before the first export, since no allocation clears it (#386).
+    from cuda.bindings import driver
+
+    from tack.runtime import cuda_backend as runtime
+
+    shared = f._buffer._export_buf
+    whole = np.empty(shared._alloc_size, np.uint8)
+    with runtime._in_context(shared._token):
+        err, = driver.cuMemcpyDtoH(whole, shared._device_ptr, shared._alloc_size)
+    assert err == driver.CUresult.CUDA_SUCCESS
+    assert not whole[shared._nbytes:].any()
+
 
 def test_export_without_virtual_memory_says_why():
     """A device with no virtual memory management (a GPU in TCC mode on

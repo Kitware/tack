@@ -5806,18 +5806,21 @@ read it, and dispatches on <code>handle_type</code>.</p>
 </table>
 <p>Other buffers raise <code>RuntimeError</code> (<code>Backend ... does not support memory
 export</code>). CUDA memory from <code>cuMemAllocAsync</code> cannot be exported as an OS handle,
-so <code>CUDABuffer.export_memory()</code> waits for the launches queued on the
-array, copies it once, device to device, into a lazily created
-<code>ExportableCUDABuffer</code> and exports that — later kernel writes to the
-original are not reflected in the export. Metal's <code>export_memory()</code> calls
+so <code>CUDABuffer.export_memory()</code> copies the array once, device to device,
+into a lazily created <code>ExportableCUDABuffer</code>, queued on Tack's stream
+behind the launches that write it, and exports that — later kernel writes
+to the original are not reflected in the export. Metal's <code>export_memory()</code> calls
 <code>share()</code>, as a DLPack export does. An array
 allocated with <code>tack.empty(..., exportable=True)</code> is an
 <code>ExportableCUDABuffer</code> from the start, and its export is zero-copy. The
 exportable buffer is allocated through CUDA's virtual memory management API
 (<code>cuMemCreate</code>, <code>cuMemAddressReserve</code>, <code>cuMemMap</code>, <code>cuMemSetAccess</code>),
 rounded up to the allocation granularity, which is why <code>allocation_size</code>
-can exceed <code>size</code>. The handle is created once and cached; the device UUID
-lets the consumer match devices across APIs.</p>
+can exceed <code>size</code>; the padding past the array is cleared before the first
+export, which then waits for Tack's stream, so the copy and the clear are
+done when the handle leaves Tack. Later launches and fills are the
+consumer's to order with <code>tack.sync()</code>. The handle is created once and
+cached; the device UUID lets the consumer match devices across APIs.</p>
 <div class="admonition warning">
 <p class="admonition-title">Who closes the descriptor</p>
 <p><code>ExportableCUDABuffer.__del__</code> closes a POSIX descriptor it exported. A

@@ -6214,7 +6214,8 @@ It is <code>f32</code> until set, and process-wide.</p>
 <p>Turns debug mode on or off for every kernel launched from then on.
 <code>TACK_DEBUG</code> (a boolean flag, read like <code>TACK_NO_REINIT</code>) turns it on when
 Tack is imported. <code>tack.runtime.dispatch.debug_enabled()</code> reports the
-current setting.</p>
+current setting. Debug mode also fills every new array with 0xFF, unless
+<code>TACK_FILL_NEW</code> gives another byte or <code>off</code> (below).</p>
 <p><strong>Debug mode</strong> checks every index of every array access, one
 dimension at a time: an array's leading dimension against its length, the
 others against theirs, a flat index against the element count (a component
@@ -7063,6 +7064,11 @@ it is queued (see <a href="#host-operations">Host operations</a>).</p>
 <td><code>TACK_DEBUG</code></td>
 <td><code>import tack</code> (<code>runtime/dispatch.py</code>)</td>
 <td>A boolean flag read like <code>TACK_NO_REINIT</code>: turns on debug mode's bounds checks. <code>tack.set_debug</code> overrides it (above)</td>
+</tr>
+<tr>
+<td><code>TACK_FILL_NEW</code></td>
+<td><code>import tack</code> (<code>lang/array.py</code>)</td>
+<td>A byte, <code>0xFF</code> or <code>255</code> (Python's integer spelling), <code>off</code>, or unset or empty. Every new array (<code>tack.empty</code> and every constructor over it) is filled with that byte on every backend, so code that reads an array before writing it reads with <code>0xFF</code> NaN floats, -1 signed integers and an unsigned type's largest value (255 for <code>u8</code>). Unset, debug mode fills with 0xFF; <code>off</code> fills nothing, debug mode included, which keeps its bounds checks. Anything else raises <code>ValueError</code> at import. No backend clears a new array otherwise (#386)</td>
 </tr>
 <tr>
 <td><code>TACK_NO_REINIT</code></td>

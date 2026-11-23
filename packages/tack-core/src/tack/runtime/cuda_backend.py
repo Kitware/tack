@@ -536,10 +536,12 @@ class CUDABuffer(DeviceBuffer):
         if not hasattr(self, '_export_buf'):
             self._export_buf = ExportableCUDABuffer(self._numpy_dtype, self._shape,
                                                     self._token)
-            self.synchronize()
+            # Queued after the launches that write this array; the export waits
+            # for the stream before its handle leaves Tack.
             with _in_context(self._token):
-                _check(driver.cuMemcpyDtoD(
-                    self._export_buf._device_ptr, self._device_ptr, self._nbytes))
+                _check(driver.cuMemcpyDtoDAsync(
+                    self._export_buf._device_ptr, self._device_ptr, self._nbytes,
+                    self._stream))
         return self._export_buf.export_memory()
 
     def __del__(self):
@@ -733,28 +735,33 @@ class ExportableCUDABuffer(DeviceBuffer):
     def nbytes(self) -> int:
         return self._nbytes
 
-    def _clear_padding(self):
-        """Zero the allocation past the array, before its handle first leaves Tack:
-        the handle shares the whole allocation (``allocation_size``, rounded up to
-        the granularity), and nothing writes that padding, which would otherwise
-        carry the memory's earlier contents out. The array is the caller's, as any
-        new array's contents are; only the padding is cleared, so allocation
+    def _clear_padding(self, stream):
+        """Zero the allocation past the array, queued on ``stream``, before its handle
+        first leaves Tack: the handle shares the whole allocation (``allocation_size``,
+        rounded up to the granularity), and nothing writes that padding, which would
+        otherwise carry the memory's earlier contents out. The array is the caller's,
+        as any new array's contents are; only the padding is cleared, so allocation
         stays free of a clear."""
         padding = self._alloc_size - self._nbytes
         if padding > 0:
-            # On Tack's stream, waiting for it alone: a whole-context wait would also
-            # wait for other libraries' streams, which may be waiting on the host.
-            stream = self._queued_stream
-            with _in_context(self._token):
-                _check(driver.cuMemsetD8Async(int(self._device_ptr) + self._nbytes, 0,
-                                              padding, stream or driver.CUstream(0)))
-                _check(driver.cuStreamSynchronize(stream or driver.CUstream(0)))
+            _check(driver.cuMemsetD8Async(int(self._device_ptr) + self._nbytes, 0,
+                                          padding, stream))
 
     def export_memory(self):
-        """Export as ExportedMemory (handle + size + UUID). The handle is cached."""
+        """Export as ExportedMemory (handle + size + UUID). The handle is cached.
+
+        The first export waits for Tack's stream, with or without padding to clear:
+        the copy an ordinary array's export makes (`CUDABuffer.export_memory`) and
+        the padding's clear are queued there, and both must be done before the handle
+        leaves Tack. It waits for that stream alone: a whole-context wait would also
+        wait for other libraries' streams, which may be waiting on the host. Later
+        launches and fills are the caller's to order (`tack.sync`)."""
         from tack.lang.array import ExportedMemory
         if self._exported_handle is None:
-            self._clear_padding()
+            stream = self._queued_stream or driver.CUstream(0)
+            with _in_context(self._token):
+                self._clear_padding(stream)
+                _check(driver.cuStreamSynchronize(stream))
             err, handle = driver.cuMemExportToShareableHandle(
                 self._mem_handle, self._handle_type, 0)
             _check(err)

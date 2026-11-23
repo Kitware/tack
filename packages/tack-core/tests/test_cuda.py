@@ -299,6 +299,26 @@ def test_export_clears_padding_that_held_something():
     assert not whole[shared._nbytes:].any()
 
 
+def test_an_export_without_padding_waits_for_its_copy():
+    """The copy an ordinary array's export makes is done when the handle leaves
+    Tack, also for an array a whole number of granules long, which has no padding
+    to clear. The copy (``cuMemcpyDtoD``, which does not wait for the device) used
+    to be waited for only through the padding's clear: on an RTX 4060 Ti, 256 MiB
+    was still being copied when export_memory returned."""
+    _skip_without_exportable_memory()
+    from cuda.bindings import driver
+
+    a = tack.empty((64 << 20,))                      # 256 MiB
+    a.fill(1.0)
+    tack.sync()
+    a.export_memory()
+    shared = a._buffer._export_buf
+    assert shared._alloc_size == shared._nbytes      # no padding
+    for stream in (a._buffer._stream, driver.CUstream(0)):
+        err, = driver.cuStreamQuery(stream)
+        assert err == driver.CUresult.CUDA_SUCCESS, err
+
+
 def test_exportable_memory_fills_on_the_device(monkeypatch):
     """An exportable array takes TACK_FILL_NEW's fill, and any fill, on the device
     (``fill_bytes``), not through a host array the size of it."""

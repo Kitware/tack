@@ -271,6 +271,34 @@ def test_export_memory():
     assert not whole[shared._nbytes:].any()
 
 
+def test_export_clears_padding_that_held_something():
+    """The padding past an exported array is cleared before the first export even
+    where the memory came dirty: here the whole allocation is set to 0xAB first,
+    as a driver that does not zero new memory would leave it. Some drivers zero
+    ``cuMemCreate``'s memory anyway (620.70 on an RTX 4060 Ti), so the test above
+    cannot tell the clear from the driver's."""
+    _skip_without_exportable_memory()
+    from cuda.bindings import driver
+
+    from tack.runtime import cuda_backend as runtime
+
+    n = 100                                     # far short of the granularity
+    shared = runtime.ExportableCUDABuffer(np.float32, (n,))
+    assert shared._alloc_size > shared._nbytes
+    with runtime._in_context(shared._token):
+        err, = driver.cuMemsetD8(shared._device_ptr, 0xAB, shared._alloc_size)
+    assert err == driver.CUresult.CUDA_SUCCESS
+    values = np.arange(n, dtype=np.float32)
+    shared.from_numpy(values)
+    shared.export_memory()
+    whole = np.empty(shared._alloc_size, np.uint8)
+    with runtime._in_context(shared._token):
+        err, = driver.cuMemcpyDtoH(whole, shared._device_ptr, shared._alloc_size)
+    assert err == driver.CUresult.CUDA_SUCCESS
+    np.testing.assert_array_equal(whole[:shared._nbytes].view(np.float32), values)
+    assert not whole[shared._nbytes:].any()
+
+
 def test_export_without_virtual_memory_says_why():
     """A device with no virtual memory management (a GPU in TCC mode on
     Windows) cannot export, and the error says so rather than listing

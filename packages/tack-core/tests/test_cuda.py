@@ -299,6 +299,20 @@ def test_export_clears_padding_that_held_something():
     assert not whole[shared._nbytes:].any()
 
 
+def test_exportable_memory_fills_on_the_device(monkeypatch):
+    """An exportable array takes TACK_FILL_NEW's fill, and any fill, on the device
+    (``fill_bytes``), not through a host array the size of it."""
+    _skip_without_exportable_memory()
+    from tack.lang import array as array_module
+
+    monkeypatch.setattr(array_module, "_FILL_NEW", 0xAB)
+    shared = tack.empty((1000,), tack.u16, exportable=True)
+    assert shared._buffer.fill_bytes(b"\xab\xab")
+    assert (shared.numpy().view(np.uint8) == 0xAB).all()
+    shared.fill(7)
+    assert (shared.numpy() == 7).all()
+
+
 def test_export_without_virtual_memory_says_why():
     """A device with no virtual memory management (a GPU in TCC mode on
     Windows) cannot export, and the error says so rather than listing

@@ -45,10 +45,13 @@ def test_zeros_ones_and_full_still_hold_their_values(backend, fill):
     assert (tack.full((300,), 7.5, tack.f32).numpy() == 7.5).all()
 
 
-def test_a_filled_float_reads_as_nan_and_an_integer_as_minus_one(backend, monkeypatch):
+def test_a_filled_float_reads_as_nan_and_an_integer_as_minus_one_or_its_largest(
+        backend, monkeypatch):
     monkeypatch.setattr(array_module, "_FILL_NEW", 0xFF)
     assert np.isnan(tack.empty((64,), tack.f32).numpy()).all()
     assert (tack.empty((64,), tack.i32).numpy() == -1).all()
+    assert (tack.empty((64,), tack.u8).numpy() == 255).all()
+    assert (tack.empty((64,), tack.u32).numpy() == 2**32 - 1).all()
 
 
 def test_structure_of_arrays_and_mpi_arrays_are_filled(fill):

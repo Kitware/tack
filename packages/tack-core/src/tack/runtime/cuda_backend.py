@@ -263,6 +263,35 @@ _DEAD_CONTEXT_MSG = (
 )
 
 
+def _fill_on_stream(device_ptr, nbytes, pattern, stream):
+    """Fill ``nbytes`` at ``device_ptr`` with ``pattern`` (one element's bytes,
+    repeated), queued on ``stream``: a memset where the pattern is one byte, two or
+    four, else ``device_fill``'s doubling copies. Nothing goes through a host buffer
+    the size of the array."""
+    base = int(device_ptr)
+
+    def native(pattern):
+        byte = device_fill.uniform_byte(pattern)
+        if byte is not None:
+            _check(driver.cuMemsetD8Async(device_ptr, byte, nbytes, stream))
+        elif len(pattern) == 2:
+            _check(driver.cuMemsetD16Async(device_ptr, device_fill.as_unsigned(pattern),
+                                           nbytes // 2, stream))
+        elif len(pattern) == 4:
+            _check(driver.cuMemsetD32Async(device_ptr, device_fill.as_unsigned(pattern),
+                                           nbytes // 4, stream))
+        else:
+            return False
+        return True
+
+    device_fill.fill(
+        nbytes, pattern, native,
+        lambda offset, data: _check(driver.cuMemcpyHtoDAsync(
+            base + offset, np.frombuffer(data, np.uint8), len(data), stream)),
+        lambda dst, src, size: _check(driver.cuMemcpyDtoDAsync(
+            base + dst, base + src, size, stream)))
+
+
 def _drain(stream):
     """Wait for the stream before a copy to pageable host memory.
 
@@ -491,31 +520,7 @@ class CUDABuffer(DeviceBuffer):
             return self._fill_bytes(pattern)
 
     def _fill_bytes(self, pattern):
-        base = int(self._device_ptr)
-        stream = self._stream
-
-        def native(pattern):
-            byte = device_fill.uniform_byte(pattern)
-            if byte is not None:
-                _check(driver.cuMemsetD8Async(self._device_ptr, byte, self._nbytes, stream))
-            elif len(pattern) == 2:
-                _check(driver.cuMemsetD16Async(self._device_ptr,
-                                               device_fill.as_unsigned(pattern),
-                                               self._nbytes // 2, stream))
-            elif len(pattern) == 4:
-                _check(driver.cuMemsetD32Async(self._device_ptr,
-                                               device_fill.as_unsigned(pattern),
-                                               self._nbytes // 4, stream))
-            else:
-                return False
-            return True
-
-        device_fill.fill(
-            self._nbytes, pattern, native,
-            lambda offset, data: _check(driver.cuMemcpyHtoDAsync(
-                base + offset, np.frombuffer(data, np.uint8), len(data), stream)),
-            lambda dst, src, size: _check(driver.cuMemcpyDtoDAsync(
-                base + dst, base + src, size, stream)))
+        _fill_on_stream(self._device_ptr, self._nbytes, pattern, self._stream)
         return True
 
     def _view_fields(self, start, count):
@@ -709,8 +714,17 @@ class ExportableCUDABuffer(DeviceBuffer):
                                       start, count)
 
     def fill(self, value):
-        arr = np.full(self._shape, value, dtype=self._numpy_dtype)
-        self.from_numpy(arr)
+        self.fill_bytes(device_fill.scalar_pattern(value, self._numpy_dtype))
+
+    def fill_bytes(self, pattern):
+        """On the device, queued on the context's stream (``_fill_on_stream``), as an
+        ordinary buffer fills: never a host array the size of this one, which
+        ``TACK_FILL_NEW`` would otherwise make for every exportable array. The
+        legacy-stream copies that read and write this buffer wait for that stream."""
+        with _in_context(self._token):
+            _fill_on_stream(self._device_ptr, self._nbytes, pattern,
+                            self._queued_stream or driver.CUstream(0))
+        return True
 
     def _view_fields(self, start, count):
         return pointer_view_fields(self, start, count)
@@ -728,9 +742,13 @@ class ExportableCUDABuffer(DeviceBuffer):
         stays free of a clear."""
         padding = self._alloc_size - self._nbytes
         if padding > 0:
+            # On Tack's stream, waiting for it alone: a whole-context wait would also
+            # wait for other libraries' streams, which may be waiting on the host.
+            stream = self._queued_stream
             with _in_context(self._token):
-                _check(driver.cuMemsetD8(int(self._device_ptr) + self._nbytes, 0, padding))
-                _check(driver.cuCtxSynchronize())
+                _check(driver.cuMemsetD8Async(int(self._device_ptr) + self._nbytes, 0,
+                                              padding, stream or driver.CUstream(0)))
+                _check(driver.cuStreamSynchronize(stream or driver.CUstream(0)))
 
     def export_memory(self):
         """Export as ExportedMemory (handle + size + UUID). The handle is cached."""

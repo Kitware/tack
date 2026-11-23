@@ -555,7 +555,8 @@ jobs:
 
       # And with every new array filled with 0xFF (TACK_FILL_NEW, #386): no
       # backend clears a new buffer, so code that reads an array before writing
-      # it reads NaN and -1 here instead of whatever the allocator left.
+      # it reads NaN, -1 or an unsigned maximum here instead of whatever the
+      # allocator left.
       - name: Run the dataset tests with i64 ids
         env:
           SELECTION: ${{ needs.changes.outputs.selection }}

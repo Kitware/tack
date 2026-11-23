@@ -139,6 +139,17 @@ contributes one part per template parameter:
 - **Runtime scalar names.** Instance scalars are runtime parameters, so
   their *values* are not keyed. Their *names* are, because adding or
   removing one changes the parameter layout.
+- **Shared arrays.** An array that more than one template (or one tree
+  under two names) holds is one kernel parameter: the rewrite names every
+  holder's attribute by the first one's synthetic parameter, and the
+  expansion passes it once (`template_rewrite.shared_arrays`). Objects
+  over one space hold its arrays, and a tack-expr divergence on a
+  quadratic grid passed 289 pointers before, past Level Zero's 2 KB of
+  kernel arguments, and 35 since. Which arrays repeat which, by template
+  index and flattened name, is a trailing `("shared", ...)` part, present
+  only when some do; the disk cache's lowered key carries it too. Only
+  templates' arrays are shared: a plain array argument is a parameter of
+  its own even when a template holds it as well.
 
 !!! note
     Template array attributes are keyed by their full shape, which is
@@ -375,7 +386,7 @@ typed pointer objects, a warm CPU dispatch went from 70 to 40 µs.
 
 #### What a warm call costs
 
-What a warm call pays (`_fast_resolve`): the call's signature (`_call_signature`, cached per `Array` as `_sig`; per template class the attribute layout `_template_layouts`, relearned when an instance's attribute names or types differ), one weak lookup for the kernel's entry, the disjointness check over the entry's precomputed array slots (`_disjoint_by_slots`, one sorted walk), and the per-call checks. It runs outside `template_scope`, which the slow path enters. `NumpyBuffer.address` and `span` are computed once per array. Measured on a 2 GHz Xeon: a warm CPU dispatch 70 → 40 µs from the signature alone, then a serial dispatch with eight array arguments 66 → 34 µs; inside a filter, where launches follow cache-trashing kernels and a third are template views, 149 → 130 µs per launch. Leaving the caller out of the chunks (k workers, caller waits) was tried for its warm caches and lost (161 µs), so the caller still runs chunks.
+What a warm call pays (`_fast_resolve`): the call's signature (`_call_signature`, cached per `Array` as `_sig`; per template class the attribute layout `_template_layouts`, relearned when an instance's attribute names or types differ), one weak lookup for the kernel's entry, the disjointness check over the entry's precomputed array slots (`_disjoint_by_slots`, one sorted walk), and the per-call checks. It runs outside `template_scope`, which the slow path enters. `NumpyBuffer.address` and `span` are computed once per array. Measured on a 2 GHz Xeon: a warm CPU dispatch 70 → 40 µs from the signature alone, then a serial dispatch with eight array arguments 66 → 34 µs; inside a filter, where launches follow cache-trashing kernels and a third are template views, 149 → 130 µs per launch. Leaving the caller out of the chunks (k workers, caller waits) was tried for its warm caches and lost (161 µs), so the caller still runs chunks. The signature also says which template arrays are one object (`_repeats`, since shared arrays are one parameter): about 65 ns per template array on an M1 Max, 22.4 → 26.1 µs for the signature of three views of 20 arrays each; with the views over one space, the 15 shared arrays are passed once and the warm call is 69 → 60 µs.
 
 ## The correctness argument
 
@@ -390,7 +401,7 @@ The table pairs each baked-in fact with the key element that names it:
 | pointer versus value calling convention | codegen, packing | `param_sig[*]._is_array` |
 | sampler versus software sampling, texture extents | codegen, `store_texture_shapes` | `param_sig[*]._is_texture`, `_texture_shape`, `shape_sig` |
 | vector scalarization | AST transform | `vec_sig` (and the IR template key) |
-| inlined template methods, class constants, template parameter layout | template rewrite | `tmpl_key` |
+| inlined template methods, class constants, template parameter layout, shared template arrays | template rewrite | `tmpl_key` |
 | dimension literals in index arithmetic and loops | `resolve_ir` | `shape_sig` |
 | `noalias` on array pointers | `LLVMCodeGen` | `disjoint` |
 | everything derived from the source | all stages | the per-kernel slot |

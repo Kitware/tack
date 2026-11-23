@@ -311,49 +311,6 @@ def _array_slots(ir_func, effective_args) -> tuple:
     return tuple(slots)
 
 
-def _repeated_arrays(effective_args, array_slots) -> tuple:
-    """``(index, first)`` of each array argument that an earlier one already
-    passes: device-class objects over the same space hold the same arrays, so
-    a kernel reading several of them takes each array many times. Each repeat
-    reads through the first one's parameter instead (`_share_params`), which
-    keeps a kernel's arguments within a device's limit on their total size
-    (2 KB on Level Zero)."""
-    first, repeats = {}, []
-    for i, _, through_texture in array_slots:
-        if not through_texture:
-            j = first.setdefault(id(effective_args[i]), i)
-            if j != i:
-                repeats.append((i, j))
-    return tuple(repeats)
-
-
-def _without_repeats(effective_args, repeats) -> tuple:
-    """The arguments a variant with ``repeats`` shared is launched with."""
-    if not repeats:
-        return effective_args
-    dropped = {i for i, _ in repeats}
-    return tuple(arg for i, arg in enumerate(effective_args) if i not in dropped)
-
-
-def _share_params(ir_func, repeats):
-    """Read each repeated array through its first parameter, and drop its own."""
-    names = [p.name for p in ir_func.params]
-    rename = {names[i]: names[j] for i, j in repeats}
-    for node in _walk_ir(ir_func.body):
-        if isinstance(node, ir.IRName) and node.name in rename:
-            node.name = rename[node.name]
-        elif getattr(node, "array_name", None) in rename:
-            node.array_name = rename[node.array_name]
-    dropped = {i for i, _ in repeats}
-    ir_func.params = [p for i, p in enumerate(ir_func.params) if i not in dropped]
-
-
-def _layout(disjoint, repeats):
-    """What a variant is specialized for in its arguments' storage: whether
-    they are disjoint, and which repeat an earlier one."""
-    return (disjoint, repeats) if repeats else disjoint
-
-
 def _disjoint_by_slots(effective_args, array_slots) -> bool:
     """`arrays_disjoint` for a call whose argument kinds are known.
 
@@ -648,13 +605,11 @@ def _fast_resolve(backend, kernel, args, specialize_disjoint):
     else:
         effective_args = args
     disjoint = specialize_disjoint and _disjoint_by_slots(effective_args, array_slots)
-    repeats = _repeated_arrays(effective_args, array_slots)
-    variant = variants.get(_layout(disjoint, repeats))
+    variant = variants.get(disjoint)
     if variant is None:
         return None
-    launch_args = _without_repeats(effective_args, repeats)
-    _check_call(backend, variant, effective_args, launch_args)
-    return variant, launch_args
+    _check_call(backend, variant, effective_args)
+    return variant, effective_args
 
 
 def _resolve_variant(backend, kernel, args, kwargs, build, store_texture_shapes,
@@ -710,21 +665,16 @@ def _resolve_variant(backend, kernel, args, kwargs, build, store_texture_shapes,
     store_texture_shapes(probe, effective_args)
 
     disjoint = specialize_disjoint and arrays_disjoint(template, effective_args)
-    array_slots = _array_slots(template, effective_args)
-    # Debug mode appends hidden arguments after these, so it shares none.
-    repeats = () if debug else _repeated_arrays(effective_args, array_slots)
-    layout = _layout(disjoint, repeats)
-    launch_args = _without_repeats(effective_args, repeats)
     shape_sig = shape_signature(template, name_to_array)
-    key = kernel_variant_key(probe, kernel, vector_arrays, template_args, shape_sig, layout)
+    key = kernel_variant_key(probe, kernel, vector_arrays, template_args, shape_sig, disjoint)
 
     slot = kernel_cache_slot(backend._cache, kernel)
     variant = slot.get(key)
     if variant is None:
         from tack.runtime import disk_cache
         disk_key = disk_cache.variant_key(backend, template, probe, vector_arrays,
-                                          shape_sig, layout)
-        variant = _stored_variant(backend, disk_key, template, effective_args, launch_args)
+                                          shape_sig, disjoint)
+        variant = _stored_variant(backend, disk_key, template, effective_args)
         if variant is not None:
             slot[key] = variant
     if variant is None:
@@ -733,14 +683,12 @@ def _resolve_variant(backend, kernel, args, kwargs, build, store_texture_shapes,
         from tack.lang.ir_verify import verify_stage
 
         ir_func = clone_ir(template)
-        if repeats:
-            _share_params(ir_func, repeats)
         resolve_ir(ir_func, name_to_array)
         verify_stage(ir_func, 'resolved')
-        infer_param_types(ir_func, launch_args)
-        store_texture_shapes(ir_func, launch_args)
+        infer_param_types(ir_func, effective_args)
+        store_texture_shapes(ir_func, effective_args)
         verify_stage(ir_func, 'inferred')
-        check_dispatch_types(ir_func, launch_args,
+        check_dispatch_types(ir_func, effective_args,
                              supported_dtypes=backend.supported_dtypes,
                              backend_name=backend.label)
         _localize_outer_scalars(ir_func)
@@ -749,16 +697,16 @@ def _resolve_variant(backend, kernel, args, kwargs, build, store_texture_shapes,
             ir_func, backend_name=backend.name,
             supported_dtypes=backend.supported_atomic_dtypes,
         )
-        check_atomic_alignment(ir_func.name, atomic_targets, launch_args)
+        check_atomic_alignment(ir_func.name, atomic_targets, effective_args)
         full_groups = (backend.supports_workgroups and
                        check_workgroup_participation(ir_func))
         if full_groups:
-            check_workgroup_launch(ir_func.name, _get_loop_range(ir_func, launch_args),
+            check_workgroup_launch(ir_func.name, _get_loop_range(ir_func, effective_args),
                                    backend_label=backend.label)
         optimize_ir(ir_func)
         verify_stage(ir_func, 'optimized')
         ir_func.disjoint_arrays = disjoint
-        variant = KernelVariant(ir_func, build(ir_func, launch_args),
+        variant = KernelVariant(ir_func, build(ir_func, effective_args),
                                 requires_full_workgroups=full_groups,
                                 atomic_targets=atomic_targets,
                                 written_arrays=_written_array_args(
@@ -769,7 +717,7 @@ def _resolve_variant(backend, kernel, args, kwargs, build, store_texture_shapes,
         _store_variant(backend, disk_key, variant)
         variant.ir = _launch_skeleton(ir_func)
     elif variant.requires_full_workgroups:
-        check_workgroup_launch(variant.ir.name, _get_loop_range(variant.ir, launch_args),
+        check_workgroup_launch(variant.ir.name, _get_loop_range(variant.ir, effective_args),
                                backend_label=backend.label)
 
     if sig is not None and not debug:      # see resolve_variant
@@ -777,17 +725,18 @@ def _resolve_variant(backend, kernel, args, kwargs, build, store_texture_shapes,
         if entry is None:
             if len(fast) >= _FAST_CAP:
                 fast.clear()
-            entry = fast[sig] = (_expansion_plan(template_args, expanded), {}, array_slots)
-        entry[1][layout] = variant
+            entry = fast[sig] = (_expansion_plan(template_args, expanded), {},
+                                 _array_slots(template, effective_args))
+        entry[1][disjoint] = variant
 
-    check_atomic_alignment(variant.ir.name, variant.atomic_targets, launch_args)
+    check_atomic_alignment(variant.ir.name, variant.atomic_targets, effective_args)
     check_writable_arrays(variant.ir.name, variant.written_arrays, effective_args)
     if debug:
         debug_bounds.launched(effective_args, template)
-    return variant, launch_args
+    return variant, effective_args
 
 
-def _stored_variant(backend, disk_key, template, effective_args, launch_args):
+def _stored_variant(backend, disk_key, template, effective_args):
     """The variant a previous process compiled for this call, or None.
 
     The entry holds the IR after the passes and the backend's artifact;
@@ -804,7 +753,7 @@ def _stored_variant(backend, disk_key, template, effective_args, launch_args):
     import pickle
     try:
         ir_func = pickle.loads(entry["ir"])
-        payload = backend.load_variant(ir_func, entry["artifact"], launch_args)
+        payload = backend.load_variant(ir_func, entry["artifact"], effective_args)
     except Exception:
         disk_cache._count("bad")
         return None
@@ -814,7 +763,7 @@ def _stored_variant(backend, disk_key, template, effective_args, launch_args):
                             written_arrays=_written_array_args(template, effective_args),
                             has_textures=any(isinstance(a, Texture3D) for a in effective_args))
     if variant.requires_full_workgroups:
-        check_workgroup_launch(ir_func.name, _get_loop_range(ir_func, launch_args),
+        check_workgroup_launch(ir_func.name, _get_loop_range(ir_func, effective_args),
                                backend_label=backend.label)
     return variant
 
@@ -852,14 +801,12 @@ def _store_variant(backend, disk_key, variant):
     disk_cache.store_variant(disk_key, entry)
 
 
-def _check_call(backend, variant, effective_args, launch_args):
-    """What every dispatch checks against its actual arguments, hit or miss:
-    ``effective_args`` as the kernel's parameters take them, ``launch_args``
-    as the variant's do (`_without_repeats`)."""
+def _check_call(backend, variant, effective_args):
+    """What every dispatch checks against its actual arguments, hit or miss."""
     if variant.requires_full_workgroups:
-        check_workgroup_launch(variant.ir.name, _get_loop_range(variant.ir, launch_args),
+        check_workgroup_launch(variant.ir.name, _get_loop_range(variant.ir, effective_args),
                                backend_label=backend.label)
-    check_atomic_alignment(variant.ir.name, variant.atomic_targets, launch_args)
+    check_atomic_alignment(variant.ir.name, variant.atomic_targets, effective_args)
     check_writable_arrays(variant.ir.name, variant.written_arrays, effective_args)
 
 
@@ -909,6 +856,7 @@ def _call_signature(args):
     """The call's signature, or None for an argument the fast path does
     not describe (the slow path then reports it)."""
     sig = []
+    held = None             # the templates' arrays, in walk order
     for arg in args:
         if isinstance(arg, Array):
             try:
@@ -926,13 +874,28 @@ def _call_signature(args):
         elif isinstance(arg, np.integer):
             sig.append((3, integer_type_for_value(int(arg))))
         elif getattr(type(arg), '_device_class', False) is True:
-            tmpl = _template_signature(arg, (), set())
+            if held is None:
+                held = []
+            tmpl = _template_signature(arg, (), set(), held)
             if tmpl is None:
                 return None
             sig.append((4, tuple(tmpl)))
         else:
             return None
+    if held is not None:
+        ids = list(map(id, held))
+        if len(set(ids)) != len(ids):
+            sig.append(_repeats(ids))
     return tuple(sig)
+
+
+def _repeats(ids) -> tuple:
+    """Which of the templates' arrays (``ids``, in the signature's walk
+    order) repeat an earlier one, by position: equal for two calls of
+    one signature exactly when `template_rewrite.shared_arrays` is, which
+    changes the kernel's parameters."""
+    first = {}
+    return ("shared", tuple((k, first.setdefault(i, k)) for k, i in enumerate(ids)))
 
 
 def _array_signature(array):
@@ -994,14 +957,16 @@ def _tuple_signature(value):
     return tuple(2 if isinstance(v, float) else integer_type_for_value(v) for v in value)
 
 
-def _template_signature(obj, path, seen):
+def _template_signature(obj, path, seen, held):
     """What of a template object the IR and the expansion depend on, for it
-    and every template it holds; None on a cycle (the slow path explains)."""
+    and every template it holds; None on a cycle (the slow path explains).
+    Appends each array it holds to ``held``, for `_repeats`."""
     if id(obj) in seen:
         return None
     seen.add(id(obj))
     cls = type(obj)
     attributes = vars(obj)
+    mark = len(held)
     layout = _template_layouts.get(cls)
     if layout is not None and layout[0] != tuple(attributes):
         layout = None                         # another attribute set: walk and relearn
@@ -1021,6 +986,7 @@ def _template_signature(obj, path, seen):
                 layout = None
                 break
             if kind == _LAYOUT_ARRAY:
+                held.append(value)
                 try:
                     own.append((name, *value._sig))
                 except AttributeError:
@@ -1054,6 +1020,7 @@ def _template_signature(obj, path, seen):
                 layout = None                 # whether it drops depends on the contents
                 break
     if layout is None:
+        del held[mark:]                       # a layout walk given up part way
         from tack.lang.func import Func
         from tack.lang.template_rewrite import _class_constants
         constants = _class_constants(cls)
@@ -1081,6 +1048,7 @@ def _template_signature(obj, path, seen):
                 own.append((name, 7, tuple(_scalar_bits(v) for v in value)))
             elif isinstance(value, Array):
                 kinds.append(_LAYOUT_ARRAY)
+                held.append(value)
                 own.append((name, *_array_signature(value)))
             elif isinstance(value, int):
                 kinds.append(_LAYOUT_INT)
@@ -1108,7 +1076,7 @@ def _template_signature(obj, path, seen):
               tuple((n, type(v), _scalar_bits(v)) for n, v in constants.items()),
               tuple(own))]
     for name, child in sorted(children):
-        below = _template_signature(child, (*path, name), seen)
+        below = _template_signature(child, (*path, name), seen, held)
         if below is None:
             return None
         parts.extend(below)
@@ -1129,8 +1097,16 @@ def _expansion_plan(template_args, expanded) -> tuple:
 
 
 def _template_plan(template_args) -> tuple:
-    from tack.lang.template_rewrite import _classify_own, _prefix, scalar_path, template_tree
+    from tack.lang.template_rewrite import (
+        _classify_own,
+        _prefix,
+        scalar_path,
+        shared_arrays,
+        template_tree,
+    )
 
+    # An array an earlier template holds is passed once, as that one's.
+    shared = {slot for slot, _ in shared_arrays(template_args)}
     plan = []
     for idx in sorted(template_args, reverse=True):
         _, obj = template_args[idx]
@@ -1138,7 +1114,8 @@ def _template_plan(template_args) -> tuple:
         for path, node in template_tree(obj):
             _, own_arrays, own_scalars = _classify_own(node)
             for name in own_arrays:
-                arrays.append((_prefix(path) + name, (*path, name)))
+                if (idx, _prefix(path) + name) not in shared:
+                    arrays.append((_prefix(path) + name, (*path, name)))
             for name in own_scalars:
                 scalars.append((_prefix(path) + name, (*path, *scalar_path(name))))
         arrays.sort()
@@ -1259,13 +1236,15 @@ def _expand_templates(args, template_args) -> tuple:
     Returns new args tuple with template objects removed and their
     array attributes and runtime scalars appended.  These are appended
     in reverse template index order to match the AST rewrite pass
-    (which processes templates from highest index to lowest).
+    (which processes templates from highest index to lowest). An array an
+    earlier one holds too is passed once (`shared_arrays`).
     """
     if not template_args:
         return args
 
-    from tack.lang.template_rewrite import classify_template_attrs
+    from tack.lang.template_rewrite import classify_template_attrs, shared_arrays
 
+    shared = {slot for slot, _ in shared_arrays(template_args)}
     new_args = []
     extra = []
     # Collect template arrays and runtime scalars in reverse index order
@@ -1273,7 +1252,8 @@ def _expand_templates(args, template_args) -> tuple:
         _, obj = template_args[idx]
         _, arrays, runtime_scalars = classify_template_attrs(obj)
         for attr_name in sorted(arrays.keys()):
-            extra.append(arrays[attr_name])
+            if (idx, attr_name) not in shared:
+                extra.append(arrays[attr_name])
         for attr_name in sorted(runtime_scalars.keys()):
             extra.append(runtime_scalars[attr_name])
     # Build non-template args in order
@@ -1316,19 +1296,25 @@ def _detect_vector_arrays_from_args(kernel, args, template_args) -> dict[str, in
     if not template_args:
         return _detect_vector_arrays(kernel, args)
 
-    from tack.lang.template_rewrite import classify_template_attrs, template_array_param_name
+    from tack.lang.template_rewrite import (
+        classify_template_attrs,
+        shared_arrays,
+        template_array_param_name,
+    )
 
     funcdef = kernel._funcdef
     params = [a.arg for a in funcdef.args.args]
+    shared = {slot for slot, _ in shared_arrays(template_args)}
     vector_arrays = {}
     for i, (param_name, arg) in enumerate(zip(params, args)):
         if i in template_args:
             # A template's vector array attributes become kernel parameters
             # too, under the rewrite's synthetic names; without this a
             # `self.vel[i, j]` in a template method lowered as a scalar load.
+            # A shared one is the first holder's parameter.
             _, arrays, _ = classify_template_attrs(arg)
             for attr_name, array in arrays.items():
-                if hasattr(array, '_vector_n'):
+                if hasattr(array, '_vector_n') and (i, attr_name) not in shared:
                     vector_arrays[template_array_param_name(param_name, attr_name)] = \
                         _element_shape(array)
             continue

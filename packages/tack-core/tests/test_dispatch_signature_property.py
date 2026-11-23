@@ -90,6 +90,11 @@ def _arrays():
             lambda: tack.zeros((6,), tack.vec3(), layout="soa")[2:6]]
 
 
+# Arrays several attributes hold at once, made when the test runs: an array
+# held twice is one kernel parameter (`template_rewrite.shared_arrays`), so
+# which attributes share one is part of the signature (`_repeats`).
+_HELD = []
+
 _SCALARS = (1, 7, 2**40, -1, True, False, 1.0, 2.5, np.int32(1), np.int64(2**40),
             np.float32(1.0), np.float64(1.0), np.uint8(3))
 _OTHERS = (None, "text", [1, 2], {}, ("x",))
@@ -99,9 +104,12 @@ _TUPLES = ((1, 2), (2, 3), (4, 4), (1.0, 2), (1, 2**40), (2, 3, 4))
 
 
 def _value(rng, depth):
-    kind = rng.choice(("array", "scalar", "scalar", "func", "child", "other", "tuple"))
+    kind = rng.choice(("array", "held", "held", "scalar", "scalar", "func", "child", "other",
+                       "tuple"))
     if kind == "array":
         return rng.choice(_arrays())()
+    if kind == "held":
+        return rng.choice(_HELD)
     if kind == "scalar":
         return rng.choice(_SCALARS)
     if kind == "func":
@@ -151,6 +159,8 @@ def test_equal_signatures_resolve_to_the_same_variant_and_arguments():
         pytest.skip("debug mode never takes the fast path")
     tack.set_default_device("cpu")
     backend = get_backend()
+    _HELD[:] = [tack.zeros((4,)), tack.zeros((4,)), tack.zeros((4,), tack.vec3()),
+                tack.zeros((4,), tack.vec3(), layout="soa")]
     rng = random.Random(20261015)
     checked = 0
     seen = set()

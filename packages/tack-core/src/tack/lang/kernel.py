@@ -207,12 +207,16 @@ class Kernel:
         if texture_arrays:
             parts.append(("tex", tuple(sorted(texture_arrays.items()))))
         if template_args:
-            from tack.lang.template_rewrite import memoized
+            from tack.lang.template_rewrite import memoized, shared_arrays
 
             for idx in sorted(template_args.keys()):
                 _, obj = template_args[idx]
                 parts.append((f"tmpl_{idx}",
                               *memoized("key", obj, lambda obj=obj: _template_key(obj))))
+            # Arrays held by more than one template are one parameter.
+            shared = shared_arrays(template_args)
+            if shared:
+                parts.append(("shared", shared))
         return tuple(parts)
 
     def _run_result(self, backend, args, kwargs):

@@ -1063,9 +1063,10 @@ def empty(shape, dtype=None, *, device=None, exportable=False, layout="aos") -> 
     Initialize its values with a kernel, ``fill`` or ``tack.copyto`` before
     reading: no backend clears a new array, and ``TACK_FILL_NEW=0xFF`` (or debug
     mode) fills every one with that byte, so a read before a write shows as NaN,
-    -1 in a signed integer or the largest value of an unsigned one. ``device`` is a `tack.Device` or a spec such as ``"cuda"``; by
-    default the default device. ``layout="soa"`` stores a vector or matrix
-    array's components in one array each (see `SoaArray`).
+    -1 in a signed integer or the largest value of an unsigned one. ``device``
+    is a `tack.Device` or a spec such as ``"cuda"``; by default the default
+    device. ``layout="soa"`` stores a vector or matrix array's components in one
+    array each (see `SoaArray`).
     """
     backend = _target(device)
     shape = _array_shape(shape)
@@ -1164,9 +1165,9 @@ def _filled_new(buffer, dtype):
     contents are unspecified on every backend, and no backend clears them, so code
     that reads an array before writing it reads what the allocator left, zeros as
     often as not; filled with 0xFF it reads NaN, -1 (signed) or the type's largest
-    value (unsigned) instead, on every backend
-    alike. On the device where the buffer fills itself (``fill_bytes``: CUDA, HIP,
-    Level Zero), through its storage elsewhere."""
+    value (unsigned) instead, on every backend alike. On the device where the
+    buffer fills itself (``fill_bytes``: CUDA, HIP, Level Zero), through its
+    storage elsewhere."""
     byte = _new_fill()
     if byte is None or buffer.nbytes == 0:
         return buffer

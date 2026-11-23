@@ -210,18 +210,21 @@ read it, and dispatches on `handle_type`.
 
 Other buffers raise `RuntimeError` (`Backend ... does not support memory
 export`). CUDA memory from `cuMemAllocAsync` cannot be exported as an OS handle,
-so `CUDABuffer.export_memory()` waits for the launches queued on the
-array, copies it once, device to device, into a lazily created
-`ExportableCUDABuffer` and exports that — later kernel writes to the
-original are not reflected in the export. Metal's `export_memory()` calls
+so `CUDABuffer.export_memory()` copies the array once, device to device,
+into a lazily created `ExportableCUDABuffer`, queued on Tack's stream
+behind the launches that write it, and exports that — later kernel writes
+to the original are not reflected in the export. Metal's `export_memory()` calls
 `share()`, as a DLPack export does. An array
 allocated with `tack.empty(..., exportable=True)` is an
 `ExportableCUDABuffer` from the start, and its export is zero-copy. The
 exportable buffer is allocated through CUDA's virtual memory management API
 (`cuMemCreate`, `cuMemAddressReserve`, `cuMemMap`, `cuMemSetAccess`),
 rounded up to the allocation granularity, which is why `allocation_size`
-can exceed `size`. The handle is created once and cached; the device UUID
-lets the consumer match devices across APIs.
+can exceed `size`; the padding past the array is cleared before the first
+export, which then waits for Tack's stream, so the copy and the clear are
+done when the handle leaves Tack. Later launches and fills are the
+consumer's to order with `tack.sync()`. The handle is created once and
+cached; the device UUID lets the consumer match devices across APIs.
 
 !!! warning "Who closes the descriptor"
 

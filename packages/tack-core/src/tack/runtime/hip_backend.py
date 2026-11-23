@@ -417,7 +417,9 @@ class HIPBuffer(DeviceBuffer):
             if err != hip.hipError_t.hipSuccess and err == hip.hipError_t.hipErrorOutOfMemory:
                 raise DeviceMemoryError(f"HIP is out of memory for {self._nbytes} bytes")
             _check_hip(err)
-            _check_hip(hip.hipMemsetAsync(self._device_ptr, 0, self._nbytes, queue.stream))
+            # Not cleared, nor is a buffer the cache gives back: a new array's
+            # contents are unspecified (`tack.empty`); TACK_FILL_NEW or debug mode
+            # fills it (`array._filled_new`).
 
     @property
     def _stream(self):

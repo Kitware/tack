@@ -257,6 +257,137 @@ def test_export_memory():
     # Exporting copies into VMM-backed memory; the array itself is untouched.
     assert np.allclose(f.numpy(), np.arange(n, dtype=np.float32))
 
+    # The handle shares the whole allocation: what lies past the array is
+    # cleared before the first export, since no allocation clears it (#386).
+    from cuda.bindings import driver
+
+    from tack.runtime import cuda_backend as runtime
+
+    shared = f._buffer._export_buf
+    whole = np.empty(shared._alloc_size, np.uint8)
+    with runtime._in_context(shared._token):
+        err, = driver.cuMemcpyDtoH(whole, shared._device_ptr, shared._alloc_size)
+    assert err == driver.CUresult.CUDA_SUCCESS
+    assert not whole[shared._nbytes:].any()
+
+
+def test_export_clears_padding_that_held_something():
+    """The padding past an exported array is cleared before the first export even
+    where the memory came dirty: here the whole allocation is set to 0xAB first,
+    as a driver that does not zero new memory would leave it. Some drivers zero
+    ``cuMemCreate``'s memory anyway (620.70 on an RTX 4060 Ti), so the test above
+    cannot tell the clear from the driver's."""
+    _skip_without_exportable_memory()
+    from cuda.bindings import driver
+
+    from tack.runtime import cuda_backend as runtime
+
+    n = 100                                     # far short of the granularity
+    shared = runtime.ExportableCUDABuffer(np.float32, (n,))
+    assert shared._alloc_size > shared._nbytes
+    with runtime._in_context(shared._token):
+        err, = driver.cuMemsetD8(shared._device_ptr, 0xAB, shared._alloc_size)
+    assert err == driver.CUresult.CUDA_SUCCESS
+    values = np.arange(n, dtype=np.float32)
+    shared.from_numpy(values)
+    shared.export_memory()
+    whole = np.empty(shared._alloc_size, np.uint8)
+    with runtime._in_context(shared._token):
+        err, = driver.cuMemcpyDtoH(whole, shared._device_ptr, shared._alloc_size)
+    assert err == driver.CUresult.CUDA_SUCCESS
+    np.testing.assert_array_equal(whole[:shared._nbytes].view(np.float32), values)
+    assert not whole[shared._nbytes:].any()
+
+
+def test_an_export_without_padding_waits_for_its_copy():
+    """The copy an ordinary array's export makes is done when the handle leaves
+    Tack, also for an array a whole number of granules long, which has no padding
+    to clear. The copy (``cuMemcpyDtoD``, which does not wait for the device) used
+    to be waited for only through the padding's clear: on an RTX 4060 Ti, 256 MiB
+    was still being copied when export_memory returned."""
+    _skip_without_exportable_memory()
+    from cuda.bindings import driver
+
+    a = tack.empty((64 << 20,))                      # 256 MiB
+    a.fill(1.0)
+    tack.sync()
+    a.export_memory()
+    shared = a._buffer._export_buf
+    assert shared._alloc_size == shared._nbytes      # no padding
+    for stream in (a._buffer._stream, driver.CUstream(0)):
+        err, = driver.cuStreamQuery(stream)
+        assert err == driver.CUresult.CUDA_SUCCESS, err
+
+
+_DROPPED_SCRIPT = """
+import tack
+from tack.runtime.dispatch import get_backend
+
+@tack.kernel
+def spin(out, iters: tack.i32):
+    for i in range(out.shape[0]):
+        acc = 0.0
+        for k in range(iters):
+            acc = acc * 0.999 + 1.0
+        out[i] = acc
+
+tack.set_default_device("cuda")
+spin(tack.empty((16,), exportable=True), 1)            # compiled before the drops
+tack.sync()
+for work in ("fill", "launch", "export"):
+    for _ in range(5):
+        if work == "fill":                              # TACK_FILL_NEW's, or fill's
+            a = tack.empty((64 << 20,), exportable=True)
+            a.fill(2.0)
+        elif work == "launch":
+            a = tack.empty((1 << 20,), exportable=True)
+            spin(a, 20000)
+        else:                                           # the export's copy
+            a = tack.empty((64 << 20,))
+            a.fill(1.0)
+            a.export_memory()
+        del a
+        tack.sync()
+assert not get_backend()._token.dropped                # every one freed by the syncs
+print("ok")
+"""
+
+
+def test_an_exportable_array_dropped_under_queued_work(tmp_path):
+    """Dropping an exportable array while a launch, a fill or the export's copy
+    on it is queued frees its memory once they are done. Unmapped at once, as it
+    was, the queued work faulted (``CUDA_ERROR_ILLEGAL_ADDRESS``) and took the
+    context with it, every time on an RTX 4060 Ti; in a fresh process, since that
+    fault would leave this one's context unusable."""
+    _skip_without_exportable_memory()
+    import subprocess
+    import sys
+
+    script = tmp_path / "dropped.py"
+    script.write_text(_DROPPED_SCRIPT)
+    proc = subprocess.run([sys.executable, "-u", str(script)],
+                          capture_output=True, text=True, timeout=300)
+    assert proc.returncode == 0 and proc.stdout.strip() == "ok", proc.stderr[-3000:]
+
+
+def test_exportable_memory_fills_on_the_device(monkeypatch):
+    """An exportable array takes TACK_FILL_NEW's fill, and any fill, on the device
+    (``fill_bytes``), not through a host array the size of it."""
+    _skip_without_exportable_memory()
+    from tack.lang import array as array_module
+    from tack.runtime import cuda_backend as runtime
+
+    def through_the_host(self, arr):
+        raise AssertionError("an exportable array filled through a host array")
+
+    monkeypatch.setattr(array_module, "_FILL_NEW", 0xAB)
+    monkeypatch.setattr(runtime.ExportableCUDABuffer, "from_numpy", through_the_host)
+    shared = tack.empty((1000,), tack.u16, exportable=True)
+    assert isinstance(shared._buffer, runtime.ExportableCUDABuffer)
+    assert (shared.numpy().view(np.uint8) == 0xAB).all()   # the new array's fill
+    shared.fill(7)
+    assert (shared.numpy() == 7).all()
+
 
 def test_export_without_virtual_memory_says_why():
     """A device with no virtual memory management (a GPU in TCC mode on

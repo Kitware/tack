@@ -310,13 +310,14 @@ def test_a_merged_dataset_of_high_order_travels_to_the_root(f64_backend):
 def test_a_merged_l2_field_keeps_the_layout_it_resolved_to_on_the_root(f64_backend,
                                                                       monkeypatch):
     """An order-3 L2 field in the "auto" layout, described where it resolves to
-    blocks (a CPU) and rebuilt where it would resolve to cells (a GPU root; here
-    TACK_L2_LAYOUT), keeps blocks: its values are in that order."""
+    blocks and rebuilt where it would resolve to cells (a CPU and a GPU root; here
+    TACK_L2_LAYOUT both times, so the test is the same on every backend), keeps
+    blocks: its values are in that order."""
     import importlib
 
     module = importlib.import_module("tack.dataset.algorithms.merge_pieces")
 
-    monkeypatch.delenv("TACK_L2_LAYOUT", raising=False)
+    monkeypatch.setenv("TACK_L2_LAYOUT", "blocks")
     whole = _high_order(td.extract_cells(td.uniform_grid((4, 4, 4), dtype=tack.f64),
                                          np.arange(27)), layout="auto")
     assert whole.fields["w"].space.layout == "blocks"

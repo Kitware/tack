@@ -12,3 +12,13 @@
   backend, so a read before a write reads NaN floats, -1 signed integers and an
   unsigned type's largest value instead of zeros that hide it; debug mode fills
   with 0xFF unless it gives another byte or `off` (#386).
+
+### Fixed
+
+- CUDA: an exportable array (`tack.empty(..., exportable=True)`, or the copy
+  `export_memory` makes of any other) dropped while a launch, fill or copy on it
+  was still queued faulted the context (`CUDA_ERROR_ILLEGAL_ADDRESS`); its
+  memory is now released once Tack's stream is idle. And the first
+  `export_memory` of an array a whole number of granules long handed out its
+  handle while the copy into exportable memory could still be running; it now
+  waits for it (#386).

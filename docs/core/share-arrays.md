@@ -277,6 +277,10 @@ Metal array's memory, with a handle another API such as Vulkan can import:
 a file descriptor or Windows handle on CUDA, the `MTLBuffer` on Metal. An
 array allocated with `tack.empty(..., exportable=True)` is exported
 directly. Any other array is first copied once into exportable memory.
+The copy is done when `export_memory` returns, but on CUDA, launches and
+fills on exported memory afterwards are queued, as any are: call
+`tack.sync()` before the other API reads what they wrote. (Metal's export
+completes them, as its DLPack export does.)
 
 ## Where to go next
 

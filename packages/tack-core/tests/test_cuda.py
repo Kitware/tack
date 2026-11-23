@@ -304,11 +304,16 @@ def test_exportable_memory_fills_on_the_device(monkeypatch):
     (``fill_bytes``), not through a host array the size of it."""
     _skip_without_exportable_memory()
     from tack.lang import array as array_module
+    from tack.runtime import cuda_backend as runtime
+
+    def through_the_host(self, arr):
+        raise AssertionError("an exportable array filled through a host array")
 
     monkeypatch.setattr(array_module, "_FILL_NEW", 0xAB)
+    monkeypatch.setattr(runtime.ExportableCUDABuffer, "from_numpy", through_the_host)
     shared = tack.empty((1000,), tack.u16, exportable=True)
-    assert shared._buffer.fill_bytes(b"\xab\xab")
-    assert (shared.numpy().view(np.uint8) == 0xAB).all()
+    assert isinstance(shared._buffer, runtime.ExportableCUDABuffer)
+    assert (shared.numpy().view(np.uint8) == 0xAB).all()   # the new array's fill
     shared.fill(7)
     assert (shared.numpy() == 7).all()
 

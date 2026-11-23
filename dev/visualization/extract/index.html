@@ -6056,13 +6056,20 @@ and voxels, and use the corners of other curved cells. The
 <h2 id="details">Details<a class="headerlink" href="#details" title="Permanent link">&para;</a></h2>
 <p><strong>Empty outputs are valid.</strong> A filter that finds nothing returns a dataset of
 no cells. Check <code>num_cells</code> before assuming there is geometry to draw.</p>
-<p><strong>Clips through mesh points.</strong> <code>clip</code> names its new points by the edges they
-lie on, as VTK's <code>vtkTableBasedClipDataSet</code> does. A clip exactly through mesh
-points, such as a plane through a layer of faces, therefore leaves a new point
-on top of the mesh point and cells of no volume between them, as VTK's does.
-<code>td.merge_points</code> merges the coincident points, as VTK's <code>vtkCleanGrid</code> does.
-<code>contour</code> and <code>slice</code> instead make such a crossing the mesh point itself, and
-drop the triangles that lose their area.</p>
+<p><strong>Clips through mesh points.</strong> A mesh point within a millionth of its cell's
+span of the value (1e-12 for f64 values; round-off, as a symmetry plane's nodes
+have) is at the
+value, above it on either side of <code>clip</code>, so the two sides fill each cell
+between them. A plane through a layer of faces keeps the cells on one side
+whole and drops the others. A plane through mesh points but oblique to the
+cells cuts each edge from such a point at the point itself, so no new point
+lies on top of a mesh point. Pieces that collapse to no volume are dropped, and
+the others become the shape they now are. A hexahedral piece that loses an edge
+is no shape, so it stays a hexahedron with that corner named twice, as VTK
+writes a collapsed hexahedron. VTK's <code>vtkTableBasedClipDataSet</code> leaves the new
+points on top of the mesh points and pieces of no volume (some inside out) for
+<code>vtkCleanGrid</code> to merge. <code>contour</code> and <code>slice</code> likewise make such a crossing
+the mesh point itself, and drop the triangles that lose their area.</p>
 <p><strong>Cells without a reference element.</strong> Polyhedra, polygons and polylines have
 no parametric cell, so the filters treat them as the
 <a href="../../data/polyhedra/">polyhedra page</a> explains: a field is linear on the

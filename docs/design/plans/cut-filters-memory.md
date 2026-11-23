@@ -1,8 +1,8 @@
 # Cut filters' memory
 
-**Status: accepted.** Issue [#318](https://github.com/Kitware/tack/issues/318),
+**Status: done.** Issue [#318](https://github.com/Kitware/tack/issues/318),
 2026-11-10. Accepted in [#416](https://github.com/Kitware/tack/pull/416),
-merged 2026-11-15.
+merged 2026-11-15; measured on every device 2026-11-23 (step 6).
 
 ## Summary
 
@@ -249,13 +249,24 @@ they held before (temporaries and output):
 |---|---|---|---|---|---|---|---|---|
 | CPU (M1 Max) | 34 | 37 | 147 | 80 | 37 | 50 | 249 | 200 |
 | Metal (M1 Max) | 23 | 26 | 147 | 86 | 30 | 42 | 249 | 228 |
+| CUDA (RTX 4060 Ti) | 23 | 26 | 147 | 80 | 64 | 81 | 249 | 194 |
+| HIP (MI210) | 23 | 26 | 147 | 80 | 64 | 81 | 249 | 194 |
+| Level Zero (Max 1100) | 23 | 26 | 147 | 80 | 64 | 81 | 249 | 194 |
+| Warp (RTX 4060 Ti) | 23 | 26 | 147 | 80 | 23 | 41 | 249 | 198 |
 
 Clip on the tetrahedra went from 328 to 97 MiB, under VTK's 111, and on the
 hexahedra from 739 to 345 (D1: 574 to 200). Contour on the tetrahedra from 42
 to 33.
 
-On Metal threshold's count is the CPU's to the MiB, contour and slice hold 7
-to 11 MiB less, and clip 6 and 28 MiB more (tetrahedra, hexahedra).
+Across devices threshold counts the same to the MiB, and the tetrahedra
+nearly so (contour and slice 23 and 26 on every GPU, 34 and 37 on the CPU;
+clip 80, 86 on Metal). Hexahedra clip is 194 to 228. Hexahedra contour and
+slice are where the devices part: 64 and 81 MiB on CUDA, HIP and Level Zero
+(the three of the CUDA code generator, identical to the MiB, CUDA's and
+Warp's repeated), against 37 and 50 on the CPU, 30 and 42 on Metal and 23 and
+41 on Warp, which runs on the same RTX 4060 Ti as CUDA. Neither filter
+branches on the device; the backends differ below them, or Warp and Metal
+allocate something D1 does not count. Not yet traced.
 
 On the hexahedra clip's two measures disagree: the allocator sees about 140
 MiB more than D1 counts, throughout the call, at one thread or eight. It is

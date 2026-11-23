@@ -70,16 +70,22 @@ def _in_use_reader():
             return int(stats.size_in_use)
         return read
     libc = ctypes.CDLL("libc.so.6")
+    names = ("arena", "ordblks", "smblks", "hblks", "hblkhd", "usmblks", "fsmblks",
+             "uordblks", "fordblks", "keepcost")
+    try:
+        mallinfo, field = libc.mallinfo2, ctypes.c_size_t      # glibc 2.33 and later
+    except AttributeError:
+        # glibc before 2.33 (RHEL 8's 2.28) has only mallinfo, whose fields are
+        # ints: read unsigned, they wrap at 4 GiB rather than 2.
+        mallinfo, field = libc.mallinfo, ctypes.c_uint
 
-    class Info(ctypes.Structure):                    # struct mallinfo2
-        _fields_ = [(n, ctypes.c_size_t) for n in (
-            "arena", "ordblks", "smblks", "hblks", "hblkhd", "usmblks", "fsmblks",
-            "uordblks", "fordblks", "keepcost")]
+    class Info(ctypes.Structure):                    # struct mallinfo2, or mallinfo
+        _fields_ = [(n, field) for n in names]
 
-    libc.mallinfo2.restype = Info
+    mallinfo.restype = Info
 
     def read():
-        info = libc.mallinfo2()
+        info = mallinfo()
         return int(info.uordblks + info.hblkhd)      # in the heap, and mapped alone
     return read
 

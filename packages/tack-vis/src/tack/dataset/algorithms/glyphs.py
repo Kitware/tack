@@ -239,7 +239,7 @@ def _at_cells(data, field, sizes, scale, resolution, fields):
                 continue                   # no value at a cell's centre (values on faces)
             raise TypeError(f"glyphs at the cells' centres cannot carry field {name!r}, "
                             f"which has no value at a cell's centre: {error}") from error
-        cloud.fields[name] = Field(Values(cloud, "points"), values, source.unit)
+        cloud.fields[name] = Field(Values(cloud, "points"), values, source.unit, kind=source.kind)
     cloud.fields["__tack_glyph__"] = Field(Values(cloud, "points"),
                                            values_at_centers(data, field).values)
     if sizes is not None:

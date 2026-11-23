@@ -216,6 +216,15 @@ def test_filters_of_the_same_values_keep_the_kind(grid, call):
     assert p.kind == td.Kind("Pressure") and p.unit == "Pa"
 
 
+
+@pytest.mark.parametrize("at", ["points", "cells"])
+def test_glyphs_carry_the_kind(grid, at):
+    grid.fields["p"] = scalar(grid, "Pa")
+    grid.fields["v"] = td.Field(td.H1(grid), tack.zeros((grid.num_points,), tack.vec3()), "m/s",
+                                kind="Velocity")
+    arrows = td.glyphs(grid, "v", fields=["p"], at=at)
+    assert arrows.fields["p"].kind == td.Kind("Pressure")
+
 def test_a_temporal_step_keeps_the_kind(grid):
     from tack.dataset.temporal import _Step
 

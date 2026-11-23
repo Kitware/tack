@@ -185,7 +185,8 @@ def probe(data, where, fields=None, locator=None):
         f = _field(data, name)
         space = f.space
         if isinstance(space, Values) and space.on in ("points", "cells"):
-            f = Field((H1 if space.on == "points" else Constant)(data), f.values, f.unit)
+            f = Field((H1 if space.on == "points" else Constant)(data), f.values, f.unit,
+                      kind=f.kind)
             space = f.space
         if not getattr(space, "interpolated", False) or space.on not in ("points", "cells"):
             continue

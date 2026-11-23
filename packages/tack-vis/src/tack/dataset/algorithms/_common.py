@@ -191,9 +191,11 @@ def _with_basis(data, field):
 
     space = field.space
     if isinstance(space, Values) and space.on == "points":
-        return Field(H1(data), field.values, field.unit, gradient=field.gradient)
+        return Field(H1(data), field.values, field.unit, gradient=field.gradient,
+                     kind=field.kind)
     if isinstance(space, Values) and space.on == "cells":
-        return Field(Constant(data), field.values, field.unit, gradient=field.gradient)
+        return Field(Constant(data), field.values, field.unit, gradient=field.gradient,
+                     kind=field.kind)
     return field
 
 

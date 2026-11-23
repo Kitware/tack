@@ -17,6 +17,7 @@ one module each, all re-exported here.
 from tack.dataset import (
     algorithms,
     implicit,
+    kinds,
     polyhedra,
     shapes,
     sources,
@@ -138,6 +139,7 @@ from tack.dataset.implicit import (
     Sphere,
     Union,
 )
+from tack.dataset.kinds import Kind
 from tack.dataset.locator import CellLocator, Locations
 from tack.dataset.octree import OctreeDataSet
 from tack.dataset.partitioned import PartitionedDataSet
@@ -186,6 +188,7 @@ __all__ = [
     "Integrals",
     "Interpolate",
     "Intersection",
+    "Kind",
     "Locations",
     "OctreeDataSet",
     "ParticleStatus",
@@ -270,6 +273,7 @@ __all__ = [
     "isovolume",
     "jump",
     "keep_marks",
+    "kinds",
     "log_values",
     "magnitude",
     "mask",

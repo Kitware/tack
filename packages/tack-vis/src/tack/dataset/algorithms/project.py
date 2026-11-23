@@ -373,6 +373,14 @@ def project(data, field, space, *, average="integral"):
     points). The values must be floating point, scalars or vectors, except from
     order-1 ``H1`` into order-1 ``L2``, which copies them and takes integers too.
     """
+    projected = _projected(data, field, space, average)
+    kind = _field(data, field).kind
+    if kind is None or projected.kind == kind:
+        return projected
+    return Field(projected.space, projected.values, projected.unit, kind=kind)
+
+
+def _projected(data, field, space, average):
     if average not in _AVERAGES:
         raise ValueError(f"average is one of {', '.join(map(repr, _AVERAGES))}, "
                          f"not {average!r}")

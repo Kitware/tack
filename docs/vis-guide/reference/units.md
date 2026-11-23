@@ -102,4 +102,37 @@ refuse two known units, naming both and `convert`. An unknown unit cannot be
 checked, so it is not refused.
 
 
+## Kinds
+
+A field's kind (`Field.kind`, a `td.Kind`) is what its values are, beside
+the unit they are in; see [what the values are](../../data/units-coordinates-time.md#what-the-values-are-kinds)
+for the parts and an example. Kinds and units meet in three places:
+
+- **Each registered kind has a reference unit** (`Kind.reference_unit`), the
+  registry's: Pa for a `Pressure`, m/s for a `Velocity`. A field's unit must
+  have its dimensions, `units.same_dimensions(unit, kind.reference_unit)`, so
+  any unit of pressure will do. An unknown unit is not checked.
+- **Converting changes the unit and keeps the kind**: `convert(data, "psi",
+  "p")` rescales a `Pressure` field and leaves it a `Pressure`.
+- **Quantities as parameters do not involve kinds.** A parameter such as
+  `"10 cm"` is converted to the unit of the field or positions it applies to,
+  whatever their kind.
+
+The registry (`tack.dataset.kinds`) is seeded with CGNS's data names and
+their units, the same names tack-expr's `fx.cgns()` reads, and a few
+extensive totals the densities integrate to (`kinds.density_of("Density")`
+is `Kind("Mass")`). `kinds.add(name, unit, rank, ...)` registers another.
+Flux densities (`MagneticFluxDensity`, `CurrentDensity`, `HeatFlux`, the
+`Momentum` density) have no variance yet: they turn as `HDiv` fields do, by
+the contravariant Piola map, which needs a density weight a kind does not
+record.
+
+Filters keep a kind where they keep the values (see [What keeps a
+unit](#what-keeps-a-unit)): `carry` keeps a carried field's kind where it
+still fits the field, `project` keeps it, and so do `to_device` and
+`convert`. A derived unit's kind is unknown: a gradient of a `Pressure` has
+no kind. `units.named` still folds a unit by its dimensions alone, so a
+torque in `N*m` shows as `J`; telling them apart by kind is planned
+(`docs/design/plans/field-quantities.md`).
+
 For conversion, see [Connect Simulation Data](../../data/connect-simulation-data.md).

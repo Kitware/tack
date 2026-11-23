@@ -382,6 +382,8 @@ a unit. See [Coordinates, Units and Time](../../data/units-coordinates-time.md).
 | | |
 |---|---|
 | `Field(..., unit=)`, `field.unit` | the values' unit, or `None` |
+| `Field(..., kind=)`, `field.kind` | what the values are, a `Kind` or a registered name, or `None`; checked against the unit's dimensions, the values' rank and the space (see [Units and quantities reference](units.md#kinds)) |
+| `tack.dataset.kinds` | the registry, seeded with CGNS's data names: `add`, `names`, `density_of`, `common` |
 | `DataSet(..., unit=)`, `data.unit` | the spatial unit, the geometry field's; `uniform_grid`, `rectilinear_grid` and `point_cloud` take `unit=`, `point_cloud` also `units={name: unit}` |
 | `OctreeDataSet(..., units={name: unit})`, `octree.unit`, `octree.units` | the fields' units, and the roots' spatial unit |
 | `convert(data, unit, field=None)` | a `Field` in `unit` (a new field in the same space), or a dataset with its geometry (origin scaled in double precision; images stay images) or a named field in `unit`, scaled and offset on the device |

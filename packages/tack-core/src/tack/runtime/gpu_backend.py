@@ -38,6 +38,12 @@ class GPUBackend(Backend):
     #: the device at init.
     _max_launch: int
 
+    #: The device's limit on the total size of a kernel's arguments, in
+    #: bytes, or None for none: a variant past it reads its arrays from a
+    #: table (`ir_array_table`). Level Zero's from the device; Metal binds
+    #: arrays through an argument buffer and has none.
+    _max_argument_bytes: int | None = None
+
     def execute(self, kernel, args, kwargs):
         """Run ``kernel`` on ``args``: resolve the variant, then queue the launch.
 
@@ -54,7 +60,7 @@ class GPUBackend(Backend):
                 build=self._build_variant,
                 store_texture_shapes=self._store_texture_shapes,
             )
-            compiled, pack_info, pack_arrays = variant.payload
+            compiled, pack_info, pack_arrays, table = variant.payload
 
             # Loop range comes from the pre-packing IR: packing rewrites the
             # parameter list, and the range expression names the original args.
@@ -76,16 +82,22 @@ class GPUBackend(Backend):
                     kept_args = split_args(effective_args, pack_info)
                     kernel_args = bind_textures(kept_args) + self._scalar_buffers(
                         pack_info, pack_arrays, effective_args)
+                arrays = kernel_args
+                if table is not None:
+                    kernel_args = self._tabled_args(table, kernel_args)
                 self._launch(compiled, kernel_args, loop_end, extents)
-            if self._must_complete(kernel_args):
+            if self._must_complete(arrays):
                 self.synchronize()
 
     def _build_variant(self, ir_func, effective_args):
         """Pack scalars, annotate, compile. Runs once per variant.
 
         Packing rewrites the parameter list, so it works on its own copy —
-        the caller keeps `ir_func` for loop-range resolution.
+        the caller keeps `ir_func` for loop-range resolution. A variant whose
+        arguments would pass `_max_argument_bytes` reads its arrays from a
+        table (`ir_array_table`), the payload's last entry.
         """
+        from tack.lang.ir_array_table import argument_bytes, table_arrays
         from tack.lang.ir_pack_scalars import pack_scalars
         from tack.lang.ir_traversal import clone_ir
         from tack.lang.ir_type_annotate import annotate_types, refuse_f64
@@ -98,8 +110,37 @@ class GPUBackend(Backend):
         verify_ir(packed, 'typed')
         if not self.supports_f64:
             refuse_f64(packed, self.label)
+        table = None
+        limit = self._max_argument_bytes
+        if limit is not None and argument_bytes(packed) > limit:
+            table = self._array_table(table_arrays(packed))
         compiled = self._compile_kernel(packed)
-        return compiled, pack_info, self._variant_scalar_buffers(pack_info, effective_args)
+        return (compiled, pack_info, self._variant_scalar_buffers(pack_info, effective_args),
+                table)
+
+    def _array_table(self, positions):
+        """A variant's array table: ``(positions, array)``, ``positions`` those of
+        the launch arguments whose addresses it holds (`table_arrays`), the
+        array a u64 device buffer the variant keeps and every launch rewrites,
+        as it rewrites the scalar packs. None for no positions."""
+        if not positions:
+            return None
+        from tack.lang.array import Array
+        from tack.lang.types import u64
+        buffer = self.allocate_array(u64, (len(positions),))
+        return tuple(positions), Array(u64, (len(positions),), buffer, device=self)
+
+    def _tabled_args(self, table, kernel_args) -> list:
+        """This launch's arguments with the tabled arrays' addresses written to
+        the table, which takes their place after the rest. Under
+        `_launch_guard`, as the scalar packs are written, so no other launch
+        changes the table between the write and the launch that reads it."""
+        import numpy as np
+        positions, array = table
+        array._buffer.from_numpy(np.array(
+            [kernel_args[i]._buffer.address for i in positions], dtype=np.uint64))
+        tabled = set(positions)
+        return [a for i, a in enumerate(kernel_args) if i not in tabled] + [array]
 
     def _store_texture_shapes(self, ir_func, effective_args):
         """Record Texture3D extents, falling back to software sampling.

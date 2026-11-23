@@ -65,6 +65,14 @@ class IRParam(IRNode):
     #: The packed scalar buffer GPU scalar packing adds (``ir_pack_scalars``):
     #: uniform across a launch, read-only.
     _is_scalar_pack = False
+    #: The array table (``ir_array_table``): one u64 array whose entries are
+    #: the addresses of the arrays ``_table_slot`` marks, for a variant whose
+    #: arguments would pass the device's limit on their size.
+    _is_array_table = False
+    #: An array's entry in the array table, which the GPU code generators read
+    #: it from at kernel entry instead of taking it as an argument; None for
+    #: an array passed as itself.
+    _table_slot = None
 
     def __init__(self, name: str, type_annotation=None):
         self.name = name

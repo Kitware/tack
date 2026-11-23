@@ -22,6 +22,7 @@ from tack.codegen.integer_division import integer_division_expr, integer_divisio
 from tack.codegen.reductions import f32_reduction_helpers
 from tack.lang import ir
 from tack.lang.atomic_support import check_atomic_support
+from tack.lang.ir_array_table import table_entries
 from tack.lang.types import ScalarType, f32, f64, i8, i16, i32, i64, u8, u16, u32, u64
 from tack.lang.workgroup_participation import WORKGROUP_SIZE, check_workgroup_participation
 
@@ -108,10 +109,13 @@ class OpenCLCodeGen(CUDACodeGen):
             if param._is_texture:
                 self._texture_params.add(param.name)
 
-        # Build function signature with OpenCL qualifiers
+        # Build function signature with OpenCL qualifiers; arrays in the
+        # array table are read from it below instead (ir_array_table)
         params_c = []
         for param in func.params:
             c_type = _OCL_C_TYPE_MAP[param.type_annotation]
+            if param._table_slot is not None:
+                continue
             if param.name in self._texture_params:
                 params_c.append(f"__read_only image3d_t {param.name}")
             elif param.name in self._array_params:
@@ -131,6 +135,11 @@ class OpenCLCodeGen(CUDACodeGen):
         if self._texture_params:
             self._emit("const sampler_t __samp__ = CLK_NORMALIZED_COORDS_TRUE "
                        "| CLK_ADDRESS_CLAMP_TO_EDGE | CLK_FILTER_LINEAR;")
+        table, entries = table_entries(func)
+        for slot, param in entries:
+            c_type = _OCL_C_TYPE_MAP[param.type_annotation]
+            self._emit(f"__global {c_type}* {param.name} = "
+                       f"(__global {c_type}*){table.name}[{slot}];")
 
         hoist_at = len(self._lines)
         self._declare_locals_at_kernel_scope(func.body)

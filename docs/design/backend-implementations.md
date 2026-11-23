@@ -559,6 +559,38 @@ against a 95 µs CUDA dispatch. Level Zero takes its backend-wide
 their argument buffer and scalars and encode one at a time under the
 backend's batch lock. The CPU binds arguments per call and takes no lock.
 
+## Array arguments past a device's limit
+
+A device limits the total size of a kernel's arguments: `maxArgumentsSize`
+on Level Zero (2048 bytes on a Max 1100), 4 KB for CUDA (32 KB from Volta
+with CUDA 12.1, which NVRTC would have to be asked for) and for HIP. With
+scalars packed, what remains is one pointer per array, and a tack-expr
+kernel over curved quadratic cells passed 289 of them (#474). Arrays held by
+several device-class objects are one parameter
+(`template_rewrite.shared_arrays`), which brought that one to 35, but a
+kernel over enough distinct arrays would still not build. So a variant
+whose arguments would pass `GPUBackend._max_argument_bytes` (an upper bound,
+`ir_array_table.argument_bytes`: 8 bytes a parameter, and the launch
+arguments) takes one u64 array instead, its *array table*
+(`ir_array_table.table_arrays`, after annotation in `_build_variant`): every
+array but hardware textures is marked with its slot (`IRParam._table_slot`)
+and stays in `params`, so the analyses and the GPU renaming are unchanged,
+and the table parameter (`_is_array_table`) is appended. The generators
+leave marked arrays out of the signature and declare each as a typed
+pointer read from its slot at kernel entry; the backends' parameter lists
+leave them out too (`launch_params`). Like the scalar packs, the table is
+the variant's (the payload's fourth entry, `(positions, array)`), and each
+launch writes its arrays' addresses into it under `_launch_guard`
+(`_tabled_args`), a copy queued before the launch. `_must_complete` still
+looks at the arrays themselves. Level Zero must be told a kernel reads
+memory that is not among its arguments, or the driver need not make it
+resident: such a kernel gets `zeKernelSetIndirectAccess` for host, device
+and shared allocations. Metal binds arrays through its argument buffer and
+has no limit. The disk cache keeps the table's positions with the artifact
+and makes the table afresh when it loads one. See `test_array_table.py`,
+which checks the generated CUDA, HIP and OpenCL on the host and runs on
+the GPU backends with a limit of 16 bytes.
+
 ## Textures
 
 `tack.texture3d(array, shape)` creates a `Texture3D` (`lang/array.py`)

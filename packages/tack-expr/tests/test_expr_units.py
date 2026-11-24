@@ -76,7 +76,6 @@ def test_a_fields_own_unit(data):
         fx.evaluate("p + coordsX", data, fields=fx.FieldDictionary(length="m"))
 
 
-
 def test_components_and_coordinates_keep_their_units(data):
     with_unit(data, "U", "mm/s")
     for text in ("U_Z", "U[2]", "dot(U, kHat)"):
@@ -90,6 +89,17 @@ def test_components_and_coordinates_keep_their_units(data):
         assert_close(got.values.numpy(), values(text, grid, at="points"))
     assert fx.evaluate("coordsX", grid, at="points", units="m").unit == "m"
     assert fx.evaluate("coordsX", td.uniform_grid((4, 3, 2)), at="points").unit is None
+
+
+def test_complex_parts_come_before_a_component(data):
+    """U_Z with U_Z_re and U_Z_im stored is the complex field, as the binder reads it,
+    not U's Z component."""
+    h2 = data.fields["U"].space
+    data.fields["U_Z_re"] = td.interpolate(data, f_x, h2)
+    data.fields["U_Z_im"] = td.interpolate(data, f_y, h2)
+    with pytest.raises(fx.ExprError, match="complex"):
+        fx.evaluate("U_Z", data, at="points")
+
 
 def test_mismatches_and_unknowns(data):
     with pytest.raises(fx.ExprError, match="do not match"):

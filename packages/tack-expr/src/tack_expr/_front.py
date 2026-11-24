@@ -856,13 +856,12 @@ def needs_front(text, fields, units, data=None):
         if name in _COORDS and getattr(data, "unit", None) is not None:
             return True
         field = stored.get(name)
+        if field is None and any(name + r in stored and name + i in stored for r, i in _COMPLEX_SUFFIXES):
+            return True
         base, _, comp = name.rpartition("_")
         if field is None and base in stored and _is_component(comp):
             field = stored[base]
-        if field is not None:
-            if getattr(field, "unit", None) is not None:
-                return True
-        elif any(name + r in stored and name + i in stored for r, i in _COMPLEX_SUFFIXES):
+        if getattr(field, "unit", None) is not None:
             return True
     return False
 

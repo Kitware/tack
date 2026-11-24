@@ -261,6 +261,9 @@ they held before (temporaries and output), at `ce3353bf`:
 | Warp (RTX 4060 Ti) | 23 | 26 | 147 | 80 | 23 | 41 | 249 | 198 |
 | CPU, with the two fixes | 23 | 26 | 147 | 80 | 23 | 41 | 249 | 194 |
 | Metal, with the two fixes | 23 | 26 | 147 | 86 | 24 | 42 | 249 | 216 |
+| CUDA, with the two fixes | 23 | 26 | 147 | 80 | 44 | 62 | 249 | 194 |
+| Level Zero, with the two fixes | 23 | 26 | 147 | 80 | 44 | 62 | 249 | 194 |
+| Warp, with the two fixes | 23 | 26 | 147 | 80 | 23 | 41 | 249 | 198 |
 
 By D1, clip on the hexahedra went from 574 to 194 MiB; by the allocator clip
 is now level with VTK's (77 and 76 on the tetrahedra, 195 and 183 on the
@@ -287,9 +290,14 @@ traced arrays agree to 0.1 MiB on CUDA and Warp, so D1 misses nothing there):
   three bucket sort, with three tables as long as the points, 19 MiB each:
   forced to 64, Warp counts CUDA's 63.8 and 81.3. The counts are now the
   scatter's fill once read, two tables: with the bucket path forced on the CPU,
-  hex contour 82.9 to 63.5 and slice 100.4 to 81.0, so CUDA, HIP and Level
-  Zero should count about 44 and 62. The remaining 21 MiB over Warp is the
-  speed the threshold buys.
+  hex contour 82.9 to 63.5 and slice 100.4 to 81.0; CUDA and Level Zero count
+  44 and 62 (from 64 and 81). The remaining 21 MiB over Warp is the speed the
+  threshold buys.
+
+Run with the fixes on Warp, the cycle test failed: Warp's `wp.func` and
+`wp.func_native` (1.18) keep their own frame beside a closure, a cycle whose
+callers' frames reached the compiling call's arrays. The Warp backend now
+defines its generated modules in a thread of its own.
 
 Metal with the fixes is the CPU's but for clip, 86 against 80 on the
 tetrahedra and 216 against 194 on the hexahedra. Traced as above (CPU against
@@ -300,8 +308,9 @@ completes, so `number`'s 19.4 MiB is still alive when `carry` allocates the
 output's 39 MiB (157.6 + 19.4 + 39.2 = 216.2). On CUDA and HIP a dropped
 array's memory goes back to the pool in stream order and is reused at once.
 The tetrahedra's 6 MiB is the same, on smaller arrays. It is Metal's queueing,
-not clip's: reusing a dropped buffer in queue order, as CUDA's pool does, would
-be a change to the Metal backend, outside this plan.
+not clip's: the Metal backend now gives a dropped array's buffer back to the
+pool in queue order, as CUDA's pool does (#483, PR #484; on `main` without
+this plan's fixes, tetrahedra clip 86 to 80 and hexahedra 228 to 205).
 
 On the hexahedra clip the allocator saw about 160 MiB more than D1 counted, at
 one thread or eight. It was the allocator's statistic: macOS's large-block

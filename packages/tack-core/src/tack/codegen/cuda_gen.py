@@ -27,6 +27,7 @@ from tack.codegen.reductions import f32_reduction_helpers
 from tack.codegen.tables import Tables
 from tack.lang import ir
 from tack.lang.atomic_support import check_atomic_support
+from tack.lang.ir_array_table import table_entries
 from tack.lang.ir_traversal import walk_ir
 from tack.lang.types import ScalarType, f32, f64, i8, i16, i32, i64, u8, u16, u32, u64
 from tack.lang.workgroup_participation import WORKGROUP_SIZE, check_workgroup_participation
@@ -176,10 +177,13 @@ class CUDACodeGen(CFamilyCodeGen):
             if param._is_texture:
                 self._texture_params.add(param.name)
 
-        # Build function signature
+        # Build function signature; arrays in the array table are read from
+        # it below instead (ir_array_table)
         params_c = []
         for param in func.params:
             c_type = _C_TYPE_MAP[param.type_annotation]
+            if param._table_slot is not None:
+                continue
             if param.name in self._texture_params:
                 params_c.append(f"{self._TEXTURE_OBJECT_TYPE} {param.name}")
             elif param.name in self._array_params:
@@ -198,6 +202,10 @@ class CUDACodeGen(CFamilyCodeGen):
         self._emit(f'extern "C" __global__ void {safe_name}({sig}) {{')
         self._indent += 1
 
+        table, entries = table_entries(func)
+        for slot, param in entries:
+            c_type = _C_TYPE_MAP[param.type_annotation]
+            self._emit(f"{c_type}* {param.name} = ({c_type}*){table.name}[{slot}];")
         self._declare_locals_at_kernel_scope(func.body)
         self._emit_body(func.body)
 

@@ -187,6 +187,11 @@ def _generate_source(kernel, args, optimize=False):
         # Re-annotate after packing
         annotate_types(ir_func)
         verify_ir(ir_func, 'typed')
+        # Arrays read from a table where dispatch would (`GPUBackend._build_variant`)
+        from tack.lang.ir_array_table import argument_bytes, table_arrays
+        limit = backend._max_argument_bytes
+        if limit is not None and argument_bytes(ir_func) > limit:
+            table_arrays(ir_func)
 
     if backend_name == "CPUBackend":
         from tack.codegen.llvm_gen import generate_llvm_ir

@@ -383,6 +383,8 @@ def lowered_key(kernel, vector_arrays, texture_arrays, template_args, debug=Fals
     """The key of a kernel specialization's lowered IR. Debug mode lowers
     with bounds checks, so its IR, and every variant built from it, is
     stored apart."""
+    from tack.lang.template_rewrite import shared_arrays
+
     result = kernel._result[0].name if kernel._result else None
     content = (
         "ir", FORMAT, tack_fingerprint(),
@@ -392,6 +394,7 @@ def lowered_key(kernel, vector_arrays, texture_arrays, template_args, debug=Fals
         tuple(sorted((texture_arrays or {}).items())),
         tuple((idx, name, _template_content(obj))
               for idx, (name, obj) in sorted((template_args or {}).items())),
+        shared_arrays(template_args),
         bool(debug),
     )
     return _digest(repr(content))

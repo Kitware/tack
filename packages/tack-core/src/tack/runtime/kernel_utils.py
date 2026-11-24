@@ -856,6 +856,7 @@ def _call_signature(args):
     """The call's signature, or None for an argument the fast path does
     not describe (the slow path then reports it)."""
     sig = []
+    held = None             # the templates' arrays, in walk order
     for arg in args:
         if isinstance(arg, Array):
             try:
@@ -873,13 +874,28 @@ def _call_signature(args):
         elif isinstance(arg, np.integer):
             sig.append((3, integer_type_for_value(int(arg))))
         elif getattr(type(arg), '_device_class', False) is True:
-            tmpl = _template_signature(arg, (), set())
+            if held is None:
+                held = []
+            tmpl = _template_signature(arg, (), set(), held)
             if tmpl is None:
                 return None
             sig.append((4, tuple(tmpl)))
         else:
             return None
+    if held is not None:
+        ids = list(map(id, held))
+        if len(set(ids)) != len(ids):
+            sig.append(_repeats(ids))
     return tuple(sig)
+
+
+def _repeats(ids) -> tuple:
+    """Which of the templates' arrays (``ids``, in the signature's walk
+    order) repeat an earlier one, by position: equal for two calls of
+    one signature exactly when `template_rewrite.shared_arrays` is, which
+    changes the kernel's parameters."""
+    first = {}
+    return ("shared", tuple((k, first.setdefault(i, k)) for k, i in enumerate(ids)))
 
 
 def _array_signature(array):
@@ -941,14 +957,16 @@ def _tuple_signature(value):
     return tuple(2 if isinstance(v, float) else integer_type_for_value(v) for v in value)
 
 
-def _template_signature(obj, path, seen):
+def _template_signature(obj, path, seen, held):
     """What of a template object the IR and the expansion depend on, for it
-    and every template it holds; None on a cycle (the slow path explains)."""
+    and every template it holds; None on a cycle (the slow path explains).
+    Appends each array it holds to ``held``, for `_repeats`."""
     if id(obj) in seen:
         return None
     seen.add(id(obj))
     cls = type(obj)
     attributes = vars(obj)
+    mark = len(held)
     layout = _template_layouts.get(cls)
     if layout is not None and layout[0] != tuple(attributes):
         layout = None                         # another attribute set: walk and relearn
@@ -968,6 +986,7 @@ def _template_signature(obj, path, seen):
                 layout = None
                 break
             if kind == _LAYOUT_ARRAY:
+                held.append(value)
                 try:
                     own.append((name, *value._sig))
                 except AttributeError:
@@ -1001,6 +1020,7 @@ def _template_signature(obj, path, seen):
                 layout = None                 # whether it drops depends on the contents
                 break
     if layout is None:
+        del held[mark:]                       # a layout walk given up part way
         from tack.lang.func import Func
         from tack.lang.template_rewrite import _class_constants
         constants = _class_constants(cls)
@@ -1028,6 +1048,7 @@ def _template_signature(obj, path, seen):
                 own.append((name, 7, tuple(_scalar_bits(v) for v in value)))
             elif isinstance(value, Array):
                 kinds.append(_LAYOUT_ARRAY)
+                held.append(value)
                 own.append((name, *_array_signature(value)))
             elif isinstance(value, int):
                 kinds.append(_LAYOUT_INT)
@@ -1055,7 +1076,7 @@ def _template_signature(obj, path, seen):
               tuple((n, type(v), _scalar_bits(v)) for n, v in constants.items()),
               tuple(own))]
     for name, child in sorted(children):
-        below = _template_signature(child, (*path, name), seen)
+        below = _template_signature(child, (*path, name), seen, held)
         if below is None:
             return None
         parts.extend(below)
@@ -1076,8 +1097,16 @@ def _expansion_plan(template_args, expanded) -> tuple:
 
 
 def _template_plan(template_args) -> tuple:
-    from tack.lang.template_rewrite import _classify_own, _prefix, scalar_path, template_tree
+    from tack.lang.template_rewrite import (
+        _classify_own,
+        _prefix,
+        scalar_path,
+        shared_arrays,
+        template_tree,
+    )
 
+    # An array an earlier template holds is passed once, as that one's.
+    shared = {slot for slot, _ in shared_arrays(template_args)}
     plan = []
     for idx in sorted(template_args, reverse=True):
         _, obj = template_args[idx]
@@ -1085,7 +1114,8 @@ def _template_plan(template_args) -> tuple:
         for path, node in template_tree(obj):
             _, own_arrays, own_scalars = _classify_own(node)
             for name in own_arrays:
-                arrays.append((_prefix(path) + name, (*path, name)))
+                if (idx, _prefix(path) + name) not in shared:
+                    arrays.append((_prefix(path) + name, (*path, name)))
             for name in own_scalars:
                 scalars.append((_prefix(path) + name, (*path, *scalar_path(name))))
         arrays.sort()
@@ -1206,13 +1236,15 @@ def _expand_templates(args, template_args) -> tuple:
     Returns new args tuple with template objects removed and their
     array attributes and runtime scalars appended.  These are appended
     in reverse template index order to match the AST rewrite pass
-    (which processes templates from highest index to lowest).
+    (which processes templates from highest index to lowest). An array an
+    earlier one holds too is passed once (`shared_arrays`).
     """
     if not template_args:
         return args
 
-    from tack.lang.template_rewrite import classify_template_attrs
+    from tack.lang.template_rewrite import classify_template_attrs, shared_arrays
 
+    shared = {slot for slot, _ in shared_arrays(template_args)}
     new_args = []
     extra = []
     # Collect template arrays and runtime scalars in reverse index order
@@ -1220,7 +1252,8 @@ def _expand_templates(args, template_args) -> tuple:
         _, obj = template_args[idx]
         _, arrays, runtime_scalars = classify_template_attrs(obj)
         for attr_name in sorted(arrays.keys()):
-            extra.append(arrays[attr_name])
+            if (idx, attr_name) not in shared:
+                extra.append(arrays[attr_name])
         for attr_name in sorted(runtime_scalars.keys()):
             extra.append(runtime_scalars[attr_name])
     # Build non-template args in order
@@ -1263,19 +1296,25 @@ def _detect_vector_arrays_from_args(kernel, args, template_args) -> dict[str, in
     if not template_args:
         return _detect_vector_arrays(kernel, args)
 
-    from tack.lang.template_rewrite import classify_template_attrs, template_array_param_name
+    from tack.lang.template_rewrite import (
+        classify_template_attrs,
+        shared_arrays,
+        template_array_param_name,
+    )
 
     funcdef = kernel._funcdef
     params = [a.arg for a in funcdef.args.args]
+    shared = {slot for slot, _ in shared_arrays(template_args)}
     vector_arrays = {}
     for i, (param_name, arg) in enumerate(zip(params, args)):
         if i in template_args:
             # A template's vector array attributes become kernel parameters
             # too, under the rewrite's synthetic names; without this a
             # `self.vel[i, j]` in a template method lowered as a scalar load.
+            # A shared one is the first holder's parameter.
             _, arrays, _ = classify_template_attrs(arg)
             for attr_name, array in arrays.items():
-                if hasattr(array, '_vector_n'):
+                if hasattr(array, '_vector_n') and (i, attr_name) not in shared:
                     vector_arrays[template_array_param_name(param_name, attr_name)] = \
                         _element_shape(array)
             continue

@@ -29,6 +29,7 @@ import numpy as np
 from tack.codegen.reductions import array_reduction_source
 from tack.lang import ir
 from tack.lang.array import DeviceBuffer, pointer_view_fields
+from tack.lang.ir_array_table import launch_params
 from tack.lang.parallel_dims import launch_geometry
 from tack.lang.types import ScalarType, f32, f64, i8, i16, i32, i64, u8, u16, u32, u64
 from tack.lang.workgroup_participation import (
@@ -91,6 +92,8 @@ ZE_STRUCTURE_TYPE_DEVICE_IP_VERSION_EXT = 0x1000f
 # Module format
 ZE_MODULE_FORMAT_IL_SPIRV = 0
 ZE_MODULE_FORMAT_NATIVE = 1
+# ze_kernel_indirect_access_flags_t: host, device and shared allocations
+_INDIRECT_ACCESS = 0x1 | 0x2 | 0x4
 
 # Command queue mode and flags
 ZE_COMMAND_QUEUE_MODE_SYNCHRONOUS = 1
@@ -563,6 +566,9 @@ def _setup_argtypes(ze):
     ze.zeKernelSetGroupSize.argtypes = [P, U32, U32, U32]
     ze.zeKernelSetGroupSize.restype = ctypes.c_int32
 
+    ze.zeKernelSetIndirectAccess.argtypes = [P, U32]
+    ze.zeKernelSetIndirectAccess.restype = ctypes.c_int32
+
     ze.zeKernelSetArgumentValue.argtypes = [P, U32, ctypes.c_size_t, P]
     ze.zeKernelSetArgumentValue.restype = ctypes.c_int32
 
@@ -839,12 +845,16 @@ def _native_binary(module) -> bytes:
 
 def _load_kernel(backend, spirv: bytes, kernel_name: str, param_types, param_is_array,
                  param_is_texture, workgroup_size, requires_full_workgroups=False,
-                 opencl_source=None, native=None) -> "CompiledL0Kernel":
+                 opencl_source=None, native=None, indirect=False) -> "CompiledL0Kernel":
     """A kernel from its SPIR-V, or from its native binary when one is given.
 
     A native binary skips IGC's finalization of the SPIR-V, about 50 ms a
     kernel when the driver's own cache does not have it. One the driver
     refuses -- another stepping, another IGC -- falls back to the SPIR-V.
+
+    ``indirect``: the kernel reads its arrays through an array table
+    (`ir_array_table`), so they are not its arguments, and the driver must
+    make memory of every kind resident for it (`zeKernelSetIndirectAccess`).
     """
     ze = _get_ze()
     module = None
@@ -865,6 +875,9 @@ def _load_kernel(backend, spirv: bytes, kernel_name: str, param_types, param_is_
     _check_ze(ze.zeKernelCreate(module, ctypes.byref(kernel_desc),
                                  ctypes.byref(kernel)),
                "zeKernelCreate")
+    if indirect:
+        _check_ze(ze.zeKernelSetIndirectAccess(kernel, _INDIRECT_ACCESS),
+                  "zeKernelSetIndirectAccess")
 
     compiled = CompiledL0Kernel(module, kernel, kernel_name,
                                 param_types, param_is_array, workgroup_size,
@@ -1583,6 +1596,9 @@ class LevelZeroBackend(GPUBackend):
         _check_ze(ze.zeDeviceGetModuleProperties(
             self._device, ctypes.byref(self._module_props)),
             "zeDeviceGetModuleProperties")
+        # 2048 bytes on a Max 1100: past it a variant reads its arrays from a
+        # table (#474).
+        self._max_argument_bytes = int(self._module_props.maxArgumentsSize) or None
         # Device-dependent, so this shadows the class attribute rather than
         # replacing it. supports_f64 derives from it; there is no second flag
         # to keep in step.
@@ -1827,12 +1843,14 @@ class LevelZeroBackend(GPUBackend):
         # Compile to SPIR-V via libocloc
         spirv_bytes = _compile_to_spirv(opencl_source, self._device_id)
 
-        param_types = [p.type_annotation for p in ir_func.params]
-        param_is_array = [p._is_array for p in ir_func.params]
-        param_is_texture = [p._is_texture for p in ir_func.params]
+        params = launch_params(ir_func)    # less the arrays an array table holds
+        param_types = [p.type_annotation for p in params]
+        param_is_array = [p._is_array for p in params]
+        param_is_texture = [p._is_texture for p in params]
+        indirect = any(p._is_array_table for p in params)
         return _load_kernel(self, spirv_bytes, kernel_name, param_types, param_is_array,
                             param_is_texture, workgroup_size, full_groups,
-                            opencl_source=opencl_source)
+                            opencl_source=opencl_source, indirect=indirect)
 
     # ── The disk cache: native binaries, with SPIR-V to fall back on ───
     # zeModuleCreate has IGC finalize SPIR-V for the device; the native
@@ -1869,7 +1887,7 @@ class LevelZeroBackend(GPUBackend):
         return self._target
 
     def variant_artifact(self, payload):
-        compiled, pack_info, _ = payload
+        compiled, pack_info, _, table = payload
         if compiled.spirv is None:
             raise ValueError("no SPIR-V was kept for this kernel")
         return {"native": _native_binary(compiled._module),
@@ -1879,7 +1897,7 @@ class LevelZeroBackend(GPUBackend):
                 "param_is_texture": compiled._param_is_texture,
                 "workgroup_size": compiled._workgroup_size,
                 "full_workgroups": compiled._requires_full_workgroups,
-                "pack_info": pack_info}
+                "pack_info": pack_info, "array_table": table[0] if table else ()}
 
     def load_variant(self, ir_func, artifact, effective_args):
         from tack.runtime.kernel_utils import _create_pack_arrays
@@ -1887,13 +1905,14 @@ class LevelZeroBackend(GPUBackend):
         compiled = _load_kernel(self, artifact["spirv"], artifact["name"],
                                 artifact["param_types"], artifact["param_is_array"],
                                 artifact["param_is_texture"], artifact["workgroup_size"],
-                                artifact["full_workgroups"], native=artifact["native"])
+                                artifact["full_workgroups"], native=artifact["native"],
+                                indirect=bool(artifact["array_table"]))
         pack_info = artifact["pack_info"]
         # The scalar pack buffers are device memory of this process, made
         # from this call's scalars as _build_variant makes them.
         pack_arrays = (_create_pack_arrays(pack_info, effective_args, self)
                        if pack_info else None)
-        return compiled, pack_info, pack_arrays
+        return compiled, pack_info, pack_arrays, self._array_table(artifact["array_table"])
 
     def reduce_array(self, array, op: str) -> float:
         """GPU-side reduction: sum, min, or max."""

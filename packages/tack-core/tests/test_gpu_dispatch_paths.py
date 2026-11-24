@@ -375,6 +375,47 @@ for shape in ((4, 4, 4), (4, 4, 20000)):
     check("variant and Texture3D agree on hardware sampling for %s" % (shape,),
           param._is_texture == b.texture_in_hardware(shape))
 
+# --- past the argument limit, the arrays' addresses go in a table ----
+b = make_backend()
+b._max_argument_bytes = 16
+x, out = array((32,)), array((32,))
+b.execute(elementwise, (x, out, 32), {})
+params = b.compiled[0].ir.params
+check("arrays and the scalar pack are tabled",
+      [p._table_slot for p in params] == [0, 1, 2, None])
+check("the table is the last parameter", params[-1]._is_array_table)
+launched = b.compiled[0].launches[0][0]
+check("the launch passes the table alone, got %d arguments" % len(launched),
+      len(launched) == 1)
+table = launched[0]
+pack = b._cache[elementwise][next(iter(b._cache[elementwise]))].payload[2][0]
+check("it holds the arrays' addresses, then the pack's",
+      table.numpy().tolist() == [x._buffer.address, out._buffer.address,
+                                 pack._buffer.address])
+y, other = array((32,)), array((32,))
+b.execute(elementwise, (y, other, 32), {})
+check("one variant", len(b.compiled) == 1)
+check("rewritten for the next launch's arrays",
+      table.numpy().tolist()[:2] == [y._buffer.address, other._buffer.address])
+writes = []
+real_write = type(table._buffer).from_numpy
+type(table._buffer).from_numpy = lambda self, a: (
+    writes.append(self is table._buffer), real_write(self, a))[1]   # packs write too
+b.execute(elementwise, (y, other, 32), {})
+b.execute(elementwise, (y, other, 32), {})
+b.execute(elementwise, (x, other, 32), {})
+type(table._buffer).from_numpy = real_write
+check("written only when the addresses change, got %d writes" % sum(writes),
+      sum(writes) == 1)
+check("and then right", table.numpy().tolist()[:2] == [x._buffer.address,
+                                                        other._buffer.address])
+b = make_backend()
+b._max_argument_bytes = 4096
+b.execute(elementwise, (x, out, 32), {})
+check("within the limit, no table",
+      all(p._table_slot is None for p in b.compiled[0].ir.params)
+      and len(b.compiled[0].launches[0][0]) == 3)
+
 print("OK")
 '''
 

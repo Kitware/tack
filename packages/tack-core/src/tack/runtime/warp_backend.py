@@ -224,7 +224,7 @@ class WarpBackend(GPUBackend):
         typed = clone_ir(ir_func)
         annotate_types(typed)
         verify_ir(typed, 'typed')
-        return self._compile_kernel(typed), None, None
+        return self._compile_kernel(typed), None, None, None
 
     def _compile_kernel(self, typed_ir):
         """The ``wp.Kernel`` for ``typed_ir``, defined from generated source, with

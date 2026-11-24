@@ -426,6 +426,38 @@ def template_array_param_name(param_name, attr_name):
     return f"__tmpl_{param_name}_{attr_name}__"
 
 
+def shared_arrays(template_args) -> tuple:
+    """The arrays of a call's templates that an earlier one already holds:
+    ``((idx, key), (first_idx, first_key))`` for each, ``key`` an array's
+    flattened name, in the runtime's order (templates highest index first,
+    each tree's arrays by flattened name; `_template_nodes`).
+
+    Objects over one space hold its arrays, so a kernel reading several took
+    each array once per object: 289 pointers for a tack-expr divergence on a
+    quadratic grid, past Level Zero's 2 KB of kernel arguments. A repeat is
+    one parameter, the first's: the rewrite reads it through that name and
+    the expansion passes it once. Which arrays repeat is part of every key
+    the rewrite's IR is cached under, since the parameters differ.
+    """
+    if not template_args:
+        return ()
+    memo = getattr(_scope, "memo", None)
+    key = ("shared", tuple(id(obj) for _, obj in template_args.values()))
+    if memo is not None and key in memo:
+        return memo[key]
+    first, repeats = {}, []
+    for idx in sorted(template_args, reverse=True):
+        _, arrays, _ = classify_template_attrs(template_args[idx][1])
+        for name in sorted(arrays):
+            slot = first.setdefault(id(arrays[name]), (idx, name))
+            if slot != (idx, name):
+                repeats.append(((idx, name), slot))
+    found = tuple(repeats)
+    if memo is not None:
+        memo[key] = found
+    return found
+
+
 def rewrite_templates(kernel_ast, template_args, python_func=None):
     """Rewrite a kernel AST to resolve template parameters.
 
@@ -456,6 +488,10 @@ def rewrite_templates(kernel_ast, template_args, python_func=None):
     # The source spelling of each held array's synthetic parameter, for
     # diagnostics; lowering keeps it on the IR (`IRFunction.held_arrays`).
     funcdef._tack_held_arrays = {}
+    # Each array's synthetic name by (template index, flattened name); a
+    # repeat of an earlier one (`shared_arrays`) takes the earlier's.
+    shared = dict(shared_arrays(template_args))
+    slot_names = {}
     specializer = _Specializer(resolved_funcs, used_names)
     # The templates resolved so far: a call is specialized for all of them at
     # once, and one whose callee is a method of a template still to come waits
@@ -468,7 +504,8 @@ def rewrite_templates(kernel_ast, template_args, python_func=None):
         param_name, obj = template_args[idx]
         pending.discard(param_name)
         root, extra = _template_nodes(param_name, obj, used_names, resolved_funcs,
-                                      funcdef._tack_held_arrays, specializer)
+                                      funcdef._tack_held_arrays, specializer,
+                                      idx=idx, shared=shared, slot_names=slot_names)
         synthetic.update(extra)
 
         # obj[i], obj[i] = v and len(obj) as the protocol's method calls
@@ -781,20 +818,34 @@ class _Node:
 
 
 def _template_nodes(param_name, obj, used_names, resolved_funcs, held_arrays,
-                    specializer=None):
+                    specializer=None, idx=0, shared=None, slot_names=None):
     """The resolved tree of one template argument: ``(root, extra)``, ``extra`` the
     synthetic parameters every resolved method takes, in the runtime's order --
     the flattened arrays by name, then the flattened runtime scalars by name.
     Each array's synthetic parameter goes into ``held_arrays`` with the path
-    the source writes: ``__tmpl_dst_base__values__`` -> ``dst.base.values``."""
+    the source writes: ``__tmpl_dst_base__values__`` -> ``dst.base.values``.
+
+    An array an earlier template or attribute holds too (``shared``, from
+    `shared_arrays`, by ``(idx, key)``) takes that one's name from
+    ``slot_names``, so ``extra`` lists it once and the kernel, given it
+    already, gains no parameter for it."""
+    shared = shared or {}
+    slot_names = {} if slot_names is None else slot_names
     _, arrays, runtime = classify_template_attrs(obj)
-    array_names = {key: fresh_name(template_array_param_name(param_name, key), used_names)
-                   for key in sorted(arrays)}
-    for key, synthetic in array_names.items():
-        held_arrays[synthetic] = f"{param_name}.{key.replace(_NESTED, '.')}"
+    array_names = {}
+    for key in sorted(arrays):
+        path = f"{param_name}.{key.replace(_NESTED, '.')}"
+        first = shared.get((idx, key))
+        if first is not None:
+            synthetic = array_names[key] = slot_names[first]
+            held_arrays[synthetic] += f" (also {path})"
+            continue
+        synthetic = fresh_name(template_array_param_name(param_name, key), used_names)
+        array_names[key] = slot_names[(idx, key)] = synthetic
+        held_arrays[synthetic] = path
     runtime_names = {key: fresh_name(f"__tmpl_{param_name}_{key}__", used_names)
                      for key in sorted(runtime)}
-    extra = [array_names[k] for k in sorted(array_names)] + \
+    extra = list(dict.fromkeys(array_names[k] for k in sorted(array_names))) + \
         [runtime_names[k] for k in sorted(runtime_names)]
 
     nodes = {}
@@ -1172,9 +1223,12 @@ class _KernelTemplateRewriter(ast.NodeTransformer):
         node.args.args = [
             a for i, a in enumerate(node.args.args) if i != self.param_idx
         ]
-        # The tree's synthetic parameters at the end
+        # The tree's synthetic parameters at the end, less the arrays an
+        # earlier template's added already (`shared_arrays`)
+        present = {a.arg for a in node.args.args}
         for synth_name in self.extra:
-            node.args.args.append(ast.arg(arg=synth_name))
+            if synth_name not in present:
+                node.args.args.append(ast.arg(arg=synth_name))
 
         # Visit the body
         self.generic_visit(node)

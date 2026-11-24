@@ -815,7 +815,7 @@ class MetalBackend(GPUBackend):
         return f"{self._device.name()}; macOS {platform.mac_ver()[0]}"
 
     def variant_artifact(self, payload):
-        compiled, pack_info, _ = payload
+        compiled, pack_info, _, _ = payload
         return {"msl": compiled.msl_source, "name": compiled._func_name,
                 "param_types": compiled._param_types,
                 "param_is_array": compiled._param_is_array,
@@ -828,7 +828,7 @@ class MetalBackend(GPUBackend):
                                 artifact["name"], artifact["param_types"],
                                 artifact["param_is_array"], artifact["param_is_texture"],
                                 artifact["full_workgroups"], backend=self)
-        return compiled, artifact["pack_info"], None
+        return compiled, artifact["pack_info"], None, None
 
     def _get_reduce_pipeline(self, op: str):
         """Get or compile a Metal reduction pipeline."""

@@ -38,6 +38,7 @@ import numpy as np
 from tack.codegen.reductions import array_reduction_source
 from tack.lang import ir
 from tack.lang.array import DeviceBuffer, pointer_view_fields
+from tack.lang.ir_array_table import launch_params
 from tack.lang.parallel_dims import launch_geometry
 from tack.lang.types import ScalarType, f32, f64, i8, i16, i32, i64, u8, u16, u32, u64
 from tack.lang.workgroup_participation import WORKGROUP_SIZE
@@ -791,6 +792,8 @@ class HIPBackend(GPUBackend):
     supports_workgroups = True
     device_memory_spaces = frozenset({"hip", "hip_pinned", "hip_managed"})
     multi_device = True
+    # As CUDA's 4 KB; past it, an array table.
+    _max_argument_bytes = 4096
 
     @classmethod
     def device_count(cls) -> int:
@@ -1046,9 +1049,10 @@ class HIPBackend(GPUBackend):
         kernel_name = kernel_entry_name(ir_func.name)
         hip_source = generate_hip_source(ir_func)
         code = _compile_code_object(hip_source, kernel_name)
-        param_types = [p.type_annotation for p in ir_func.params]
-        param_is_array = [p._is_array for p in ir_func.params]
-        param_is_texture = [p._is_texture for p in ir_func.params]
+        params = launch_params(ir_func)    # less the arrays an array table holds
+        param_types = [p.type_annotation for p in params]
+        param_is_array = [p._is_array for p in params]
+        param_is_texture = [p._is_texture for p in params]
         return _load_kernel(code, kernel_name, param_types, param_is_array, param_is_texture)
 
     # ── The disk cache: code objects, loaded as they are ──────────────
@@ -1081,14 +1085,14 @@ class HIPBackend(GPUBackend):
         return self._target
 
     def variant_artifact(self, payload):
-        compiled, pack_info, _ = payload
+        compiled, pack_info, _, table = payload
         if compiled.code_object is None:
             raise ValueError("no code object was kept for this kernel")
         return {"code_object": compiled.code_object, "name": compiled._func_name,
                 "param_types": compiled._param_types,
                 "param_is_array": compiled._param_is_array,
                 "param_is_texture": compiled._param_is_texture,
-                "pack_info": pack_info}
+                "pack_info": pack_info, "array_table": table[0] if table else ()}
 
     def load_variant(self, ir_func, artifact, effective_args):
         from tack.runtime.kernel_utils import _create_pack_arrays
@@ -1100,7 +1104,7 @@ class HIPBackend(GPUBackend):
         # from this call's scalars as _build_variant makes them.
         pack_arrays = (_create_pack_arrays(pack_info, effective_args, self)
                        if pack_info else None)
-        return compiled, pack_info, pack_arrays
+        return compiled, pack_info, pack_arrays, self._array_table(artifact["array_table"])
 
     def reduce_array(self, array, op: str) -> float:
         """GPU-side reduction: sum, min, or max."""

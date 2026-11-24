@@ -262,6 +262,7 @@ they held before (temporaries and output), at `ce3353bf`:
 | CPU, with the two fixes | 23 | 26 | 147 | 80 | 23 | 41 | 249 | 194 |
 | Metal, with the two fixes | 23 | 26 | 147 | 86 | 24 | 42 | 249 | 216 |
 | CUDA, with the two fixes | 23 | 26 | 147 | 80 | 44 | 62 | 249 | 194 |
+| HIP, with the two fixes | 23 | 26 | 147 | 80 | 44 | 62 | 249 | 194 |
 | Level Zero, with the two fixes | 23 | 26 | 147 | 80 | 44 | 62 | 249 | 194 |
 | Warp, with the two fixes | 23 | 26 | 147 | 80 | 23 | 41 | 249 | 198 |
 
@@ -290,8 +291,8 @@ traced arrays agree to 0.1 MiB on CUDA and Warp, so D1 misses nothing there):
   three bucket sort, with three tables as long as the points, 19 MiB each:
   forced to 64, Warp counts CUDA's 63.8 and 81.3. The counts are now the
   scatter's fill once read, two tables: with the bucket path forced on the CPU,
-  hex contour 82.9 to 63.5 and slice 100.4 to 81.0; CUDA and Level Zero count
-  44 and 62 (from 64 and 81). The remaining 21 MiB over Warp is the speed the
+  hex contour 82.9 to 63.5 and slice 100.4 to 81.0; CUDA, HIP and Level Zero
+  count 44 and 62 (from 64 and 81). The remaining 21 MiB over Warp is the speed the
   threshold buys.
 
 Run with the fixes on Warp, the cycle test failed: Warp's `wp.func` and

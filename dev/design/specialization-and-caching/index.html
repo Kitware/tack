@@ -5817,6 +5817,17 @@ contributes one part per template parameter:</p>
 <li><strong>Runtime scalar names.</strong> Instance scalars are runtime parameters, so
   their <em>values</em> are not keyed. Their <em>names</em> are, because adding or
   removing one changes the parameter layout.</li>
+<li><strong>Shared arrays.</strong> An array that more than one template (or one tree
+  under two names) holds is one kernel parameter: the rewrite names every
+  holder's attribute by the first one's synthetic parameter, and the
+  expansion passes it once (<code>template_rewrite.shared_arrays</code>). Objects
+  over one space hold its arrays, and a tack-expr divergence on a
+  quadratic grid passed 289 pointers before, past Level Zero's 2 KB of
+  kernel arguments, and 35 since. Which arrays repeat which, by template
+  index and flattened name, is a trailing <code>("shared", ...)</code> part, present
+  only when some do; the disk cache's lowered key carries it too. Only
+  templates' arrays are shared: a plain array argument is a parameter of
+  its own even when a template holds it as well.</li>
 </ul>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
@@ -6136,7 +6147,7 @@ take hidden arguments, and each launch is noted for the check) takes the
 slow path. Together with the CPU passing array addresses rather than
 typed pointer objects, a warm CPU dispatch went from 70 to 40 µs.</p>
 <h4 id="what-a-warm-call-costs">What a warm call costs<a class="headerlink" href="#what-a-warm-call-costs" title="Permanent link">&para;</a></h4>
-<p>What a warm call pays (<code>_fast_resolve</code>): the call's signature (<code>_call_signature</code>, cached per <code>Array</code> as <code>_sig</code>; per template class the attribute layout <code>_template_layouts</code>, relearned when an instance's attribute names or types differ), one weak lookup for the kernel's entry, the disjointness check over the entry's precomputed array slots (<code>_disjoint_by_slots</code>, one sorted walk), and the per-call checks. It runs outside <code>template_scope</code>, which the slow path enters. <code>NumpyBuffer.address</code> and <code>span</code> are computed once per array. Measured on a 2 GHz Xeon: a warm CPU dispatch 70 → 40 µs from the signature alone, then a serial dispatch with eight array arguments 66 → 34 µs; inside a filter, where launches follow cache-trashing kernels and a third are template views, 149 → 130 µs per launch. Leaving the caller out of the chunks (k workers, caller waits) was tried for its warm caches and lost (161 µs), so the caller still runs chunks.</p>
+<p>What a warm call pays (<code>_fast_resolve</code>): the call's signature (<code>_call_signature</code>, cached per <code>Array</code> as <code>_sig</code>; per template class the attribute layout <code>_template_layouts</code>, relearned when an instance's attribute names or types differ), one weak lookup for the kernel's entry, the disjointness check over the entry's precomputed array slots (<code>_disjoint_by_slots</code>, one sorted walk), and the per-call checks. It runs outside <code>template_scope</code>, which the slow path enters. <code>NumpyBuffer.address</code> and <code>span</code> are computed once per array. Measured on a 2 GHz Xeon: a warm CPU dispatch 70 → 40 µs from the signature alone, then a serial dispatch with eight array arguments 66 → 34 µs; inside a filter, where launches follow cache-trashing kernels and a third are template views, 149 → 130 µs per launch. Leaving the caller out of the chunks (k workers, caller waits) was tried for its warm caches and lost (161 µs), so the caller still runs chunks. The signature also says which template arrays are one object (<code>_repeats</code>, since shared arrays are one parameter): about 65 ns per template array on an M1 Max, 22.4 → 26.1 µs for the signature of three views of 20 arrays each; with the views over one space, the 15 shared arrays are passed once and the warm call is 69 → 60 µs.</p>
 <h2 id="the-correctness-argument">The correctness argument<a class="headerlink" href="#the-correctness-argument" title="Permanent link">&para;</a></h2>
 <p>The design rests on one rule: <strong>anything a pass or code generator bakes
 into the compiled code must be named by the key.</strong> Leaving something out
@@ -6172,7 +6183,7 @@ The table pairs each baked-in fact with the key element that names it:</p>
 <td><code>vec_sig</code> (and the IR template key)</td>
 </tr>
 <tr>
-<td>inlined template methods, class constants, template parameter layout</td>
+<td>inlined template methods, class constants, template parameter layout, shared template arrays</td>
 <td>template rewrite</td>
 <td><code>tmpl_key</code></td>
 </tr>

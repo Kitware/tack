@@ -235,12 +235,18 @@ same bits as before.
 MiB.
 
 The first table again, the host allocator's peak beyond what it held before
-(the M1 Max CPU, eight threads), VTK / Tack, Tack with the two fixes below:
+(the M1 Max CPU, eight threads), VTK / Tack, Tack with the two fixes below,
+and macOS's large-block cache off (below; the first table had it on, so its
+numbers run high for both, VTK's as much as Tack's):
 
 | | contour | slice | threshold | clip |
 |---|---|---|---|---|
-| 5M tetrahedra, VTK / Tack | 21 / 23 | 43 / 29 | 279 / 156 | 111 / 93 |
-| 5M hexahedra, VTK / Tack | 62 / 25 | 151 / 60 | 356 / 248 | 210 / 358 |
+| 5M tetrahedra, VTK / Tack | 26 / 23 | 37 / 26 | 180 / 137 | 76 / 77 |
+| 5M hexahedra, VTK / Tack | 62 / 23 | 131 / 41 | 327 / 249 | 183 / 195 |
+
+The allocator and D1 now agree for Tack to a few MiB (the allocator a little
+lower where its 2 ms samples miss a short peak): on the CPU D1 is the whole of
+Tack's memory.
 
 By D1's count, Tack's arrays on each device at the call's peak beyond what
 they held before (temporaries and output), at `ce3353bf`:
@@ -254,10 +260,11 @@ they held before (temporaries and output), at `ce3353bf`:
 | Level Zero (Max 1100) | 23 | 26 | 147 | 80 | 64 | 81 | 249 | 194 |
 | Warp (RTX 4060 Ti) | 23 | 26 | 147 | 80 | 23 | 41 | 249 | 198 |
 | CPU, with the two fixes | 23 | 26 | 147 | 80 | 23 | 41 | 249 | 194 |
+| Metal, with the two fixes | 23 | 26 | 147 | 86 | 24 | 42 | 249 | 216 |
 
-Clip on the tetrahedra went from 328 to 93 MiB by the allocator, under VTK's
-111, and on the hexahedra from 739 to 358 (D1: 574 to 194). Contour on the
-tetrahedra from 42 to 23.
+By D1, clip on the hexahedra went from 574 to 194 MiB; by the allocator clip
+is now level with VTK's (77 and 76 on the tetrahedra, 195 and 183 on the
+hexahedra), and contour, slice and threshold under it.
 
 The devices differed in two ways, both traced on mustafar-linux by allocation
 site with the CUDA pool's high-water mark beside D1 (the pool, D1 and the
@@ -284,11 +291,17 @@ traced arrays agree to 0.1 MiB on CUDA and Warp, so D1 misses nothing there):
   Zero should count about 44 and 62. The remaining 21 MiB over Warp is the
   speed the threshold buys.
 
-On the hexahedra clip the allocator still sees about 160 MiB more than D1
-counts, throughout the call, at one thread or eight. It is not Tack's arrays,
-nor anything Python traces (`tracemalloc`'s peak was D1's), and not compiling
-(the second and third calls in a process show the same); where it comes from
-is not yet known. The first call on the 5M hexahedra compiles variants the
+Metal with the fixes is the CPU's but for clip, 86 against 80 on the
+tetrahedra and 216 against 194 on the hexahedra; not yet traced.
+
+On the hexahedra clip the allocator saw about 160 MiB more than D1 counted, at
+one thread or eight. It was the allocator's statistic: macOS's large-block
+cache serves a request from a larger block freed earlier (the mesh's build
+frees many), and `malloc_zone_statistics` counts the whole block, so each of
+clip's arrays counted up to twice its size (a 77.4 MiB connectivity as
+152.6), while the process's physical footprint rose 22 MiB. A process
+without the cache (`MallocLargeCache=0`) counts each request at its size;
+`memory.py` now runs its measurements so on macOS. The first call on the 5M hexahedra compiles variants the
 10k-cell warm-up did not (contour and slice the radix sort's, whose warm-up
 merge has 2-3 buckets a key and bucket sorts), so its time includes compiling.
 

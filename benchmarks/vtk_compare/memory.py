@@ -28,7 +28,10 @@ it out.
 The memory measured is what the allocator has handed out and not taken back
 (``malloc_zone_statistics`` on macOS, ``mallinfo2`` on Linux): every live
 NumPy, Tack (CPU) and VTK allocation, and none of what it caches after a
-free. GPU memory is not counted.
+free. GPU memory is not counted. On macOS the measurements run with the
+allocator's large-block cache off (``MallocLargeCache=0``): with it, a request
+could be given a larger block freed earlier and was counted at the block's
+size (a 10 MiB array as 19, hexahedra clip's 194 MiB of arrays as 358).
 
 Usage:
   python benchmarks/vtk_compare/memory.py [--sizes 1M,20M] [--meshes hex,tet]
@@ -222,7 +225,8 @@ def measure_one(mesh_name, size, filter_name, system, threads, device="cpu"):
 def _child(args):
     """Run one measurement in a new process; its record, or the failure."""
     command = [sys.executable, os.path.abspath(__file__), "--one", *args]
-    done = subprocess.run(command, capture_output=True, text=True)
+    env = dict(os.environ, MallocLargeCache="0") if sys.platform == "darwin" else None
+    done = subprocess.run(command, capture_output=True, text=True, env=env)
     lines = [line for line in done.stdout.splitlines() if line.startswith("{")]
     if done.returncode or not lines:
         tail = (done.stderr or done.stdout).strip().splitlines()[-3:]

@@ -291,7 +291,11 @@ the buffer references and declares indirect-resource residency with
 `_open_batch`/`_launched`/`synchronize`): each encodes a compute pass into
 the open command buffer, committed every 64 launches with at most 4 in
 flight, and owns what it reads -- a fresh argument buffer, its packed
-scalars as `_Uniforms`, references to its arrays until it completes. The
+scalars as `_Uniforms`, references to its arrays' MTLBuffers until it
+completes (for an array of the backend's pool, not shared, the MTLBuffer
+alone, so the array may die and its buffer go back to the pool at once, a
+later array taking it in queue order as a stream-ordered pool does:
+`_reusable_while_queued`, #483; otherwise the `MetalBuffer` itself). The
 host waits only when it touches array memory (every `MetalBuffer` method,
 reductions, texture uploads) or calls `tack.sync()`; `tack.zeros` takes a
 new buffer as Metal cleared it (`starts_zeroed`), without waiting. Buffers of

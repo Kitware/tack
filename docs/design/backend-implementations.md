@@ -196,7 +196,14 @@ committed ones outstanding; `synchronize()` commits the open one and waits
 for all of them, and a command-buffer error raises `RuntimeError` there,
 at the next host access, rather than at the launch's call. Each launch
 owns what it reads: a fresh argument buffer, its packed scalars in a buffer
-of their own (`_Uniforms`), and references to its arrays until it
+of their own (`_Uniforms`), and references to its arrays' `MTLBuffer`s until
+it completes. An array from the backend's own pool, not shared, may die
+meanwhile: its `MTLBuffer` goes back to the pool at once, and the next array
+given it is used by later launches, which the queue runs after (a compute
+pass each, hazards tracked), and by the host only after a wait, as a
+stream-ordered pool hands memory out again on CUDA and HIP
+(`_reusable_while_queued`, #483). Other memory (wrapped, shared, another
+backend's, under the pool's 1 MiB) keeps its `MetalBuffer` until the launch
 completes. A launch that binds memory handed outside Tack (`_shared`: an
 exported or wrapped buffer) completes before returning. An
 empty range returns before encoding anything. The loop index is declared
@@ -496,7 +503,9 @@ a hundred small launches went from 8.7 to 2.6 ms.
 - **Lifetimes.** An array Python drops while a queued launch still uses it
   outlives that launch: CUDA and HIP allocate and free in stream order,
   Level Zero frees with the driver's deferred policy, and a Metal launch
-  holds references to its arrays until it completes.
+  holds references to its arrays' `MTLBuffer`s until it completes (a pooled
+  one may meanwhile go back to the pool and to a later array, in queue
+  order).
 - **Memory outside Tack.** A wrapped pointer (`wrap_ptr`, so
   `array_from_ptr` and DLPack imports), a DLPack export and Metal's
   `export_memory()` mark the buffer shared (`DeviceBuffer.share()`): the

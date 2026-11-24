@@ -264,7 +264,7 @@ they held before (temporaries and output), at `ce3353bf`:
 | CUDA, with the two fixes | 23 | 26 | 147 | 80 | 44 | 62 | 249 | 194 |
 | HIP, with the two fixes | 23 | 26 | 147 | 80 | 44 | 62 | 249 | 194 |
 | Level Zero, with the two fixes | 23 | 26 | 147 | 80 | 44 | 62 | 249 | 194 |
-| Warp, with the two fixes | 23 | 26 | 147 | 80 | 23 | 41 | 249 | 198 |
+| Warp, with the fixes | 23 | 26 | 147 | 80 | 23 | 41 | 249 | 194 |
 
 By D1, clip on the hexahedra went from 574 to 194 MiB; by the allocator clip
 is now level with VTK's (77 and 76 on the tetrahedra, 195 and 183 on the
@@ -298,7 +298,10 @@ traced arrays agree to 0.1 MiB on CUDA and Warp, so D1 misses nothing there):
 Run with the fixes on Warp, the cycle test failed: Warp's `wp.func` and
 `wp.func_native` (1.18) keep their own frame beside a closure, a cycle whose
 callers' frames reached the compiling call's arrays. The Warp backend now
-defines its generated modules in a thread of its own.
+defines its generated modules in a thread of its own. With that, the cycle
+test passes on CUDA Warp, and Warp's hexahedra clip is CUDA's 194 (from 198:
+the 5M call compiles the radix kernels the warm-up did not, and the cycle kept
+4.2 MiB of `argsort` and `gather` temporaries).
 
 Metal with the fixes is the CPU's but for clip, 86 against 80 on the
 tetrahedra and 216 against 194 on the hexahedra. Traced as above (CPU against

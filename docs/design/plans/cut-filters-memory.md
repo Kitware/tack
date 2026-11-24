@@ -292,7 +292,16 @@ traced arrays agree to 0.1 MiB on CUDA and Warp, so D1 misses nothing there):
   speed the threshold buys.
 
 Metal with the fixes is the CPU's but for clip, 86 against 80 on the
-tetrahedra and 216 against 194 on the hexahedra; not yet traced.
+tetrahedra and 216 against 194 on the hexahedra. Traced as above (CPU against
+Metal, what is live at each allocation): the same arrays are live up to the
+point map (`number`), but clip drops it right after the two launches that use
+it, and on Metal a queued launch holds its arrays until its command buffer
+completes, so `number`'s 19.4 MiB is still alive when `carry` allocates the
+output's 39 MiB (157.6 + 19.4 + 39.2 = 216.2). On CUDA and HIP a dropped
+array's memory goes back to the pool in stream order and is reused at once.
+The tetrahedra's 6 MiB is the same, on smaller arrays. It is Metal's queueing,
+not clip's: reusing a dropped buffer in queue order, as CUDA's pool does, would
+be a change to the Metal backend, outside this plan.
 
 On the hexahedra clip the allocator saw about 160 MiB more than D1 counted, at
 one thread or eight. It was the allocator's statistic: macOS's large-block

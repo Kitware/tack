@@ -5841,7 +5841,14 @@ committed ones outstanding; <code>synchronize()</code> commits the open one and 
 for all of them, and a command-buffer error raises <code>RuntimeError</code> there,
 at the next host access, rather than at the launch's call. Each launch
 owns what it reads: a fresh argument buffer, its packed scalars in a buffer
-of their own (<code>_Uniforms</code>), and references to its arrays until it
+of their own (<code>_Uniforms</code>), and references to its arrays' <code>MTLBuffer</code>s until
+it completes. An array from the backend's own pool, not shared, may die
+meanwhile: its <code>MTLBuffer</code> goes back to the pool at once, and the next array
+given it is used by later launches, which the queue runs after (a compute
+pass each, hazards tracked), and by the host only after a wait, as a
+stream-ordered pool hands memory out again on CUDA and HIP
+(<code>_reusable_while_queued</code>, #483). Other memory (wrapped, shared, another
+backend's, under the pool's 1 MiB) keeps its <code>MetalBuffer</code> until the launch
 completes. A launch that binds memory handed outside Tack (<code>_shared</code>: an
 exported or wrapped buffer) completes before returning. An
 empty range returns before encoding anything. The loop index is declared
@@ -6156,7 +6163,9 @@ a hundred small launches went from 8.7 to 2.6 ms.</p>
 <li><strong>Lifetimes.</strong> An array Python drops while a queued launch still uses it
   outlives that launch: CUDA and HIP allocate and free in stream order,
   Level Zero frees with the driver's deferred policy, and a Metal launch
-  holds references to its arrays until it completes.</li>
+  holds references to its arrays' <code>MTLBuffer</code>s until it completes (a pooled
+  one may meanwhile go back to the pool and to a later array, in queue
+  order).</li>
 <li><strong>Memory outside Tack.</strong> A wrapped pointer (<code>wrap_ptr</code>, so
   <code>array_from_ptr</code> and DLPack imports), a DLPack export and Metal's
   <code>export_memory()</code> mark the buffer shared (<code>DeviceBuffer.share()</code>): the

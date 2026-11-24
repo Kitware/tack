@@ -3,6 +3,8 @@
 
 """Structural passes must reach every child, including less common nodes."""
 
+import gc
+import weakref
 from types import SimpleNamespace
 
 import pytest
@@ -11,7 +13,7 @@ from tack.lang import ir
 from tack.lang.ir_optimize import _copy_prop_body, _replace_names
 from tack.lang.ir_pack_scalars import _rewrite
 from tack.lang.ir_resolve import _resolve
-from tack.lang.ir_traversal import CHILD_FIELDS, transform_ir, walk_ir
+from tack.lang.ir_traversal import CHILD_FIELDS, substitute_ir, transform_ir, walk_ir
 from tack.lang.types import f32
 
 
@@ -159,3 +161,29 @@ def test_substitute_copies_only_the_nodes_above_a_replacement():
     # Nothing changed in place: the shared node and the input still read `a`.
     assert shared.left.name == 'a' and first.value is shared
     assert substitute_ir([kept], replace)[0] is kept
+
+
+class _Rewrite:
+    def __call__(self, node):
+        return None
+
+
+@pytest.mark.parametrize('traverse', [
+    lambda root, f: transform_ir(root, lambda node: f(node) or node),
+    lambda root, f: transform_ir(root, lambda node: f(node) or node, copy_nodes=True),
+    substitute_ir,
+], ids=['transform', 'transform-copying', 'substitute'])
+def test_the_rewrite_is_released_when_the_traversal_returns(traverse):
+    """A traversal's recursive closure refers to itself; unbroken, that cycle kept
+    the rewrite, and whatever it closes over, until the next collection: in
+    variant resolution the call's arrays (#318)."""
+    rewrite = _Rewrite()
+    released = weakref.ref(rewrite)
+    root = ir.IRBinOp('+', ir.IRName('x'), ir.IRConstant(1))
+    gc.disable()
+    try:
+        traverse(root, rewrite)
+        del rewrite
+        assert released() is None
+    finally:
+        gc.enable()

@@ -148,3 +148,27 @@ def test_the_fixture_measures_one_calls_peak(backend, peak_memory):
     assert peak == 12000
     assert result.shape == (2000,)
     del keep
+
+
+def test_a_compiling_call_keeps_none_of_its_arrays(backend):
+    """An array given to a call that compiles a new variant is given back when it
+    is dropped after the call, without waiting for the cycle collector: variant
+    resolution's rewrite of the IR kept the call's arrays in a reference cycle
+    (19 MiB of a contour's counts at 5M cells, #318)."""
+
+    @tack.kernel
+    def double(a, b):
+        for i, j in tack.ndindex(a.shape[0], a.shape[1]):
+            b[i, j] = 2 * a[i, j]
+
+    start = _settled()
+    gc.disable()
+    try:
+        a = tack.zeros((10, 100), tack.f32)
+        b = tack.empty((10, 100), tack.f32)
+        double(a, b)                            # new: compiled here
+        tack.sync()
+        del a, b
+        assert ms.live() == start
+    finally:
+        gc.enable()

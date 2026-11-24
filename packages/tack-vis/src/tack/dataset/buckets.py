@@ -329,7 +329,11 @@ def bucket_order(values, nbuckets, index_dtype=None):
     _largest_counts(counts, largest, _CHUNK, nchunks, nbuckets)
     if int(largest.numpy().max()) > _LARGEST:
         return _radix_order(values, n, indices), starts
-    fill = tack.zeros((nbuckets,), tack.i32)
+    # The counts are read: they become the scatter's fill, rather than a third
+    # table as long as the buckets (19 MiB at 5M points, #318).
+    fill = counts
+    fill.fill(0)
+    del counts
     order = tack.empty((n,), indices)
     _bucket_scatter(keys, starts, fill, order, n)
     _sort_buckets(keys, starts, order, nbuckets)
@@ -366,7 +370,9 @@ def sorted_key_order(values, nbuckets, index_dtype=None):
             order = tack.empty((n,), indices)
             ordered = tack.empty((n,), values.dtype)
             if n:
-                fill = tack.zeros((nbuckets,), tack.i32)
+                fill = counts                   # read: the fill, as in bucket_order
+                fill.fill(0)
+                del counts
                 _bucket_scatter_keys(keys, values, starts, fill, order, ordered, n)
                 _sort_ordered_buckets(keys, ordered, starts, order, nbuckets)
             return order, ordered

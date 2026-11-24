@@ -235,15 +235,15 @@ same bits as before.
 MiB.
 
 The first table again, the host allocator's peak beyond what it held before
-(the M1 Max CPU, eight threads), VTK / Tack:
+(the M1 Max CPU, eight threads), VTK / Tack, Tack with the two fixes below:
 
 | | contour | slice | threshold | clip |
 |---|---|---|---|---|
-| 5M tetrahedra, VTK / Tack | 21 / 33 | 43 / 36 | 279 / 149 | 111 / 97 |
-| 5M hexahedra, VTK / Tack | 62 / 33 | 151 / 62 | 356 / 296 | 210 / 345 |
+| 5M tetrahedra, VTK / Tack | 21 / 23 | 43 / 29 | 279 / 156 | 111 / 93 |
+| 5M hexahedra, VTK / Tack | 62 / 25 | 151 / 60 | 356 / 248 | 210 / 358 |
 
 By D1's count, Tack's arrays on each device at the call's peak beyond what
-they held before (temporaries and output):
+they held before (temporaries and output), at `ce3353bf`:
 
 | device | tet contour | tet slice | tet threshold | tet clip | hex contour | hex slice | hex threshold | hex clip |
 |---|---|---|---|---|---|---|---|---|
@@ -253,28 +253,44 @@ they held before (temporaries and output):
 | HIP (MI210) | 23 | 26 | 147 | 80 | 64 | 81 | 249 | 194 |
 | Level Zero (Max 1100) | 23 | 26 | 147 | 80 | 64 | 81 | 249 | 194 |
 | Warp (RTX 4060 Ti) | 23 | 26 | 147 | 80 | 23 | 41 | 249 | 198 |
+| CPU, with the two fixes | 23 | 26 | 147 | 80 | 23 | 41 | 249 | 194 |
 
-Clip on the tetrahedra went from 328 to 97 MiB, under VTK's 111, and on the
-hexahedra from 739 to 345 (D1: 574 to 200). Contour on the tetrahedra from 42
-to 33.
+Clip on the tetrahedra went from 328 to 93 MiB by the allocator, under VTK's
+111, and on the hexahedra from 739 to 358 (D1: 574 to 194). Contour on the
+tetrahedra from 42 to 23.
 
-Across devices threshold counts the same to the MiB, and the tetrahedra
-nearly so (contour and slice 23 and 26 on every GPU, 34 and 37 on the CPU;
-clip 80, 86 on Metal). Hexahedra clip is 194 to 228. Hexahedra contour and
-slice are where the devices part: 64 and 81 MiB on CUDA, HIP and Level Zero
-(the three of the CUDA code generator, identical to the MiB, CUDA's and
-Warp's repeated), against 37 and 50 on the CPU, 30 and 42 on Metal and 23 and
-41 on Warp, which runs on the same RTX 4060 Ti as CUDA. Neither filter
-branches on the device; the backends differ below them, or Warp and Metal
-allocate something D1 does not count. Not yet traced.
+The devices differed in two ways, both traced on mustafar-linux by allocation
+site with the CUDA pool's high-water mark beside D1 (the pool, D1 and the
+traced arrays agree to 0.1 MiB on CUDA and Warp, so D1 misses nothing there):
 
-On the hexahedra clip's two measures disagree: the allocator sees about 140
-MiB more than D1 counts, throughout the call, at one thread or eight. It is
-not Tack's arrays, nor anything Python traces (`tracemalloc`'s peak, 199 MiB,
-is D1's), and not compiling (the second and third calls in a process show the
-same); where it comes from is not yet known. On the tetrahedra the two are 97
-and 80. Separately, the first call on the 5M hexahedra compiles eight
-variants the 10k-cell warm-up did not, so its time includes compiling.
+- **Arrays kept by a reference cycle.** The IR traversals' recursive closures
+  (`transform_ir`, `substitute_ir`) referred to themselves, and the cycle held
+  the rewrite, which in variant resolution closes over the call's arrays: a
+  call that compiled a new variant kept its arrays until Python's next cycle
+  collection. The 5M calls compile variants the 10k-cell warm-up did not, more
+  on the CPU and Metal, so contour's 19 MiB of per-cell counts outlived its
+  `del` there. Now broken as `clone_ir`'s was; the CPU's row fell to the GPUs'
+  (hex contour 37 to 23, slice 50 to 41, clip 200 to 194, the tetrahedra's
+  contour and slice 34 and 37 to 23 and 26). Metal's 30, 42 and 228 are
+  probably the same; not measured again.
+- **The bucket sort on the discrete GPUs.** `key_order` bucket sorts keys at up
+  to 64 buckets a key on CUDA, HIP and Level Zero (`_SPARSE_DISCRETE`, faster
+  there by 1.3-1.7x), 8 elsewhere, Warp included. The point merge of hexahedra
+  contour and slice has 12.8 and 19.3 buckets (points) a key, so only those
+  three bucket sort, with three tables as long as the points, 19 MiB each:
+  forced to 64, Warp counts CUDA's 63.8 and 81.3. The counts are now the
+  scatter's fill once read, two tables: with the bucket path forced on the CPU,
+  hex contour 82.9 to 63.5 and slice 100.4 to 81.0, so CUDA, HIP and Level
+  Zero should count about 44 and 62. The remaining 21 MiB over Warp is the
+  speed the threshold buys.
+
+On the hexahedra clip the allocator still sees about 160 MiB more than D1
+counts, throughout the call, at one thread or eight. It is not Tack's arrays,
+nor anything Python traces (`tracemalloc`'s peak was D1's), and not compiling
+(the second and third calls in a process show the same); where it comes from
+is not yet known. The first call on the 5M hexahedra compiles variants the
+10k-cell warm-up did not (contour and slice the radix sort's, whose warm-up
+merge has 2-3 buckets a key and bucket sorts), so its time includes compiling.
 
 ## Validation
 

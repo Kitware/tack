@@ -6,6 +6,8 @@ bucketing instead of sorting -- what face, edge, cell-point and point-link
 derivation and contour point merging use. Keys are ids, or tuples of 2 or 4
 ids, in i32 or i64."""
 
+import gc
+
 import numpy as np
 import pytest
 
@@ -214,3 +216,27 @@ def test_sorted_key_order_is_key_orders_with_its_keys(width, spread):
     want = run_offsets(values, expected)
     assert got[1] == want[1]
     np.testing.assert_array_equal(got[0].numpy(), want[0].numpy())
+
+
+@pytest.mark.parametrize("sort", ["bucket_order", "sorted_key_order"])
+def test_the_bucket_sort_holds_two_tables_of_buckets(backend, sort):
+    """The bucket sort's counts become its scatter's fill once read: two arrays as
+    long as the buckets (the counts and the starts) beside the order (and the
+    ordered keys), not three. At 5M points the third was 19 MiB of a hexahedra
+    contour's 64 on the discrete GPUs (#318)."""
+    from tack.dataset.buckets import sorted_key_order
+    from tack.runtime import memory_stats
+
+    nbuckets, n = 1_000_000, 200_000      # within _sparse: the bucket path everywhere
+    rng = np.random.default_rng(3)
+    keys = _keys(rng.integers(0, nbuckets, n), tack.i32)
+    run = bucket_order if sort == "bucket_order" else sorted_key_order
+    run(_keys(rng.integers(0, 100, 50), tack.i32), 100)     # compiled outside
+    gc.collect()
+    start = memory_stats.reset_peak()
+    result = run(keys, nbuckets)
+    peak = memory_stats.peak() - start
+    # starts, counts and the outputs (n each), the per-chunk maxima, a flag
+    expected = 4 * (2 * nbuckets + 1 + 2 * n + nbuckets // buckets._CHUNK + 1 + 1)
+    assert peak <= expected + 4096, (peak, expected)
+    del result

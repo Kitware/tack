@@ -20,14 +20,23 @@ process's memory every 2 ms through one call on the large one. It reports
   they held before (`tack.runtime.memory_stats`, the count of every array Tack
   makes), which sees any device and none of NumPy's or the allocator's own.
 
+With ``--device`` Tack runs on that device (``cpu`` by default, with
+``--threads``), and ``counted`` is its memory there; ``peak`` and ``kept`` stay
+the host's. VTK runs on the CPU whatever the device; ``--systems tack`` leaves
+it out.
+
 The memory measured is what the allocator has handed out and not taken back
 (``malloc_zone_statistics`` on macOS, ``mallinfo2`` on Linux): every live
 NumPy, Tack (CPU) and VTK allocation, and none of what it caches after a
-free. GPU memory is not counted.
+free. GPU memory is not counted. On macOS the measurements run with the
+allocator's large-block cache off (``MallocLargeCache=0``): with it, a request
+could be given a larger block freed earlier and was counted at the block's
+size (a 10 MiB array as 19, hexahedra clip's 194 MiB of arrays as 358).
 
 Usage:
   python benchmarks/vtk_compare/memory.py [--sizes 1M,20M] [--meshes hex,tet]
-         [--filters contour,...] [--threads 8] [--output memory.json]
+         [--filters contour,...] [--threads 8] [--device cpu]
+         [--systems vtk,tack] [--output memory.json]
 """
 
 import argparse
@@ -64,16 +73,22 @@ def _in_use_reader():
             return int(stats.size_in_use)
         return read
     libc = ctypes.CDLL("libc.so.6")
+    names = ("arena", "ordblks", "smblks", "hblks", "hblkhd", "usmblks", "fsmblks",
+             "uordblks", "fordblks", "keepcost")
+    try:
+        mallinfo, field = libc.mallinfo2, ctypes.c_size_t      # glibc 2.33 and later
+    except AttributeError:
+        # glibc before 2.33 (RHEL 8's 2.28) has only mallinfo, whose fields are
+        # ints: read unsigned, they wrap at 4 GiB rather than 2.
+        mallinfo, field = libc.mallinfo, ctypes.c_uint
 
-    class Info(ctypes.Structure):                    # struct mallinfo2
-        _fields_ = [(n, ctypes.c_size_t) for n in (
-            "arena", "ordblks", "smblks", "hblks", "hblkhd", "usmblks", "fsmblks",
-            "uordblks", "fordblks", "keepcost")]
+    class Info(ctypes.Structure):                    # struct mallinfo2, or mallinfo
+        _fields_ = [(n, field) for n in names]
 
-    libc.mallinfo2.restype = Info
+    mallinfo.restype = Info
 
     def read():
-        info = libc.mallinfo2()
+        info = mallinfo()
         return int(info.uordblks + info.hblkhd)      # in the heap, and mapped alone
     return read
 
@@ -135,7 +150,7 @@ def _tack_bytes(data):
     return total
 
 
-def measure_one(mesh_name, size, filter_name, system, threads):
+def measure_one(mesh_name, size, filter_name, system, threads, device="cpu"):
     """One measurement, in this process."""
     sys.path.insert(0, HERE)
     import meshes as m
@@ -164,7 +179,10 @@ def measure_one(mesh_name, size, filter_name, system, threads):
             f.Update()
             return f, f.output
     else:
-        tack.set_default_device("cpu", num_threads=threads)
+        if device == "cpu":
+            tack.set_default_device("cpu", num_threads=threads)
+        else:
+            tack.set_default_device(device)
 
         def prepare(mesh):
             data = m.TackMesh(mesh, "shape").dataset(fields, fresh=True)
@@ -199,7 +217,7 @@ def measure_one(mesh_name, size, filter_name, system, threads):
     kept = read() - before
     del result
     return {"mesh": mesh_name, "size": size, "cells": mesh.num_cells, "filter": filter_name,
-            "system": system, "threads": threads, "input": input_bytes,
+            "system": system, "threads": threads, "device": device, "input": input_bytes,
             "peak": sampler.peak - before, "kept": kept, "seconds": seconds,
             "counted": counted}
 
@@ -207,7 +225,8 @@ def measure_one(mesh_name, size, filter_name, system, threads):
 def _child(args):
     """Run one measurement in a new process; its record, or the failure."""
     command = [sys.executable, os.path.abspath(__file__), "--one", *args]
-    done = subprocess.run(command, capture_output=True, text=True)
+    env = dict(os.environ, MallocLargeCache="0") if sys.platform == "darwin" else None
+    done = subprocess.run(command, capture_output=True, text=True, env=env)
     lines = [line for line in done.stdout.splitlines() if line.startswith("{")]
     if done.returncode or not lines:
         tail = (done.stderr or done.stdout).strip().splitlines()[-3:]
@@ -221,17 +240,20 @@ def _gb(n):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--one", nargs=5, metavar=("MESH", "SIZE", "FILTER", "SYSTEM", "THREADS"),
+    parser.add_argument("--one", nargs=6,
+                        metavar=("MESH", "SIZE", "FILTER", "SYSTEM", "THREADS", "DEVICE"),
                         help=argparse.SUPPRESS)
     parser.add_argument("--sizes", default="1M,20M")
     parser.add_argument("--meshes", default="hex,tet")
     parser.add_argument("--filters", default="")
     parser.add_argument("--threads", type=int, default=8)
+    parser.add_argument("--device", default="cpu", help="Tack's device: cpu, metal, cuda, ...")
+    parser.add_argument("--systems", default="vtk,tack")
     parser.add_argument("--output", default="")
     args = parser.parse_args()
     if args.one:
-        mesh, size, name, system, threads = args.one
-        print(json.dumps(measure_one(mesh, size, name, system, int(threads))), flush=True)
+        mesh, size, name, system, threads, device = args.one
+        print(json.dumps(measure_one(mesh, size, name, system, int(threads), device)), flush=True)
         return
     sys.path.insert(0, HERE)
     import pairs as p
@@ -243,9 +265,10 @@ def main():
     for mesh in args.meshes.split(","):
         for size in args.sizes.split(","):
             for name in names:
-                for system in ("vtk", "tack"):
-                    r = _child([mesh, size, name, system, str(args.threads)])
-                    r.update(mesh=mesh, size=size, filter=name, system=system)
+                for system in args.systems.split(","):
+                    r = _child([mesh, size, name, system, str(args.threads), args.device])
+                    r.update(mesh=mesh, size=size, filter=name, system=system,
+                             device=args.device)
                     records.append(r)
                     if "error" in r:
                         print(f"{mesh:>4} {size:>5} {name:<15} {system:<5} {r['error']}",

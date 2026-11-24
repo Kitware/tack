@@ -213,7 +213,10 @@ def substitute_ir(root, replace):
         finally:
             active.remove(identity)
 
-    return visit(root)
+    try:
+        return visit(root)
+    finally:
+        visit = None                    # the closure's self-reference, as clone_ir's
 
 
 def transform_ir(root, rewrite, *, copy_nodes=False):
@@ -245,4 +248,11 @@ def transform_ir(root, rewrite, *, copy_nodes=False):
         finally:
             active.remove(identity)
 
-    return visit(root)
+    try:
+        return visit(root)
+    finally:
+        # ``visit`` refers to itself through its closure: a cycle that held
+        # ``rewrite`` and what it closes over -- in variant resolution the call's
+        # arrays, which outlived the call until the next collection (a contour's
+        # 19 MiB of counts at 5M cells, #318).
+        visit = None

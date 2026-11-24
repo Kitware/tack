@@ -18,6 +18,7 @@ import ctypes
 import itertools
 import linecache
 import math
+import threading
 
 import numpy as np
 
@@ -147,6 +148,30 @@ class _WarpVariant:
         self.table_addresses = [t.ptr for t in tables]
 
 
+def _define_apart(code, namespace):
+    """Run a generated module's ``code`` in ``namespace``, in a thread of its own.
+
+    Warp's ``wp.func`` and ``wp.func_native`` (1.18) keep their own frame in a
+    local beside a closure, a reference cycle, and a frame keeps its callers'
+    frames: run here, that chain reached the call compiling the kernel, and its
+    arguments outlived it until the next cycle collection (#318). A thread's
+    frames chain to nothing of the caller's. The cost is a thread a new kernel
+    (a cycle collection after each, which also frees them, took 24 ms)."""
+    failure = []
+
+    def define():
+        try:
+            exec(code, namespace)
+        except BaseException as error:      # raised again in the caller
+            failure.append(error)
+
+    thread = threading.Thread(target=define, name="tack-warp-define")
+    thread.start()
+    thread.join()
+    if failure:
+        raise failure[0]
+
+
 class WarpBackend(GPUBackend):
     """Tack on Warp: Warp compiles and launches every kernel."""
 
@@ -248,7 +273,7 @@ class WarpBackend(GPUBackend):
             filename = f"<tack-warp-{number}>"
             linecache.cache[filename] = (len(source), None, source.splitlines(True), filename)
             namespace = {"__name__": f"tack_warp_{number}"}
-            exec(compile(source, filename, "exec"), namespace)
+            _define_apart(compile(source, filename, "exec"), namespace)
             kernel = self._kernels[source] = namespace[entry]
         # Constant tables, made once on the device and passed at every launch.
         return _WarpVariant(kernel, source, [

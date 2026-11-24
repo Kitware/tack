@@ -1,8 +1,8 @@
 # Cut filters' memory
 
-**Status: accepted.** Issue [#318](https://github.com/Kitware/tack/issues/318),
+**Status: done.** Issue [#318](https://github.com/Kitware/tack/issues/318),
 2026-11-10. Accepted in [#416](https://github.com/Kitware/tack/pull/416),
-merged 2026-11-15.
+merged 2026-11-15; measured on every device 2026-11-23 (step 6).
 
 ## Summary
 
@@ -227,6 +227,105 @@ Clip's peak on the tetrahedra from 328 MiB to about its output plus the
 crossings' merge, near VTK's 116; on the hexahedra from 739 MiB toward VTK's
 290. Contour on tetrahedra from 42 MiB to about VTK's 28. Every output the
 same bits as before.
+
+## Measured after D1-D4
+
+`main` at `ce3353bf` (D1 #462, D2 #463 and #464, D3 #465, D4 #466), the same
+5M-cell meshes and benchmark, which takes `--device` for this, VTK master,
+MiB.
+
+The first table again, the host allocator's peak beyond what it held before
+(the M1 Max CPU, eight threads), VTK / Tack, Tack with the two fixes below,
+and macOS's large-block cache off (below; the first table had it on, so its
+numbers run high for both, VTK's as much as Tack's):
+
+| | contour | slice | threshold | clip |
+|---|---|---|---|---|
+| 5M tetrahedra, VTK / Tack | 26 / 23 | 37 / 26 | 180 / 137 | 76 / 77 |
+| 5M hexahedra, VTK / Tack | 62 / 23 | 131 / 41 | 327 / 249 | 183 / 195 |
+
+The allocator and D1 now agree for Tack to a few MiB (the allocator a little
+lower where its 2 ms samples miss a short peak): on the CPU D1 is the whole of
+Tack's memory.
+
+By D1's count, Tack's arrays on each device at the call's peak beyond what
+they held before (temporaries and output), at `ce3353bf`:
+
+| device | tet contour | tet slice | tet threshold | tet clip | hex contour | hex slice | hex threshold | hex clip |
+|---|---|---|---|---|---|---|---|---|
+| CPU (M1 Max) | 34 | 37 | 147 | 80 | 37 | 50 | 249 | 200 |
+| Metal (M1 Max) | 23 | 26 | 147 | 86 | 30 | 42 | 249 | 228 |
+| CUDA (RTX 4060 Ti) | 23 | 26 | 147 | 80 | 64 | 81 | 249 | 194 |
+| HIP (MI210) | 23 | 26 | 147 | 80 | 64 | 81 | 249 | 194 |
+| Level Zero (Max 1100) | 23 | 26 | 147 | 80 | 64 | 81 | 249 | 194 |
+| Warp (RTX 4060 Ti) | 23 | 26 | 147 | 80 | 23 | 41 | 249 | 198 |
+| CPU, with the two fixes | 23 | 26 | 147 | 80 | 23 | 41 | 249 | 194 |
+| Metal, with the two fixes | 23 | 26 | 147 | 86 | 24 | 42 | 249 | 216 |
+| CUDA, with the two fixes | 23 | 26 | 147 | 80 | 44 | 62 | 249 | 194 |
+| HIP, with the two fixes | 23 | 26 | 147 | 80 | 44 | 62 | 249 | 194 |
+| Level Zero, with the two fixes | 23 | 26 | 147 | 80 | 44 | 62 | 249 | 194 |
+| Warp, with the fixes | 23 | 26 | 147 | 80 | 23 | 41 | 249 | 194 |
+
+By D1, clip on the hexahedra went from 574 to 194 MiB; by the allocator clip
+is now level with VTK's (77 and 76 on the tetrahedra, 195 and 183 on the
+hexahedra), and contour, slice and threshold under it.
+
+The devices differed in two ways, both traced on mustafar-linux by allocation
+site with the CUDA pool's high-water mark beside D1 (the pool, D1 and the
+traced arrays agree to 0.1 MiB on CUDA and Warp, so D1 misses nothing there):
+
+- **Arrays kept by a reference cycle.** The IR traversals' recursive closures
+  (`transform_ir`, `substitute_ir`) referred to themselves, and the cycle held
+  the rewrite, which in variant resolution closes over the call's arrays: a
+  call that compiled a new variant kept its arrays until Python's next cycle
+  collection. The 5M calls compile variants the 10k-cell warm-up did not, more
+  on the CPU and Metal, so contour's 19 MiB of per-cell counts outlived its
+  `del` there. Now broken as `clone_ir`'s was; the CPU's row fell to the GPUs'
+  (hex contour 37 to 23, slice 50 to 41, clip 200 to 194, the tetrahedra's
+  contour and slice 34 and 37 to 23 and 26). Metal's 30, 42 and 228 are
+  probably the same; not measured again.
+- **The bucket sort on the discrete GPUs.** `key_order` bucket sorts keys at up
+  to 64 buckets a key on CUDA, HIP and Level Zero (`_SPARSE_DISCRETE`, faster
+  there by 1.3-1.7x), 8 elsewhere, Warp included. The point merge of hexahedra
+  contour and slice has 12.8 and 19.3 buckets (points) a key, so only those
+  three bucket sort, with three tables as long as the points, 19 MiB each:
+  forced to 64, Warp counts CUDA's 63.8 and 81.3. The counts are now the
+  scatter's fill once read, two tables: with the bucket path forced on the CPU,
+  hex contour 82.9 to 63.5 and slice 100.4 to 81.0; CUDA, HIP and Level Zero
+  count 44 and 62 (from 64 and 81). The remaining 21 MiB over Warp is the speed the
+  threshold buys.
+
+Run with the fixes on Warp, the cycle test failed: Warp's `wp.func` and
+`wp.func_native` (1.18) keep their own frame beside a closure, a cycle whose
+callers' frames reached the compiling call's arrays. The Warp backend now
+defines its generated modules in a thread of its own. With that, the cycle
+test passes on CUDA Warp, and Warp's hexahedra clip is CUDA's 194 (from 198:
+the 5M call compiles the radix kernels the warm-up did not, and the cycle kept
+4.2 MiB of `argsort` and `gather` temporaries).
+
+Metal with the fixes is the CPU's but for clip, 86 against 80 on the
+tetrahedra and 216 against 194 on the hexahedra. Traced as above (CPU against
+Metal, what is live at each allocation): the same arrays are live up to the
+point map (`number`), but clip drops it right after the two launches that use
+it, and on Metal a queued launch holds its arrays until its command buffer
+completes, so `number`'s 19.4 MiB is still alive when `carry` allocates the
+output's 39 MiB (157.6 + 19.4 + 39.2 = 216.2). On CUDA and HIP a dropped
+array's memory goes back to the pool in stream order and is reused at once.
+The tetrahedra's 6 MiB is the same, on smaller arrays. It is Metal's queueing,
+not clip's: the Metal backend now gives a dropped array's buffer back to the
+pool in queue order, as CUDA's pool does (#483, PR #484; on `main` without
+this plan's fixes, tetrahedra clip 86 to 80 and hexahedra 228 to 205).
+
+On the hexahedra clip the allocator saw about 160 MiB more than D1 counted, at
+one thread or eight. It was the allocator's statistic: macOS's large-block
+cache serves a request from a larger block freed earlier (the mesh's build
+frees many), and `malloc_zone_statistics` counts the whole block, so each of
+clip's arrays counted up to twice its size (a 77.4 MiB connectivity as
+152.6), while the process's physical footprint rose 22 MiB. A process
+without the cache (`MallocLargeCache=0`) counts each request at its size;
+`memory.py` now runs its measurements so on macOS. The first call on the 5M hexahedra compiles variants the
+10k-cell warm-up did not (contour and slice the radix sort's, whose warm-up
+merge has 2-3 buckets a key and bucket sorts), so its time includes compiling.
 
 ## Validation
 

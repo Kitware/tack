@@ -290,10 +290,15 @@ def test_ghost_cells_refuse_what_they_cannot_do():
     assert sorted(out[0].fields) == ["RTData", "c"]
     with pytest.raises(ValueError, match="ghost_cells or ghost_points made"):
         td.update_ghosts(plain, "RTData")
-    with pytest.raises(TypeError, match="point and cell fields"):
-        for piece in out:
-            piece.fields["dg"] = td.project(piece, "RTData", td.L2(piece, order=1))
-        td.update_ghosts(out, "dg")
+    for piece in out:
+        # A field of higher order made after ghost_cells refreshes too
+        # (test_ghost_cells_high_order); values on faces do not.
+        piece.fields["dg"] = td.project(piece, "RTData", td.L2(piece, order=1))
+        faces = td.Values(piece, "faces")
+        piece.fields["f"] = td.Field(faces, tack.zeros((faces.size,), tack.f32))
+    td.update_ghosts(out, "dg")
+    with pytest.raises(TypeError, match="point, cell, H1 and L2 fields"):
+        td.update_ghosts(out, "f")
 
 
 @pytest.mark.parametrize("extent, pieces, layers", [

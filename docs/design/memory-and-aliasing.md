@@ -175,8 +175,9 @@ explicitly in `__del__`:
   list — alive for as long as any of its buffers exist.
 
 Each of these frees after the launches queued before it, which may still
-use the memory; on Metal, a queued launch holds references to its arrays
-until it completes.
+use the memory; on Metal, a queued launch holds references to its arrays'
+`MTLBuffer`s until it completes, and a pooled one goes back to the pool when
+its array dies, for a later array in queue order (#483).
 
 All three wrap the free in `try/except` and ignore failures, because
 `__del__` can run at interpreter shutdown after the driver bindings are

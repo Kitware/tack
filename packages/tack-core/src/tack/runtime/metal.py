@@ -21,7 +21,11 @@ command buffer, committed every ``_BATCH`` launches, with at most
 texture uploads -- or when ``tack.sync()`` asks. Waiting after every launch
 cost about 0.3 ms each, most of a small filter's time. Each queued launch
 therefore owns what it reads: its own argument buffer and its own copy of
-its packed scalars, and references to its arrays until it completes.
+its packed scalars, and references to its arrays' MTLBuffers until it
+completes. An array of the backend's pool may be dropped meanwhile: its
+MTLBuffer goes back to the pool at once and a later array may take it, as a
+stream-ordered pool hands memory out again on CUDA and HIP
+(`_reusable_while_queued`).
 """
 
 import atexit
@@ -124,9 +128,11 @@ class _BufferPool:
     first touch, about 13 GB/s on an M1 Max -- 50 ms for a filter's 640 MB
     temporary, three times its kernels -- where a reused one is written at the
     kernel's speed. Only buffers of ``MIN`` bytes or more, up to ``limit``
-    bytes held; a buffer goes back only once nothing uses it (a queued launch
-    keeps its arrays until it completes), and never memory handed outside
-    Tack."""
+    bytes held, and never memory handed outside Tack. A buffer goes back when
+    its array dies, though a queued launch may still use it: the next array
+    given it is used by later launches, which the queue runs after (one compute
+    pass each, hazards tracked), and by the host only after waiting
+    (`_reusable_while_queued`)."""
 
     MIN = 1 << 20
 
@@ -202,6 +208,27 @@ def _wrap_host(device, host, nbytes):
         if buffer is not None:
             return buffer, host, 0
     return None
+
+
+def _reusable_while_queued(buffer, backend):
+    """Whether a launch queued on ``backend`` may keep only ``buffer``'s MTLBuffer,
+    rather than ``buffer`` itself, so that the array can be dropped and its
+    MTLBuffer go back to the pool before the launch completes (#483).
+
+    Safe as a stream-ordered pool is: a later array given the MTLBuffer is used
+    by launches encoded after this one on the same queue, which Metal runs
+    after it (a compute pass each, hazards tracked), and by the host only
+    through `MetalBuffer` methods, which wait for every queued launch first.
+    So only a buffer of ``backend``'s own pool (another backend's queue is not
+    ordered with this one), not handed outside Tack (``_shared``: read with no
+    Tack call between, and its launches complete before returning anyway).
+    Wrapped memory and buffers under the pool's ``MIN`` have no pool, and keep
+    their owner as before: a wrapped MTLBuffer's memory lives only as long as
+    its owner. A launch's packed scalars (`_Uniforms`, bound where an array is)
+    are no `MetalBuffer`, and are kept as they are."""
+    root = getattr(buffer, "_root", buffer)       # a view's allocation is its root's
+    return (isinstance(root, MetalBuffer) and root._pool is backend._pool
+            and not root._shared)
 
 
 class MetalBuffer(DeviceBuffer):
@@ -442,7 +469,9 @@ class CompiledMetalKernel:
     def _encode(self, kernel_args, loop_end, extents):
         """Encode one launch into the backend's open command buffer. It runs after
         the launches before it (a compute pass per launch, buffers hazard-tracked)
-        and owns what it reads, since the host may move on before it runs."""
+        and owns what it reads, since the host may move on before it runs: its
+        arrays' MTLBuffers, and for memory outside the pool their buffers
+        (`_reusable_while_queued`)."""
         # Everything that can fail on an argument (an array from another backend
         # has no metal_buffer) fails here, before an encoder is open: a command
         # buffer committed with an encoder still open aborts the process.
@@ -504,7 +533,7 @@ class CompiledMetalKernel:
                     self._argument_encoder.setBuffer_offset_atIndex_(value, owner._offset, i)
                     encoder.useResource_usage_(
                         value, Metal.MTLResourceUsageRead | Metal.MTLResourceUsageWrite)
-                    keep.append(owner)
+                    keep.append(value if _reusable_while_queued(owner, backend) else owner)
                 else:
                     # Scalar: copied into the command buffer with the launch
                     encoder.setBytes_length_atIndex_(value, len(value), buf_idx)
@@ -652,9 +681,10 @@ class MetalBackend(GPUBackend):
         self._cache = new_kernel_cache()  # Kernel -> {variant_key: CompiledMetalKernel}
         self._reduce_pipelines: dict[str, object] = {}
         # Queued launches: the open command buffer and what its launches read
-        # (kept alive until it completes), and the committed ones not yet
-        # waited for, oldest first. One lock: launches from several threads
-        # encode one at a time, as they launched one at a time before.
+        # (kept alive until it completes; MTLBuffers, `_reusable_while_queued`),
+        # and the committed ones not yet waited for, oldest first. One lock:
+        # launches from several threads encode one at a time, as they launched
+        # one at a time before.
         self._batch_lock = threading.RLock()
         self._open = None              # [command buffer, keep list, launches]
         self._committed = deque()      # (command buffer, keep list)

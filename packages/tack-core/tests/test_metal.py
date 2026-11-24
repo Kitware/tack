@@ -522,3 +522,90 @@ def test_the_pool_keeps_the_latest_buffers():
     assert pool.held == 0
     assert _BufferPool.capacity(1 << 20) == 1 << 20
     assert _BufferPool.capacity((1 << 20) + 1) == (1 << 20) + (1 << 18)
+
+
+@tack.kernel
+def _churn(src, dst, rounds: tack.i32):
+    for i in range(src.shape[0]):
+        v = src[i]
+        for _ in range(rounds):
+            v = (v * 3 + 1) % 1000003
+        dst[i] = v
+
+
+@tack.kernel
+def _overwrite(a):
+    for i in range(a.shape[0]):
+        a[i] = -1
+
+
+def test_a_dropped_array_goes_back_to_the_pool_before_its_launches_complete():
+    """An array dropped while launches that use it are queued gives its MTLBuffer
+    back to the pool at once, as CUDA's and HIP's stream-ordered pools give memory
+    back (#483): the count drops with it, and the next array of its size takes
+    the buffer. The queue keeps them apart: that array's launches run after the
+    first array's, and its host access waits for them."""
+    import gc
+
+    from tack.runtime import memory_stats
+
+    n, rounds = 1 << 20, 200
+    src = tack.array(np.arange(n, dtype=np.int32))
+    v = np.arange(n, dtype=np.int64)
+    for _ in range(rounds):
+        v = (v * 3 + 1) % 1000003
+    expected = v.astype(np.int32)
+    # Compiled outside: a compiling call's arrays outlive it until the next
+    # collection (the IR traversals' cycle, #318), and this test disables it.
+    warm = tack.empty((n,), tack.i32)
+    _churn(src, warm, 1)
+    _overwrite(warm)
+    tack.sync()
+    del warm
+    for host_write in (False, True):
+        out = tack.empty((n,), tack.i32)
+        tack.sync()
+        gc.collect()
+        gc.disable()
+        try:
+            temp = tack.empty((n,), tack.i32)
+            held = temp._buffer.metal_buffer
+            live = memory_stats.live()
+            _churn(src, temp, rounds)              # slow: still queued below
+            _churn(temp, out, 0)                   # reads temp after it
+            del temp
+            assert memory_stats.live() == live - 4 * n
+            if host_write:
+                again = tack.array(np.full(n, 5, np.int32))   # waits first
+            else:
+                again = tack.empty((n,), tack.i32)
+                _overwrite(again)                  # queued after both
+            assert again._buffer.metal_buffer is held
+        finally:
+            gc.enable()
+        np.testing.assert_array_equal(out.numpy(), expected)
+        np.testing.assert_array_equal(again.numpy(), np.full(n, 5 if host_write else -1))
+        del again
+
+
+def test_which_buffers_a_queued_launch_lets_go():
+    """A queued launch keeps only the MTLBuffer of an array from its own backend's
+    pool, not handed outside Tack; anything else it keeps whole: another
+    backend's (its queue is not ordered with this one), shared memory, and
+    buffers too small for the pool."""
+    from tack.runtime import dispatch, metal
+
+    backend = dispatch.get_backend()
+    other = metal.MetalBackend()
+    pooled = tack.empty((1 << 20,), tack.i32)
+    small = tack.empty((16,), tack.i32)
+    shared = tack.empty((1 << 20,), tack.i32)
+    shared._buffer.share()
+    view = pooled[10:100]
+    assert metal._reusable_while_queued(pooled._buffer, backend)
+    assert metal._reusable_while_queued(view._buffer, backend)
+    assert not metal._reusable_while_queued(pooled._buffer, other)
+    assert not metal._reusable_while_queued(small._buffer, backend)
+    assert not metal._reusable_while_queued(shared._buffer, backend)
+    scalars = metal._Uniforms(backend._device, tack.i32, [(None, 0, 0)], [3])
+    assert not metal._reusable_while_queued(scalars, backend)

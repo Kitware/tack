@@ -10,3 +10,8 @@
   `sorted_key_order`) reuses its counts as the scatter's fill, one array as
   long as the buckets fewer: 19 MiB less for a hexahedra contour or slice at
   5M points on CUDA, HIP and Level Zero (#318).
+- On Warp a call that compiled a new kernel kept its arrays until Python's next
+  cycle collection: Warp's `wp.func` and `wp.func_native` keep their own frame
+  in a cycle, whose callers' frames reached the call. The Warp backend defines
+  a generated module in a thread of its own, whose frames reach nothing of the
+  caller's (#318).

@@ -9,7 +9,13 @@ import numpy as np
 import pytest
 
 import tack
+from tack.codegen.cuda_gen import generate_cuda_source
+from tack.codegen.hip_gen import generate_hip_source
+from tack.codegen.msl_gen import generate_msl_source
+from tack.codegen.opencl_gen import generate_opencl_source
 from tack.lang.constant import FloatConstant, IntConstant
+from tack.lang.inspect_kernel import _prepare_ir
+from tack.lang.ir_type_annotate import annotate_types
 
 pytestmark = pytest.mark.quick      # the inner-loop set; see CLAUDE.md, Tests
 
@@ -73,6 +79,40 @@ def shadowed(out, n):
     for i in range(n):
         DT = 2.0
         out[i] = DT
+
+
+LOWEST = tack.constant(-3.0e38)
+BELOW = tack.constant(-7)
+
+
+@tack.kernel
+def negated(out, counts):
+    for i in range(out.shape[0]):
+        out[i] = -LOWEST if i == 0 else out[i] - LOWEST
+        counts[i] = -BELOW + i
+
+
+def test_a_negative_constant_negated(backend):
+    """-C of a negative constant C is its opposite (the C generators wrote
+    ``--3e+38f``, a decrement of a literal, which no compiler takes)."""
+    out = tack.zeros((3,))
+    counts = tack.empty((3,), tack.i32)
+    negated(out, counts)
+    np.testing.assert_array_equal(out.numpy(), np.float32([3.0e38, 3.0e38, 3.0e38]))
+    np.testing.assert_array_equal(counts.numpy(), [7, 8, 9])
+
+
+@pytest.mark.parametrize("generate", [generate_cuda_source, generate_hip_source,
+                                      generate_opencl_source, generate_msl_source],
+                         ids=["cuda", "hip", "opencl", "metal"])
+@pytest.mark.usefixtures("no_debug")
+def test_no_generator_writes_a_decrement(generate):
+    tack.set_default_device("cpu")
+    func, _ = _prepare_ir(negated, (tack.zeros((3,)), tack.empty((3,), tack.i32)))
+    annotate_types(func)
+    source = generate(func)
+    assert "--" not in source
+    assert "(-(-3e+38f))" in source
 
 
 def test_constants_read_as_their_values(backend):

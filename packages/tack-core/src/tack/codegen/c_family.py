@@ -203,7 +203,8 @@ class CFamilyCodeGen:
         if fixed is not None:
             return fixed
         if node.op == "-":
-            return f"(-{operand})"
+            # A negative constant is spelled with its sign, and "--" is a decrement.
+            return f"(-({operand}))" if operand.startswith("-") else f"(-{operand})"
         if node.op == "not":
             return f"(!{operand})"
         if node.op == "~":

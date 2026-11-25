@@ -738,8 +738,9 @@ combine pieces.
   (`DUPLICATEPOINT`); a shared point belongs to the lowest piece holding it,
   and is `DUPLICATEPOINT` in the others. That is VTK's rule too: the cells,
   points, marks and values equal `vtkGhostCellsGenerator`'s, and `split`'s
-  ghost layer's. Point and cell fields come along (`fields` chooses), and
-  point and cell sets keep their members. Boundary points are matched by a
+  ghost layer's. Point and cell fields come along (`fields` chooses), fields
+  of higher order (`H1` above order 1, `L2`) and a curved geometry with each
+  ghost cell's nodes, and point and cell sets keep their members. Boundary points are matched by a
   sort of their positions over every piece
   (`tack.communication.sort_by_key`), and each piece sends each neighbour
   its cells around their shared points. `layers=n` grows each further layer
@@ -750,7 +751,9 @@ combine pieces.
   `split`'s and VTK's image pieces are) become their blocks grown by `n`
   cells, with their offsets, their values from the pieces that own them, and
   their coordinates grown with them (uniform, rectilinear, or explicit
-  positions); the result is `split`'s ghost layers exactly.
+  positions); the result is `split`'s ghost layers exactly. Fields of higher
+  order and a curved geometry are remade on the grown blocks, the ghosts'
+  values from their owners.
 - **Global ids.** `data.global_ids` is a `tack.dataset.GlobalIds` (or
   `None`), kept apart from the fields as the marks are: an `i64` per point
   (`points`) and per cell (`cells`), either of which may be `None`, the same
@@ -798,7 +801,10 @@ combine pieces.
 - **`update_ghosts(pds, *fields)`** copies the named point and cell fields'
   values on ghost points and cells from their owners, in place, for pieces
   `ghost_cells` or `ghost_points` made (they keep the exchanges as
-  `tack.communication.Plan`s). A filter that needs each entity's neighbours
+  `tack.communication.Plan`s); on pieces `ghost_cells` made, fields of higher
+  order too: each value a piece holds but does not own from the lowest piece
+  with a cell of its own that has it, so a node on an edge or face pieces
+  share is owned with that edge's or face's points. A filter that needs each entity's neighbours
   (`project` to points, point gradients) is right on what a piece owns and
   wrong on the ghost layer's rim; refreshing the ghosts in between makes a
   second such filter right too.

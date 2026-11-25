@@ -14,6 +14,12 @@ piece's ghosts take their values from those owners through two
 ``tack.communication.Plan``s -- the same ones ``update_ghosts`` runs later.
 Uniform coordinates move their origin; rectilinear ones take the axes every
 piece gives; explicit positions travel as a point field.
+
+Fields of higher order (``H1`` above order 1, ``L2``) and a curved geometry are
+remade on the grown block, each piece's own cells' nodes placed there, and their
+ghosts filled from their owners through ``_node_plans``: a value's owner is the
+lowest piece with a cell of its own that has it, so a node on a face two blocks
+share is the lower block's, as the face's points are.
 """
 
 import math
@@ -25,21 +31,25 @@ from tack import arrays
 from tack.arrays import CartesianProduct, UniformCoordinates
 from tack.communication._kernels import scatter
 from tack.dataset import _matching
+from tack.dataset._matching import INDEX_BITS
+from tack.dataset.algorithms._cell_nodes import add_nodes, field_kind, nodes_placed, space_spec
+from tack.dataset.algorithms._node_plans import GEOMETRY, refresh
 from tack.dataset.algorithms.split import _block_geometry
 from tack.dataset.dataset import DataSet, Field, field_label
 from tack.dataset.ghosts import Ghosts
 from tack.dataset.global_ids import GlobalIds
 from tack.dataset.sets import Set
-from tack.dataset.spaces import H1, Constant, Values
+from tack.dataset.spaces import H1, L2, Constant, Values
 from tack.dataset.topology import StructuredTopology
 
 __all__ = ["structured_ghost_cells"]
 
 
-def structured_ghost_cells(blocks, pieces, layers, names, kind_of):
+def structured_ghost_cells(blocks, pieces, layers, names):
     """The pieces grown by ``layers`` cells, and the plans of their ghosts:
-    ``(pieces, {"points": Plan, "cells": Plan})``. ``kind_of(field)`` says
-    whether a field is on ``"points"`` or ``"cells"``."""
+    ``(pieces, {"points": Plan, "cells": Plan, ...})``, with what ``_node_plans``
+    makes the plans of fields of higher order from."""
+    kind_of = field_kind
     dims = {len(p.topology.point_dims) for p in pieces}
     every = blocks.all_gather({g: (tuple(p.topology.offset),
                                    tuple(d - 1 for d in p.topology.point_dims))
@@ -83,7 +93,7 @@ def structured_ghost_cells(blocks, pieces, layers, names, kind_of):
         return owner
 
     receive = {"points": {}, "cells": {}}
-    layout = {}
+    layout, identities = {}, {}
     for g in blocks.local:
         point_extent = grown_upper[g] - grown_lower[g] + 1
         cell_extent = grown_upper[g] - grown_lower[g]
@@ -92,14 +102,20 @@ def structured_ghost_cells(blocks, pieces, layers, names, kind_of):
         p_owner, c_owner = point_owner(points), cell_owner(cells)
         own_points = np.flatnonzero(np.all((points >= lower[g]) & (points <= upper[g]), axis=1))
         own_cells = np.flatnonzero(c_owner == g)
-        layout[g] = (point_extent, cell_extent, p_owner, c_owner, own_points, own_cells)
+        identity = {}
         for kind, entities, owner in (("points", points, p_owner), ("cells", cells, c_owner)):
             receive[kind][g] = {}
-            for d in np.unique(owner[owner != g]).tolist():
+            identity[kind] = np.zeros(len(entities), np.int64)
+            for d in np.unique(owner).tolist():
                 rows = np.flatnonzero(owner == d)
                 extent = (grown_upper[d] - grown_lower[d] + (1 if kind == "points" else 0))
                 theirs = flat(entities[rows] - grown_lower[d], extent)
-                receive[kind][g][int(d)] = (theirs, rows)
+                # (owner, index there), as ghost_cells' unstructured pieces number them.
+                identity[kind][rows] = (np.int64(d) << INDEX_BITS) | theirs
+                if d != g:
+                    receive[kind][g][int(d)] = (theirs, rows)
+        layout[g] = (point_extent, cell_extent, p_owner, c_owner, own_points, own_cells)
+        identities[g] = (identity["points"], identity["cells"], c_owner == g)
     plans = {kind: _matching.plan(blocks, receive[kind]) for kind in ("points", "cells")}
 
     rectilinear = _axes(blocks, pieces, lower)
@@ -123,12 +139,17 @@ def structured_ghost_cells(blocks, pieces, layers, names, kind_of):
 
             for name in names:
                 field = piece.fields[name]
-                if kind_of(field) == "points":
+                kind = kind_of(field)
+                if kind == "points":
                     spread.setdefault("points", {})[field_label(name)] = placed(field.values, np_,
                                                                               point_index)
-                else:
+                elif kind == "cells":
                     spread.setdefault("cells", {})[field_label(name)] = placed(field.values, nc,
                                                                              cell_index)
+                elif kind == "blocks" and field.space.varies:
+                    # An order per cell: the ghosts' from their owners.
+                    spread.setdefault("cells", {})["\0order " + field_label(name)] = placed(
+                        field.space.cell_keys(), nc, cell_index)
             marks = piece.ghosts
             spread.setdefault("cells", {})["\0marks"] = placed(
                 tack.zeros((piece.num_cells,), tack.u8) if marks is None or marks.cells is None
@@ -143,7 +164,8 @@ def structured_ghost_cells(blocks, pieces, layers, names, kind_of):
             geometry = piece.geometry.values
             implicit = isinstance(geometry, (UniformCoordinates, CartesianProduct))
             if not implicit:
-                spread["points"]["\0positions"] = placed(geometry, np_, point_index)
+                spread["points"]["\0positions"] = placed(
+                    _point_values(geometry, piece.num_points), np_, point_index)
         grown[g] = (piece, topology, spread, implicit, p_owner, c_owner, own_points, own_cells)
 
     for kind in ("points", "cells"):
@@ -165,10 +187,17 @@ def structured_ghost_cells(blocks, pieces, layers, names, kind_of):
             data = DataSet(topology, geometry, dtype=piece.dtype,
                            ghosts=Ghosts(cells=cell_marks, points=point_marks),
                            **piece._frame())
+            point_index = tack.array(own_points, tack.i64)
+            if kind_of(piece.geometry) == "nodes":
+                data.geometry = _grown_nodes(data, piece.geometry, GEOMETRY, own_cells,
+                                             point_index, spread)
             for name in names:
                 field = piece.fields[name]
                 space = field.space
-                if kind_of(field) == "points":
+                if kind_of(field) in ("nodes", "blocks"):
+                    data.fields[name] = _grown_nodes(data, field, field_label(name), own_cells,
+                                                     point_index, spread)
+                elif kind_of(field) == "points":
                     data.fields[name] = Field(H1(data) if isinstance(space, H1)
                                               else Values(data, "points"),
                                               spread["points"][field_label(name)], field.unit)
@@ -187,7 +216,42 @@ def structured_ghost_cells(blocks, pieces, layers, names, kind_of):
                     data.sets[name] = Set(data, "cells", own_cells[members.ids.numpy()])
         data._ghosts_lost = piece._ghosts_lost
         out.append(data)
+    plans.update(identities=identities, layers=layers, nodes={})
+    # The ghosts of the fields of higher order (and a curved geometry) from their owners.
+    higher = [n for n in names if kind_of(pieces[0].fields[n]) in ("nodes", "blocks")] \
+        if pieces else []
+    if pieces and kind_of(pieces[0].geometry) == "nodes":
+        higher.append(GEOMETRY)
+    if blocks.all_reduce({g: len(higher) for g in blocks.local}, "max"):
+        refresh(blocks, out, plans, higher)
     return out, plans
+
+
+def _grown_nodes(data, field, label, own_cells, point_index, spread):
+    """A field of higher order on the grown block ``data``: its space remade there and
+    the piece's own cells' nodes placed (an ``H1`` field's own points' values too);
+    the ghosts' values are left for their owners' (``_node_plans``)."""
+    space = field.space
+    cells = np.arange(space.topology.num_cells, dtype=np.int64)
+    own = {"cell_at": tack.array(own_cells, tack.i64)}
+    add_nodes(own, label, field, cells, own["cell_at"].device)
+    if isinstance(space, H1):
+        made = H1(data, **space_spec(space, None))
+        points = arrays.materialize(_point_values(field.values, space.topology.num_points))
+        out = tack.empty((data.num_points,), points.dtype)
+        scatter(points, point_index, out)
+        return Field(made, nodes_placed(made, field.values, [own], label, out), field.unit)
+    spec = space_spec(space, lambda values: None)
+    if space.varies:
+        spec["order"] = spread["cells"]["\0order " + label]
+    made = L2(data, **spec)
+    return Field(made, nodes_placed(made, field.values, [own], label), field.unit)
+
+
+def _point_values(values, n):
+    from tack.dataset.carry import _point_values as values_at_points
+
+    return values_at_points(values, n)
 
 
 def _overlap(lower, upper):

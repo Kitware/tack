@@ -331,7 +331,7 @@ apart: a piece's own cells in its color, its ghosts faint, reaching into the
 pieces around it. Polyhedra are not drawn here, though `ghost_cells` takes
 polyhedral pieces too ([Filters over pieces](../visualization/over-pieces.md)).
 Curved and high-order cells are not drawn either, though `ghost_cells` carries
-them on unstructured pieces, each ghost cell with its nodes.
+them, each ghost cell with its nodes.
 
 <div class="grid cards" markdown>
 

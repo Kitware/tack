@@ -24,7 +24,8 @@ in one process (pieces on any devices) and across MPI ranks.
 
 The result keeps the two exchanges a refresh needs (each ghost cell from the
 piece that sent it, each ghost point from its owner) as ``Plan``s, which
-``update_ghosts`` runs for named fields.
+``update_ghosts`` runs for named fields, and its points' and cells' identities,
+from which it makes a plan per space of higher order (``_node_plans``).
 
 The matching and assembly run on the host, and the exchanges on the pieces'
 devices: ghost generation is set-up work, done once per decomposition.
@@ -39,6 +40,7 @@ from tack.dataset import _matching
 from tack.dataset._matching import INDEX_BITS, INDEX_MASK
 from tack.dataset.algorithms._cell_nodes import add_nodes, field_kind, nodes_placed, space_spec
 from tack.dataset.algorithms._common import _csr_rows, _tolerance
+from tack.dataset.algorithms._node_plans import refresh
 from tack.dataset.algorithms._structured_ghosts import structured_ghost_cells
 from tack.dataset.carry import _take
 from tack.dataset.dataset import DataSet, Field, field_label, is_field_key
@@ -83,10 +85,11 @@ def ghost_cells(data, layers=1, world=None, fields=None, tolerance=0.0):
     ``HIDDENCELL`` and the other bits are copied with each cell.
 
     Point and cell fields (``H1`` of order 1, ``Constant``, values on points
-    or cells) are carried, and on unstructured pieces fields of higher order and
-    a curved geometry too (``H1`` above order 1, ``L2`` of any order or an order
-    per cell): each ghost cell with its nodes, placed through the grown piece's
-    own numbering, so a node it shares with the piece's cells is one value;
+    or cells) are carried, and fields of higher order and a curved geometry too
+    (``H1`` above order 1, ``L2`` of any order or an order per cell): each ghost
+    cell with its nodes, placed through the grown piece's own numbering, so a
+    node it shares with the piece's cells is one value (on structured pieces
+    the owner's, as their points take);
     ``fields`` chooses them as filters do (``None``: all); point and cell sets keep their members, and global ids come along
     where every piece has them, points then matched by their ids rather than
     their positions. ``update_ghosts`` refreshes
@@ -104,7 +107,8 @@ def ghost_cells(data, layers=1, world=None, fields=None, tolerance=0.0):
     together tiling a box of cells, as ``split``'s and VTK's image pieces do)
     stay structured: each becomes its block grown by ``layers`` cells, as far
     as the box goes, with its values from the pieces that own them, and its
-    implicit coordinates grown with it.
+    implicit coordinates grown with it; fields of higher order and a curved
+    geometry are remade on the grown block.
 
     An ``AMRDataSet``'s boxes each grow by ``layers`` cells within their level's
     domain, the ghosts marked ``DUPLICATECELL`` and ``DUPLICATEPOINT``: a ghost a
@@ -150,13 +154,7 @@ def ghost_cells(data, layers=1, world=None, fields=None, tolerance=0.0):
              for g, p in zip(blocks.local, pieces)}
     every = blocks.all_gather(kinds)
     if blocks.count and all(k == 1 for k in every):
-        if any(field_kind(p.geometry) == "nodes" or any(
-                field_kind(p.fields[n]) in ("nodes", "blocks") for n in names) for p in pieces):
-            raise NotImplementedError(
-                "ghost_cells of structured pieces carries point and cell fields; fields of "
-                "higher order and curved geometries are carried on unstructured pieces "
-                "(extract_cells makes a structured piece unstructured)")
-        out, plans = structured_ghost_cells(blocks, pieces, int(layers), names, _kind)
+        out, plans = structured_ghost_cells(blocks, pieces, int(layers), names)
         result = PartitionedDataSet(out, world=world)
         result._ghost_plans = plans
         return result
@@ -203,16 +201,17 @@ def ghost_cells(data, layers=1, world=None, fields=None, tolerance=0.0):
     sent = _ghost_parts(blocks, pieces, hosts, needed, owners, names, numbered)
     incoming = blocks.exchange(sent)
 
-    out, receive_points, receive_cells = [], {}, {}
+    out, receive_points, receive_cells, identities = [], {}, {}, {}
     for g, piece in zip(blocks.local, pieces):
-        result, points_from, cells_from = _appended(g, piece, hosts[g], owners[g],
-                                                    incoming[g], names, numbered, blocks)
+        result, points_from, cells_from, identities[g] = _appended(
+            g, piece, hosts[g], owners[g], incoming[g], names, numbered, blocks)
         out.append(result)
         receive_points[g], receive_cells[g] = points_from, cells_from
     point_plan = _matching.plan(blocks, receive_points)
     cell_plan = _matching.plan(blocks, receive_cells)
     result = PartitionedDataSet(out, world=world)
-    result._ghost_plans = {"points": point_plan, "cells": cell_plan}
+    result._ghost_plans = {"points": point_plan, "cells": cell_plan,
+                           "identities": identities, "layers": int(layers), "nodes": {}}
     return result
 
 
@@ -224,8 +223,14 @@ def update_ghosts(data, *fields):
     A filter that needs each entity's neighbours -- ``project`` to points, point
     gradients -- is right on what a piece owns and wrong on the ghost layer's
     rim; refreshing the ghosts makes a second such filter right too. Each named
-    field is a point or cell field of explicit values on every piece. One
-    exchange moves all the point fields, one all the cell fields."""
+    field is a field of explicit values on every piece: on points or cells, and
+    on pieces ``ghost_cells`` made fields of higher order too (``H1`` above order
+    1, ``L2``), each value a piece holds but does not own from its owner -- the
+    lowest piece with a cell of its own that has it, so a node on an edge or face
+    pieces share is owned with that edge's or face's points. One exchange moves
+    all the point fields, one all the cell fields, and one the fields of each
+    space of higher order (its plan made on first use and kept, but for an order
+    per cell or a DOF table's numbering, made each time)."""
     from tack.dataset.amr import AMRDataSet
 
     if isinstance(data, AMRDataSet):
@@ -242,30 +247,43 @@ def update_ghosts(data, *fields):
     if not blocks.count:
         return                              # no pieces anywhere: nothing to refresh
     by_kind = {"points": {g: {} for g in blocks.local}, "cells": {g: {} for g in blocks.local}}
-    agree(blocks.world, _gather_updated, fields, blocks, pieces, by_kind)
+    higher = []
+    agree(blocks.world, _gather_updated, fields, blocks, pieces, by_kind, higher,
+          "identities" in plans)
     for kind, values in by_kind.items():
         # Every rank's pieces' say, a rank without pieces too: it takes part in the
         # exchange the others run.
         if blocks.all_reduce({g: int(bool(values[g])) for g in blocks.local}, "max"):
             plans[kind].run(values)
+    if blocks.all_reduce({g: len(higher) for g in blocks.local}, "max"):
+        refresh(blocks, pieces, plans, higher)
 
 
-def _gather_updated(fields, blocks, pieces, by_kind):
-    """Each piece's arrays of ``fields`` into ``by_kind``, by the kind of field,
-    refusing a piece without one, or one ``update_ghosts`` cannot refresh."""
+def _gather_updated(fields, blocks, pieces, by_kind, higher, placed):
+    """Each piece's arrays of ``fields`` into ``by_kind``, by the kind of field, and the
+    names of fields of higher order into ``higher``, refusing a piece without one,
+    or one ``update_ghosts`` cannot refresh (of higher order unless ``placed``:
+    pieces ``ghost_cells`` made)."""
     for name in fields:
         for g, piece in zip(blocks.local, pieces):
             if name not in piece.fields:
                 raise KeyError(f"partition {g - blocks.local.start} has no field {name!r}")
             field = piece.fields[name]
-            kind = _kind(field)
+            kind = field_kind(field)
+            if kind in ("nodes", "blocks") and not placed:
+                raise TypeError(f"update_ghosts refreshes point and cell fields here; "
+                                f"{name!r} is in {field.space!r}, and fields of higher order "
+                                "are refreshed on pieces ghost_cells made")
             if kind is None:
-                raise TypeError(f"update_ghosts refreshes point and cell fields; {name!r} "
-                                f"is in {field.space!r} (a field of higher order comes with "
-                                "its ghost cells from ghost_cells)")
+                raise TypeError(f"update_ghosts refreshes point, cell, H1 and L2 fields; "
+                                f"{name!r} is in {field.space!r}")
             if not isinstance(field.values, tack.Array):
                 raise TypeError(f"update_ghosts writes the values in place; {name!r} holds "
                                 f"a {type(field.values).__name__}, not a Tack array")
+            if kind in ("nodes", "blocks"):
+                if name not in higher:
+                    higher.append(name)
+                continue
             by_kind[kind][g][field_label(name)] = field.values
 
 
@@ -514,8 +532,9 @@ def _ghost_parts(blocks, pieces, hosts, needed, owners, names, numbered):
 # -- what each piece makes of what it received -----------------------------
 
 def _appended(g, piece, host, identity, received, names, numbered, blocks):
-    """The piece with what its neighbours sent appended, and where its ghost points
-    and cells come from: ``{owner: (owner's indices, local indices)}`` for each."""
+    """The piece with what its neighbours sent appended, where its ghost points and
+    cells come from (``{owner: (owner's indices, local indices)}`` for each), and
+    its points' and cells' identities and which cells are its own (``_node_plans``)."""
     n_points, n_cells = host["num_points"], host["num_cells"]
     owner = identity >> INDEX_BITS
     point_marks = host["point_marks"].copy()
@@ -580,6 +599,12 @@ def _appended(g, piece, host, identity, received, names, numbered, blocks):
         mine = ghosts[(every_identity[ghosts] >> INDEX_BITS) == source]
         points_from[int(source)] = (every_identity[mine] & INDEX_MASK, mine)
 
+    # Each cell's identity: its own, then each message's cells' in their source.
+    cell_identity = np.concatenate(
+        [(np.int64(g) << INDEX_BITS) | np.arange(n_cells, dtype=np.int64)]
+        + [(np.int64(source) << INDEX_BITS) | message["cells"].numpy().astype(np.int64)
+           for source, message in sources])
+    owned = np.arange(len(cell_identity)) < n_cells
     with blocks.device(g):
         if host["rings"] is not None and _polyhedral(piece.topology):
             topology = _polyhedra_with(host["rings"], sources, maps, total_points,
@@ -645,7 +670,7 @@ def _appended(g, piece, host, identity, received, names, numbered, blocks):
             ids[kind] = _joined(parts)
         if ids:
             out.global_ids = GlobalIds(cells=ids.get("cells"), points=ids.get("points"))
-    return out, points_from, cells_from
+    return out, points_from, cells_from, (every_identity, cell_identity, owned)
 
 
 def _placed_field(out, field, kind, label, own, nodes, sources, new_from, n_points):

@@ -320,6 +320,7 @@ def _level_moments(boxes, given, d):
     from tack.dataset.algorithms.ghost_cells import _kind
     from tack.dataset.carry import _take
     from tack.dataset.ghosts import Ghosts, owned_ids
+    from tack.dataset.ids import at_least
     from tack.lang.array import Array
 
     fields = [given[id(b)][0] for b in boxes]
@@ -350,7 +351,8 @@ def _level_moments(boxes, given, d):
             w = arrays._joined([wf.values for wf in weight_fields])
         marks = arrays._joined([getattr(b.ghosts, kind) for b in boxes])
         skipped = Ghosts.SKIPPED_CELLS if kind == "cells" else Ghosts.SKIPPED_POINTS
-        ids = owned_ids(marks, skipped, boxes[0].id_dtype)
+        # A box's ids reach its own entries; a level's marks are many boxes' end to end.
+        ids = owned_ids(marks, skipped, at_least(boxes[0].id_dtype, marks.shape[0]))
         if ids is not None:
             values = _take(values, ids)
             w = None if w is None else _take(w, ids)

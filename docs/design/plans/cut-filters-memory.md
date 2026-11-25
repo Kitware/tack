@@ -261,6 +261,7 @@ they held before (temporaries and output), at `ce3353bf`:
 | Warp (RTX 4060 Ti) | 23 | 26 | 147 | 80 | 23 | 41 | 249 | 198 |
 | CPU, with the two fixes | 23 | 26 | 147 | 80 | 23 | 41 | 249 | 194 |
 | Metal, with the two fixes | 23 | 26 | 147 | 86 | 24 | 42 | 249 | 216 |
+| Metal, with the fixes and #484 | 23 | 26 | 147 | 80 | 23 | 41 | 249 | 194 |
 | CUDA, with the two fixes | 23 | 26 | 147 | 80 | 44 | 62 | 249 | 194 |
 | HIP, with the two fixes | 23 | 26 | 147 | 80 | 44 | 62 | 249 | 194 |
 | Level Zero, with the two fixes | 23 | 26 | 147 | 80 | 44 | 62 | 249 | 194 |
@@ -315,6 +316,9 @@ The tetrahedra's 6 MiB is the same, on smaller arrays. It is Metal's queueing,
 not clip's: the Metal backend now gives a dropped array's buffer back to the
 pool in queue order, as CUDA's pool does (#483, PR #484; on `main` without
 this plan's fixes, tetrahedra clip 86 to 80 and hexahedra 228 to 205).
+With both merged (`main` at `19418887`), Metal's row is the CPU's, every
+column: tetrahedra clip 80 and hexahedra clip 194, and hexahedra contour and
+slice 23 and 41 (from 24 and 42).
 
 On the hexahedra clip the allocator saw about 160 MiB more than D1 counted, at
 one thread or eight. It was the allocator's statistic: macOS's large-block

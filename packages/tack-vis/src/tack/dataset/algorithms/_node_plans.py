@@ -40,7 +40,7 @@ __all__ = ["GEOMETRY", "node_plan", "refresh", "spec_key"]
 GEOMETRY = "\0geometry"
 
 _EDGE, _FACE, _INSIDE = 1, 2, 3
-_WIDTH = 8                      # the most corners a reference cell has
+_WIDTH = tack.constant(8)       # the most corners a reference cell has
 
 
 @tack.kernel
@@ -49,7 +49,7 @@ def _corner_rows(cells, code, rows, codes):
         e = cells.entity_id(c)
         codes[e] = code
         for j in range(cells.NUM_POINTS):
-            rows[e * 8 + j] = cells.point_id(c, j)
+            rows[e * _WIDTH + j] = cells.point_id(c, j)
 
 
 def _corners(topology):

@@ -867,13 +867,23 @@ def _revision(values):
     return id(values)
 
 
+def _with_room(array, extra):
+    """``array``, new, with its last ``extra`` elements made as room for a caller to
+    stage values in after the parts that come before them: `_joined_view` gives
+    room only after a buffer marked so, not after one that merely ends where room
+    would (an AMR hierarchy's fields end with the finest level's boxes)."""
+    if extra:
+        array._buffer._room = extra * (getattr(array, "_vector_n", None) or 1)
+    return array
+
+
 def _joined_view(parts, extra=0):
     """``parts`` (stored 1-D arrays of one element type) end to end, and ``extra``
     elements after them, as one view of the memory they are in, where they are
     views of one buffer that abut in order (``array[i:j]``, as an AMR hierarchy's
-    boxes are) and, for ``extra``, that buffer ends ``extra`` elements after them
-    (room made for them, as ``ghost_cells`` makes it, never another part's); else
-    None. Writes through it are writes to the parts."""
+    boxes are) and, for ``extra``, that buffer was made with that room after them
+    (`_with_room`, as ``ghost_cells`` makes it; never another part's); else None.
+    Writes through it are writes to the parts."""
     from tack.lang.array import _array_view, view_buffer
 
     first = parts[0] if parts else None
@@ -888,10 +898,12 @@ def _joined_view(parts, extra=0):
             return None
         at += p.scalar_size
     width = getattr(first, "_vector_n", None) or 1     # scalars an element
-    capacity = root.nbytes // first.scalar_dtype.numpy_dtype.itemsize
-    # The room after them must be no one else's: the buffer's end, made for it.
-    if at + extra * width > capacity or (extra and at + extra * width != capacity):
-        return None
+    if extra:
+        # The room after them must be made for it, at the buffer's end: a buffer that
+        # merely ends where the room would holds other parts' values there.
+        capacity = root.nbytes // first.scalar_dtype.numpy_dtype.itemsize
+        if getattr(root, "_room", 0) != extra * width or at + extra * width != capacity:
+            return None
     count = sum(p.size for p in parts) + extra
     return _array_view(first.dtype, (count,),
                        view_buffer(root, start, at + extra * width - start),

@@ -135,9 +135,9 @@ class _Fill:
             parts = [values[i] for i in groups.members[g]]
             with blocks.device(g):
                 # The group's values where they are one stretch of memory with room
-                # for the staged sources after them (`in_device_buffers`, and
-                # `ghost_cells`' grown arrays): filled where they are, nothing
-                # copied in or back.
+                # made for the staged sources after them (`ghost_cells`' grown arrays,
+                # `_GroupArrays`; with no staged sources, `in_device_buffers`' too):
+                # filled where they are, nothing copied in or back.
                 joined = arrays._joined_view(parts, box["m"]) if parts else None
                 if joined is not None:
                     combined[g] = joined
@@ -1221,7 +1221,8 @@ class _GroupArrays:
         key = (g, name)
         if key not in self.buffers:
             extra = self.fills[kind].boxes[g]["m"]
-            self.buffers[key] = tack.zeros((self.groups.size(g, kind) + extra,), dtype)
+            self.buffers[key] = arrays._with_room(
+                tack.zeros((self.groups.size(g, kind) + extra,), dtype), extra)
         return self.buffers[key]
 
     def view(self, i, name, kind, values, n):

@@ -670,6 +670,26 @@ def test_statistics_a_level_at_a_time_are_the_boxes(kind, name, weights):
         assert a.unit == by_box.unit and a.weight_unit == by_box.weight_unit
 
 
+def test_statistics_of_a_level_take_ids_that_reach_the_level(monkeypatch):
+    """A level's marks are its boxes' end to end, so the owned ids taken from them
+    are as wide as the level needs, whatever one box's ids are: ``i64`` for a level
+    past ``i32``'s limit (made small here, since 2**31 entries do not fit a test)."""
+    from tack.dataset import ghosts, ids
+
+    amr = amr_of(_three_levels("image"), [2, 2])
+    seen = []
+    taking = ghosts.owned_ids
+
+    def spy(marks, skipped, id_dtype):
+        seen.append((marks.shape[0], id_dtype))
+        return taking(marks, skipped, id_dtype)
+
+    monkeypatch.setattr(ghosts, "owned_ids", spy)
+    monkeypatch.setattr(ids, "LIMIT", 8)
+    td.statistics(amr, "c")
+    assert seen and all(kind == tack.i64 for n, kind in seen if n > ids.LIMIT)
+
+
 @pytest.mark.parametrize("weights", [None, "volume", "w"])
 def test_statistics_of_a_long_f32_field_are_accurate_on_every_device(backend, weights):
     """On a GPU, ``Array.sum()`` adds an f32 array with f32 partial sums. Over an AMR

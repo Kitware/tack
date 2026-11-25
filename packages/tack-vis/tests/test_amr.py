@@ -798,6 +798,23 @@ def test_ghost_cells_and_averages_on_two_devices_are_one_devices(kind):
 
 
 @pytest.mark.parametrize("kind", ["image", "curvilinear"])
+def test_average_down_on_two_devices_stays_in_its_arrays(kind):
+    """A group's arrays have room after its own entries for the sources the other
+    device's boxes stage. The kernels that scale and copy its own entries stop at
+    them; read past them, results are unchanged (the staged sources are written
+    after), so only bounds checks (debug mode) see it."""
+    second = dispatch.as_device(_SecondCPU())
+    two = amr_of([[b.to_device(second) if k % 2 else b for k, b in enumerate(level)]
+                  for level in _three_levels(kind)], [2, 2])
+    was = dispatch.debug_enabled()
+    tack.set_debug(True)
+    try:
+        td.average_down(two, "c")
+    finally:
+        tack.set_debug(was)
+
+
+@pytest.mark.parametrize("kind", ["image", "curvilinear"])
 @pytest.mark.parametrize("d", [2, 3])
 def test_rows_meeting_more_boxes_than_they_keep_search_entry_by_entry(kind, d, monkeypatch):
     """``ghost_cells``' source kernels find the siblings meeting a row of a box's

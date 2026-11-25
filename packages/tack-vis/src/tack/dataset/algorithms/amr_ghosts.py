@@ -1711,7 +1711,8 @@ def _measures(box, device, dtype):
 
 @tack.kernel
 def _scaled(values, m, out):
-    for i in range(out.shape[0]):
+    # Over ``values``: ``out`` may be longer, with room for staged sources after them.
+    for i in range(values.shape[0]):
         out[i] = values[i] * m[i]
 
 

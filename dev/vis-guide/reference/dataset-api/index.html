@@ -7163,8 +7163,9 @@ combine pieces.</p>
   (<code>DUPLICATEPOINT</code>); a shared point belongs to the lowest piece holding it,
   and is <code>DUPLICATEPOINT</code> in the others. That is VTK's rule too: the cells,
   points, marks and values equal <code>vtkGhostCellsGenerator</code>'s, and <code>split</code>'s
-  ghost layer's. Point and cell fields come along (<code>fields</code> chooses), and
-  point and cell sets keep their members. Boundary points are matched by a
+  ghost layer's. Point and cell fields come along (<code>fields</code> chooses), fields
+  of higher order (<code>H1</code> above order 1, <code>L2</code>) and a curved geometry with each
+  ghost cell's nodes, and point and cell sets keep their members. Boundary points are matched by a
   sort of their positions over every piece
   (<code>tack.communication.sort_by_key</code>), and each piece sends each neighbour
   its cells around their shared points. <code>layers=n</code> grows each further layer
@@ -7175,7 +7176,9 @@ combine pieces.</p>
   <code>split</code>'s and VTK's image pieces are) become their blocks grown by <code>n</code>
   cells, with their offsets, their values from the pieces that own them, and
   their coordinates grown with them (uniform, rectilinear, or explicit
-  positions); the result is <code>split</code>'s ghost layers exactly.
+  positions); the result is <code>split</code>'s ghost layers exactly. Fields of higher
+  order and a curved geometry are remade on the grown blocks, the ghosts'
+  values from their owners.
 - <strong>Global ids.</strong> <code>data.global_ids</code> is a <code>tack.dataset.GlobalIds</code> (or
   <code>None</code>), kept apart from the fields as the marks are: an <code>i64</code> per point
   (<code>points</code>) and per cell (<code>cells</code>), either of which may be <code>None</code>, the same
@@ -7223,7 +7226,10 @@ combine pieces.</p>
 - <strong><code>update_ghosts(pds, *fields)</code></strong> copies the named point and cell fields'
   values on ghost points and cells from their owners, in place, for pieces
   <code>ghost_cells</code> or <code>ghost_points</code> made (they keep the exchanges as
-  <code>tack.communication.Plan</code>s). A filter that needs each entity's neighbours
+  <code>tack.communication.Plan</code>s); on pieces <code>ghost_cells</code> made, fields of higher
+  order too: each value a piece holds but does not own from the lowest piece
+  with a cell of its own that has it, so a node on an edge or face pieces
+  share is owned with that edge's or face's points. A filter that needs each entity's neighbours
   (<code>project</code> to points, point gradients) is right on what a piece owns and
   wrong on the ghost layer's rim; refreshing the ghosts in between makes a
   second such filter right too.</p>

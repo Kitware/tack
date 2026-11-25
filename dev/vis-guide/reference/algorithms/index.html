@@ -19403,10 +19403,11 @@ point it shares with them (<code>DUPLICATECELL</code>), and their points it lack
 of them, and is <code>DUPLICATEPOINT</code> in the others. Input marks come along:
 <code>HIDDENCELL</code> and the other bits are copied with each cell.</p>
 <p>Point and cell fields (<code>H1</code> of order 1, <code>Constant</code>, values on points
-or cells) are carried, and on unstructured pieces fields of higher order and
-a curved geometry too (<code>H1</code> above order 1, <code>L2</code> of any order or an order
-per cell): each ghost cell with its nodes, placed through the grown piece's
-own numbering, so a node it shares with the piece's cells is one value;
+or cells) are carried, and fields of higher order and a curved geometry too
+(<code>H1</code> above order 1, <code>L2</code> of any order or an order per cell): each ghost
+cell with its nodes, placed through the grown piece's own numbering, so a
+node it shares with the piece's cells is one value (on structured pieces
+the owner's, as their points take);
 <code>fields</code> chooses them as filters do (<code>None</code>: all); point and cell sets keep their members, and global ids come along
 where every piece has them, points then matched by their ids rather than
 their positions. <code>update_ghosts</code> refreshes
@@ -19422,7 +19423,8 @@ pieces beyond.</p>
 together tiling a box of cells, as <code>split</code>'s and VTK's image pieces do)
 stay structured: each becomes its block grown by <code>layers</code> cells, as far
 as the box goes, with its values from the pieces that own them, and its
-implicit coordinates grown with it.</p>
+implicit coordinates grown with it; fields of higher order and a curved
+geometry are remade on the grown block.</p>
 <p>An <code>AMRDataSet</code>'s boxes each grow by <code>layers</code> cells within their level's
 domain, the ghosts marked <code>DUPLICATECELL</code> and <code>DUPLICATEPOINT</code>: a ghost a
 sibling box holds is its value, copied (AMReX's <code>FillBoundary</code>); one no
@@ -19436,9 +19438,7 @@ refreshes them, <code>average_down</code> puts fine data into coarse cells.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/algorithms/ghost_cells.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 63</span>
-<span class="normal"> 64</span>
-<span class="normal"> 65</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 65</span>
 <span class="normal"> 66</span>
 <span class="normal"> 67</span>
 <span class="normal"> 68</span>
@@ -19588,8 +19588,7 @@ refreshes them, <code>average_down</code> puts fine data into coarse cells.</p>
 <span class="normal">212</span>
 <span class="normal">213</span>
 <span class="normal">214</span>
-<span class="normal">215</span>
-<span class="normal">216</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">ghost_cells</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">layers</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">world</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">tolerance</span><span class="o">=</span><span class="mf">0.0</span><span class="p">):</span>
+<span class="normal">215</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">ghost_cells</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">layers</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">world</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">tolerance</span><span class="o">=</span><span class="mf">0.0</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;``data``&#39;s pieces, each with a layer of its neighbours&#39; cells added as ghosts:</span>
 <span class="sd">    a new ``PartitionedDataSet``, as VTK&#39;s ``vtkGhostCellsGenerator`` makes.</span>
 
@@ -19612,10 +19611,11 @@ refreshes them, <code>average_down</code> puts fine data into coarse cells.</p>
 <span class="sd">    ``HIDDENCELL`` and the other bits are copied with each cell.</span>
 
 <span class="sd">    Point and cell fields (``H1`` of order 1, ``Constant``, values on points</span>
-<span class="sd">    or cells) are carried, and on unstructured pieces fields of higher order and</span>
-<span class="sd">    a curved geometry too (``H1`` above order 1, ``L2`` of any order or an order</span>
-<span class="sd">    per cell): each ghost cell with its nodes, placed through the grown piece&#39;s</span>
-<span class="sd">    own numbering, so a node it shares with the piece&#39;s cells is one value;</span>
+<span class="sd">    or cells) are carried, and fields of higher order and a curved geometry too</span>
+<span class="sd">    (``H1`` above order 1, ``L2`` of any order or an order per cell): each ghost</span>
+<span class="sd">    cell with its nodes, placed through the grown piece&#39;s own numbering, so a</span>
+<span class="sd">    node it shares with the piece&#39;s cells is one value (on structured pieces</span>
+<span class="sd">    the owner&#39;s, as their points take);</span>
 <span class="sd">    ``fields`` chooses them as filters do (``None``: all); point and cell sets keep their members, and global ids come along</span>
 <span class="sd">    where every piece has them, points then matched by their ids rather than</span>
 <span class="sd">    their positions. ``update_ghosts`` refreshes</span>
@@ -19633,7 +19633,8 @@ refreshes them, <code>average_down</code> puts fine data into coarse cells.</p>
 <span class="sd">    together tiling a box of cells, as ``split``&#39;s and VTK&#39;s image pieces do)</span>
 <span class="sd">    stay structured: each becomes its block grown by ``layers`` cells, as far</span>
 <span class="sd">    as the box goes, with its values from the pieces that own them, and its</span>
-<span class="sd">    implicit coordinates grown with it.</span>
+<span class="sd">    implicit coordinates grown with it; fields of higher order and a curved</span>
+<span class="sd">    geometry are remade on the grown block.</span>
 
 <span class="sd">    An ``AMRDataSet``&#39;s boxes each grow by ``layers`` cells within their level&#39;s</span>
 <span class="sd">    domain, the ghosts marked ``DUPLICATECELL`` and ``DUPLICATEPOINT``: a ghost a</span>
@@ -19679,13 +19680,7 @@ refreshes them, <code>average_down</code> puts fine data into coarse cells.</p>
              <span class="k">for</span> <span class="n">g</span><span class="p">,</span> <span class="n">p</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">blocks</span><span class="o">.</span><span class="n">local</span><span class="p">,</span> <span class="n">pieces</span><span class="p">)}</span>
     <span class="n">every</span> <span class="o">=</span> <span class="n">blocks</span><span class="o">.</span><span class="n">all_gather</span><span class="p">(</span><span class="n">kinds</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">blocks</span><span class="o">.</span><span class="n">count</span> <span class="ow">and</span> <span class="nb">all</span><span class="p">(</span><span class="n">k</span> <span class="o">==</span> <span class="mi">1</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">every</span><span class="p">):</span>
-        <span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="n">field_kind</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">geometry</span><span class="p">)</span> <span class="o">==</span> <span class="s2">&quot;nodes&quot;</span> <span class="ow">or</span> <span class="nb">any</span><span class="p">(</span>
-                <span class="n">field_kind</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">fields</span><span class="p">[</span><span class="n">n</span><span class="p">])</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;nodes&quot;</span><span class="p">,</span> <span class="s2">&quot;blocks&quot;</span><span class="p">)</span> <span class="k">for</span> <span class="n">n</span> <span class="ow">in</span> <span class="n">names</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">pieces</span><span class="p">):</span>
-            <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span>
-                <span class="s2">&quot;ghost_cells of structured pieces carries point and cell fields; fields of &quot;</span>
-                <span class="s2">&quot;higher order and curved geometries are carried on unstructured pieces &quot;</span>
-                <span class="s2">&quot;(extract_cells makes a structured piece unstructured)&quot;</span><span class="p">)</span>
-        <span class="n">out</span><span class="p">,</span> <span class="n">plans</span> <span class="o">=</span> <span class="n">structured_ghost_cells</span><span class="p">(</span><span class="n">blocks</span><span class="p">,</span> <span class="n">pieces</span><span class="p">,</span> <span class="nb">int</span><span class="p">(</span><span class="n">layers</span><span class="p">),</span> <span class="n">names</span><span class="p">,</span> <span class="n">_kind</span><span class="p">)</span>
+        <span class="n">out</span><span class="p">,</span> <span class="n">plans</span> <span class="o">=</span> <span class="n">structured_ghost_cells</span><span class="p">(</span><span class="n">blocks</span><span class="p">,</span> <span class="n">pieces</span><span class="p">,</span> <span class="nb">int</span><span class="p">(</span><span class="n">layers</span><span class="p">),</span> <span class="n">names</span><span class="p">)</span>
         <span class="n">result</span> <span class="o">=</span> <span class="n">PartitionedDataSet</span><span class="p">(</span><span class="n">out</span><span class="p">,</span> <span class="n">world</span><span class="o">=</span><span class="n">world</span><span class="p">)</span>
         <span class="n">result</span><span class="o">.</span><span class="n">_ghost_plans</span> <span class="o">=</span> <span class="n">plans</span>
         <span class="k">return</span> <span class="n">result</span>
@@ -19732,16 +19727,17 @@ refreshes them, <code>average_down</code> puts fine data into coarse cells.</p>
     <span class="n">sent</span> <span class="o">=</span> <span class="n">_ghost_parts</span><span class="p">(</span><span class="n">blocks</span><span class="p">,</span> <span class="n">pieces</span><span class="p">,</span> <span class="n">hosts</span><span class="p">,</span> <span class="n">needed</span><span class="p">,</span> <span class="n">owners</span><span class="p">,</span> <span class="n">names</span><span class="p">,</span> <span class="n">numbered</span><span class="p">)</span>
     <span class="n">incoming</span> <span class="o">=</span> <span class="n">blocks</span><span class="o">.</span><span class="n">exchange</span><span class="p">(</span><span class="n">sent</span><span class="p">)</span>
 
-    <span class="n">out</span><span class="p">,</span> <span class="n">receive_points</span><span class="p">,</span> <span class="n">receive_cells</span> <span class="o">=</span> <span class="p">[],</span> <span class="p">{},</span> <span class="p">{}</span>
+    <span class="n">out</span><span class="p">,</span> <span class="n">receive_points</span><span class="p">,</span> <span class="n">receive_cells</span><span class="p">,</span> <span class="n">identities</span> <span class="o">=</span> <span class="p">[],</span> <span class="p">{},</span> <span class="p">{},</span> <span class="p">{}</span>
     <span class="k">for</span> <span class="n">g</span><span class="p">,</span> <span class="n">piece</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">blocks</span><span class="o">.</span><span class="n">local</span><span class="p">,</span> <span class="n">pieces</span><span class="p">):</span>
-        <span class="n">result</span><span class="p">,</span> <span class="n">points_from</span><span class="p">,</span> <span class="n">cells_from</span> <span class="o">=</span> <span class="n">_appended</span><span class="p">(</span><span class="n">g</span><span class="p">,</span> <span class="n">piece</span><span class="p">,</span> <span class="n">hosts</span><span class="p">[</span><span class="n">g</span><span class="p">],</span> <span class="n">owners</span><span class="p">[</span><span class="n">g</span><span class="p">],</span>
-                                                    <span class="n">incoming</span><span class="p">[</span><span class="n">g</span><span class="p">],</span> <span class="n">names</span><span class="p">,</span> <span class="n">numbered</span><span class="p">,</span> <span class="n">blocks</span><span class="p">)</span>
+        <span class="n">result</span><span class="p">,</span> <span class="n">points_from</span><span class="p">,</span> <span class="n">cells_from</span><span class="p">,</span> <span class="n">identities</span><span class="p">[</span><span class="n">g</span><span class="p">]</span> <span class="o">=</span> <span class="n">_appended</span><span class="p">(</span>
+            <span class="n">g</span><span class="p">,</span> <span class="n">piece</span><span class="p">,</span> <span class="n">hosts</span><span class="p">[</span><span class="n">g</span><span class="p">],</span> <span class="n">owners</span><span class="p">[</span><span class="n">g</span><span class="p">],</span> <span class="n">incoming</span><span class="p">[</span><span class="n">g</span><span class="p">],</span> <span class="n">names</span><span class="p">,</span> <span class="n">numbered</span><span class="p">,</span> <span class="n">blocks</span><span class="p">)</span>
         <span class="n">out</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
         <span class="n">receive_points</span><span class="p">[</span><span class="n">g</span><span class="p">],</span> <span class="n">receive_cells</span><span class="p">[</span><span class="n">g</span><span class="p">]</span> <span class="o">=</span> <span class="n">points_from</span><span class="p">,</span> <span class="n">cells_from</span>
     <span class="n">point_plan</span> <span class="o">=</span> <span class="n">_matching</span><span class="o">.</span><span class="n">plan</span><span class="p">(</span><span class="n">blocks</span><span class="p">,</span> <span class="n">receive_points</span><span class="p">)</span>
     <span class="n">cell_plan</span> <span class="o">=</span> <span class="n">_matching</span><span class="o">.</span><span class="n">plan</span><span class="p">(</span><span class="n">blocks</span><span class="p">,</span> <span class="n">receive_cells</span><span class="p">)</span>
     <span class="n">result</span> <span class="o">=</span> <span class="n">PartitionedDataSet</span><span class="p">(</span><span class="n">out</span><span class="p">,</span> <span class="n">world</span><span class="o">=</span><span class="n">world</span><span class="p">)</span>
-    <span class="n">result</span><span class="o">.</span><span class="n">_ghost_plans</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;points&quot;</span><span class="p">:</span> <span class="n">point_plan</span><span class="p">,</span> <span class="s2">&quot;cells&quot;</span><span class="p">:</span> <span class="n">cell_plan</span><span class="p">}</span>
+    <span class="n">result</span><span class="o">.</span><span class="n">_ghost_plans</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;points&quot;</span><span class="p">:</span> <span class="n">point_plan</span><span class="p">,</span> <span class="s2">&quot;cells&quot;</span><span class="p">:</span> <span class="n">cell_plan</span><span class="p">,</span>
+                           <span class="s2">&quot;identities&quot;</span><span class="p">:</span> <span class="n">identities</span><span class="p">,</span> <span class="s2">&quot;layers&quot;</span><span class="p">:</span> <span class="nb">int</span><span class="p">(</span><span class="n">layers</span><span class="p">),</span> <span class="s2">&quot;nodes&quot;</span><span class="p">:</span> <span class="p">{}}</span>
     <span class="k">return</span> <span class="n">result</span>
 </code></pre></div></td></tr></table></div>
             </details>
@@ -19889,13 +19885,20 @@ own them, in place, for a <code>PartitionedDataSet</code> that <code>ghost_cells
 <p>A filter that needs each entity's neighbours -- <code>project</code> to points, point
 gradients -- is right on what a piece owns and wrong on the ghost layer's
 rim; refreshing the ghosts makes a second such filter right too. Each named
-field is a point or cell field of explicit values on every piece. One
-exchange moves all the point fields, one all the cell fields.</p>
+field is a field of explicit values on every piece: on points or cells, and
+on pieces <code>ghost_cells</code> made fields of higher order too (<code>H1</code> above order
+1, <code>L2</code>), each value a piece holds but does not own from its owner -- the
+lowest piece with a cell of its own that has it, so a node on an edge or face
+pieces share is owned with that edge's or face's points. One exchange moves
+all the point fields, one all the cell fields, and one the fields of each
+space of higher order (its plan made on first use and kept, but for an order
+per cell or a DOF table's numbering, made each time).</p>
 
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>packages/tack-vis/src/tack/dataset/algorithms/ghost_cells.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">219</span>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">218</span>
+<span class="normal">219</span>
 <span class="normal">220</span>
 <span class="normal">221</span>
 <span class="normal">222</span>
@@ -19926,7 +19929,16 @@ exchange moves all the point fields, one all the cell fields.</p>
 <span class="normal">247</span>
 <span class="normal">248</span>
 <span class="normal">249</span>
-<span class="normal">250</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">update_ghosts</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="o">*</span><span class="n">fields</span><span class="p">):</span>
+<span class="normal">250</span>
+<span class="normal">251</span>
+<span class="normal">252</span>
+<span class="normal">253</span>
+<span class="normal">254</span>
+<span class="normal">255</span>
+<span class="normal">256</span>
+<span class="normal">257</span>
+<span class="normal">258</span>
+<span class="normal">259</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">update_ghosts</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="o">*</span><span class="n">fields</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Copy the named fields&#39; values on ghost points and cells from the pieces that</span>
 <span class="sd">    own them, in place, for a ``PartitionedDataSet`` that ``ghost_cells`` or</span>
 <span class="sd">    ``ghost_points`` made.</span>
@@ -19934,8 +19946,14 @@ exchange moves all the point fields, one all the cell fields.</p>
 <span class="sd">    A filter that needs each entity&#39;s neighbours -- ``project`` to points, point</span>
 <span class="sd">    gradients -- is right on what a piece owns and wrong on the ghost layer&#39;s</span>
 <span class="sd">    rim; refreshing the ghosts makes a second such filter right too. Each named</span>
-<span class="sd">    field is a point or cell field of explicit values on every piece. One</span>
-<span class="sd">    exchange moves all the point fields, one all the cell fields.&quot;&quot;&quot;</span>
+<span class="sd">    field is a field of explicit values on every piece: on points or cells, and</span>
+<span class="sd">    on pieces ``ghost_cells`` made fields of higher order too (``H1`` above order</span>
+<span class="sd">    1, ``L2``), each value a piece holds but does not own from its owner -- the</span>
+<span class="sd">    lowest piece with a cell of its own that has it, so a node on an edge or face</span>
+<span class="sd">    pieces share is owned with that edge&#39;s or face&#39;s points. One exchange moves</span>
+<span class="sd">    all the point fields, one all the cell fields, and one the fields of each</span>
+<span class="sd">    space of higher order (its plan made on first use and kept, but for an order</span>
+<span class="sd">    per cell or a DOF table&#39;s numbering, made each time).&quot;&quot;&quot;</span>
     <span class="kn">from</span><span class="w"> </span><span class="nn">tack.dataset.amr</span><span class="w"> </span><span class="kn">import</span> <span class="n">AMRDataSet</span>
 
     <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">AMRDataSet</span><span class="p">):</span>
@@ -19952,12 +19970,16 @@ exchange moves all the point fields, one all the cell fields.</p>
     <span class="k">if</span> <span class="ow">not</span> <span class="n">blocks</span><span class="o">.</span><span class="n">count</span><span class="p">:</span>
         <span class="k">return</span>                              <span class="c1"># no pieces anywhere: nothing to refresh</span>
     <span class="n">by_kind</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;points&quot;</span><span class="p">:</span> <span class="p">{</span><span class="n">g</span><span class="p">:</span> <span class="p">{}</span> <span class="k">for</span> <span class="n">g</span> <span class="ow">in</span> <span class="n">blocks</span><span class="o">.</span><span class="n">local</span><span class="p">},</span> <span class="s2">&quot;cells&quot;</span><span class="p">:</span> <span class="p">{</span><span class="n">g</span><span class="p">:</span> <span class="p">{}</span> <span class="k">for</span> <span class="n">g</span> <span class="ow">in</span> <span class="n">blocks</span><span class="o">.</span><span class="n">local</span><span class="p">}}</span>
-    <span class="n">agree</span><span class="p">(</span><span class="n">blocks</span><span class="o">.</span><span class="n">world</span><span class="p">,</span> <span class="n">_gather_updated</span><span class="p">,</span> <span class="n">fields</span><span class="p">,</span> <span class="n">blocks</span><span class="p">,</span> <span class="n">pieces</span><span class="p">,</span> <span class="n">by_kind</span><span class="p">)</span>
+    <span class="n">higher</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">agree</span><span class="p">(</span><span class="n">blocks</span><span class="o">.</span><span class="n">world</span><span class="p">,</span> <span class="n">_gather_updated</span><span class="p">,</span> <span class="n">fields</span><span class="p">,</span> <span class="n">blocks</span><span class="p">,</span> <span class="n">pieces</span><span class="p">,</span> <span class="n">by_kind</span><span class="p">,</span> <span class="n">higher</span><span class="p">,</span>
+          <span class="s2">&quot;identities&quot;</span> <span class="ow">in</span> <span class="n">plans</span><span class="p">)</span>
     <span class="k">for</span> <span class="n">kind</span><span class="p">,</span> <span class="n">values</span> <span class="ow">in</span> <span class="n">by_kind</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
         <span class="c1"># Every rank&#39;s pieces&#39; say, a rank without pieces too: it takes part in the</span>
         <span class="c1"># exchange the others run.</span>
         <span class="k">if</span> <span class="n">blocks</span><span class="o">.</span><span class="n">all_reduce</span><span class="p">({</span><span class="n">g</span><span class="p">:</span> <span class="nb">int</span><span class="p">(</span><span class="nb">bool</span><span class="p">(</span><span class="n">values</span><span class="p">[</span><span class="n">g</span><span class="p">]))</span> <span class="k">for</span> <span class="n">g</span> <span class="ow">in</span> <span class="n">blocks</span><span class="o">.</span><span class="n">local</span><span class="p">},</span> <span class="s2">&quot;max&quot;</span><span class="p">):</span>
             <span class="n">plans</span><span class="p">[</span><span class="n">kind</span><span class="p">]</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">values</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">blocks</span><span class="o">.</span><span class="n">all_reduce</span><span class="p">({</span><span class="n">g</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">higher</span><span class="p">)</span> <span class="k">for</span> <span class="n">g</span> <span class="ow">in</span> <span class="n">blocks</span><span class="o">.</span><span class="n">local</span><span class="p">},</span> <span class="s2">&quot;max&quot;</span><span class="p">):</span>
+        <span class="n">refresh</span><span class="p">(</span><span class="n">blocks</span><span class="p">,</span> <span class="n">pieces</span><span class="p">,</span> <span class="n">plans</span><span class="p">,</span> <span class="n">higher</span><span class="p">)</span>
 </code></pre></div></td></tr></table></div>
             </details>
     </div>

@@ -20,8 +20,8 @@ PALETTE = ((0.12, 0.47, 0.71), (1.0, 0.5, 0.05), (0.17, 0.63, 0.17), (0.84, 0.15
            (0.58, 0.4, 0.74), (0.55, 0.34, 0.29), (0.89, 0.47, 0.76), (0.5, 0.5, 0.5))
 
 # Not polyhedra, though ghost_cells takes polyhedral pieces too (since
-# 0de38715), nor curved or high-order cells, whose geometry and fields ghost
-# cells do not carry yet: it carries positions and values at the points.
+# 0de38715), nor curved or high-order cells, which it carries too, each ghost
+# cell with its nodes.
 KINDS = ("image", "linear", "mixed")
 
 

@@ -834,6 +834,30 @@ def test_average_down_on_two_devices_stays_in_its_arrays(kind):
         tack.set_debug(was)
 
 
+def test_grown_boxes_on_two_devices_have_room_for_their_staged_sources():
+    """``ghost_cells`` makes each group's arrays with room after its boxes for the
+    sources the other device's boxes stage (``_with_room``), so the fills run in
+    place: a group's values are one stretch with that room, as ``_Fill.run`` asks."""
+    from tack import arrays
+
+    second = dispatch.as_device(_SecondCPU())
+    two = amr_of([[b.to_device(second) if k % 2 else b for k, b in enumerate(level)]
+                  for level in _three_levels("image")], [2, 2])
+    grown = td.ghost_cells(two)
+    boxes = [box for _, box in grown]
+    staged = 0
+    for what in ("cells", "points"):
+        fill = grown._fills[what]
+        name = "c" if what == "cells" else "p"
+        for g in fill.groups.blocks.local:
+            m = fill.boxes[g]["m"]
+            if m:
+                parts = [boxes[i].fields[name].values for i in fill.groups.members[g]]
+                assert arrays._joined_view(parts, m) is not None, (what, g)
+                staged += 1
+    assert staged
+
+
 @pytest.mark.parametrize("kind", ["image", "curvilinear"])
 @pytest.mark.parametrize("d", [2, 3])
 def test_rows_meeting_more_boxes_than_they_keep_search_entry_by_entry(kind, d, monkeypatch):

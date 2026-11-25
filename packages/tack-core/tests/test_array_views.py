@@ -181,6 +181,24 @@ def test_many_views_refuse_offsets_out_of_order_or_range():
     np.testing.assert_array_equal(s._row_views([0, 1, 4])[1].numpy(), s[1:4].numpy())
 
 
+def test_room_after_joined_views_is_only_where_it_was_made(backend):
+    """``_joined_view`` gives room after the parts only on a buffer made with it
+    (``_with_room``): a buffer that merely ends that many entries after them holds
+    other values there."""
+    parts = tack.zeros(10, tack.f32)._row_views([0, 3, 7])      # the last 3 are no part's
+    assert arrays._joined_view(parts) is not None
+    assert arrays._joined_view(parts, 3) is None                # the size fits, no room made
+
+    made = arrays._with_room(tack.zeros(10, tack.f32), 3)
+    parts = made._row_views([0, 3, 7])
+    joined = arrays._joined_view(parts, 3)
+    assert joined.shape[0] == 10
+    tack.copyto(joined, np.arange(10, dtype=np.float32))
+    np.testing.assert_array_equal(made.numpy(), np.arange(10))  # writes reach the buffer
+    assert arrays._joined_view(parts, 2) is None                # not another amount
+    assert arrays._joined_view(made._row_views([0, 3, 6]), 3) is None   # not past the parts
+
+
 def test_refused_forms():
     a = _floats(10)
     with pytest.raises(ValueError, match="no step"):

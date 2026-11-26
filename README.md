@@ -497,6 +497,11 @@ CONTRIBUTING.md); there is no separate agreement to sign.
 a review checks. Report a security vulnerability privately, as [SECURITY.md](SECURITY.md)
 says, not in an issue.
 
+## Citing Tack
+
+If you use Tack in published work, please cite it using the "Cite this repository"
+button on GitHub or the metadata in [CITATION.cff](CITATION.cff).
+
 ## License
 
 BSD 3-Clause. See [LICENSE](LICENSE).

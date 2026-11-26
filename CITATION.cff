@@ -1,0 +1,13 @@
+cff-version: 1.2.0
+message: "If you use Tack, please cite it as below."
+title: "Tack"
+abstract: "A Python-first GPU compute framework."
+type: software
+authors:
+  - family-names: Geveci
+    given-names: Berk
+  - family-names: Lee
+    given-names: Jeffrey A.
+  - name: "Kitware, Inc."
+repository-code: "https://github.com/Kitware/tack"
+license: BSD-3-Clause

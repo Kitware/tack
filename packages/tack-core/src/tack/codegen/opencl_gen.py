@@ -76,6 +76,7 @@ class OpenCLCodeGen(CUDACodeGen):
 
     _table_dialect = 'opencl'
     _BOUNDS_DIALECT = 'opencl'
+    _FLOAT_BITS = ("as_float({bits}u)", "as_double({bits}UL)")
 
     _LOOP_INDEX = _OCL_INT
 

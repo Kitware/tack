@@ -40,6 +40,8 @@ devices only, in blocks of 256.
 Not yet: textures and ``print``.
 """
 
+import math
+
 from tack.codegen.identifiers import kernel_entry_name
 from tack.lang import ir, ir_bounds
 from tack.lang.ir_traversal import walk_ir
@@ -397,7 +399,12 @@ class WarpCodeGen:
 
     def _constant(self, value, dtype):
         if dtype in _FLOATS:
-            return f"{warp_type(dtype)}({float(value)!r})"
+            value = float(value)
+            if math.isnan(value):                     # repr's nan and inf are no names here
+                return f"{warp_type(dtype)}(wp.nan)"
+            if math.isinf(value):
+                return f"{warp_type(dtype)}({'-' if value < 0 else ''}wp.inf)"
+            return f"{warp_type(dtype)}({value!r})"
         return f"{warp_type(dtype)}({int(value)})"
 
     def _cond(self, node) -> str:

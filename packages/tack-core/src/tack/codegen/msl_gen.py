@@ -134,6 +134,7 @@ class MSLCodeGen(CFamilyCodeGen):
     _LABEL = "MSL"
     _INDEX_TYPE = _INT
     _HAS_F64 = False
+    _FLOAT_BITS = ("as_type<float>({bits}u)", None)      # no f64 in MSL
 
     _integer_type_map = _MSL_TYPE_MAP
 

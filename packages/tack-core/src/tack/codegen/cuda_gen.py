@@ -115,6 +115,9 @@ class CUDACodeGen(CFamilyCodeGen):
     _LOOP_INDEX = _INT
     _TEXTURE_OBJECT_TYPE = "cudaTextureObject_t"
     _BOUNDS_DIALECT = 'cuda'      # debug mode's check helper (codegen/bounds.py)
+    # A float from its bits, f32 and f64 (NaN and infinite constants; HIP has
+    # the same intrinsics).
+    _FLOAT_BITS = ("__int_as_float((int){bits}u)", "__longlong_as_double((long long){bits}ULL)")
 
     _atomic_backend = 'cuda'
     _table_dialect = 'cuda'

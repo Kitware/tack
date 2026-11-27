@@ -30,6 +30,7 @@ such space among ``args``, and the kernel runs once per subgroup, each
 launch specialized to its keys.
 """
 
+import math
 from collections.abc import MutableMapping
 
 import numpy as np
@@ -90,6 +91,19 @@ class Field:
                                  f"not {arrays.width_of(gradient.values) or 1}")
         self.gradient = gradient
         self._kind = _checked_kind(kinds.coerce(kind), space, values, self._unit)
+
+    @classmethod
+    def _assembled(cls, space, values, unit=None):
+        """``Field(space, values, unit)`` without its checks: ``values`` an array of
+        ``space.size`` values on its topology's device, ``unit`` canonical or None, its
+        kind unknown. For the thousands of boxes of an AMR hierarchy."""
+        out = cls.__new__(cls)
+        out.space = space
+        out.values = values
+        out._unit = unit
+        out.gradient = None
+        out._kind = None
+        return out
 
     @property
     def unit(self):
@@ -241,6 +255,9 @@ def as_origin(origin):
     anything else that is not three finite numbers."""
     if origin is None:
         return (0.0, 0.0, 0.0)
+    if (type(origin) is tuple and len(origin) == 3
+            and all(type(v) is float and math.isfinite(v) for v in origin)):
+        return origin               # a dataset's own, as filters pass it: no NumPy
     try:
         values = np.asarray(origin, np.float64).reshape(-1)
     except (TypeError, ValueError):
@@ -844,6 +861,61 @@ class DataSet:
         self.global_ids = global_ids
         _ = self._device                    # refuses parts on two devices
 
+    def _with_ghosts(self, ghosts, check=True):
+        """A copy with ``ghosts`` for marks, sharing everything else, and checked only
+        for the marks (not at all without ``check``: marks made for it, of its sizes
+        on its device): its parts passed their checks when it was made. Its fields
+        and sets are its own containers, so changing them leaves this one's alone.
+        What makes many boxes at once (``AMRDataSet``) uses it: the constructor's
+        checks cost about 60 us a box."""
+        out = type(self).__new__(type(self))
+        out.__dict__.update(self.__dict__)          # copy.copy's, without its protocol
+        fields = Fields.__new__(Fields)
+        fields._topology = self.topology
+        fields._entries = [list(entry) for entry in self._fields._entries]
+        out._fields = fields
+        sets = Sets.__new__(Sets)
+        sets._topology = self.topology
+        dict.update(sets, self._sets)
+        out._sets = sets
+        if ghosts is not None and check:
+            ghosts._check(self.topology)
+            same_device("DataSet", (self.topology, ghosts))
+        out._ghosts_lost = False
+        out._ghosts = ghosts
+        return out
+
+    @classmethod
+    def _assembled(cls, topology, geometry, fields=(), ghosts=None, global_ids=None,
+                   origin=(0.0, 0.0, 0.0), time=None, time_unit=None):
+        """The dataset ``DataSet(...)`` makes of these parts, made without checking
+        them: for code that has just made them consistent and makes thousands of
+        datasets at once (an AMR hierarchy's boxes, which ``vtk_to_dataset`` and
+        ``ghost_cells`` make), where the checks cost more than the rest (about 12 us
+        a box). ``geometry`` is a ``Field`` of 3-vectors in ``H1`` or ``L2`` on
+        ``topology``; ``fields`` ``(name, Field)`` pairs on ``topology``, no two of a
+        name in one space; ``ghosts`` and ``global_ids`` sized for ``topology`` or
+        None; every part on one device; ``origin`` three floats; ``time`` a float or
+        None, in ``time_unit``, a canonical unit of time or None.
+        ``test_assembled_datasets_are_constructed_ones`` holds the two alike."""
+        out = cls.__new__(cls)
+        out.topology = topology
+        out._geometry = geometry
+        out._origin = origin
+        out._time = time
+        out._time_unit = time_unit
+        held = Fields.__new__(Fields)
+        held._topology = topology
+        held._entries = [[name, field] for name, field in fields]
+        out._fields = held
+        sets = Sets.__new__(Sets)
+        sets._topology = topology
+        out._sets = sets
+        out._ghosts_lost = False
+        out._ghosts = ghosts
+        out._global_ids = global_ids
+        return out
+
     @property
     def _device(self):
         """The device its topology, geometry, fields and sets are on; parts on two
@@ -853,7 +925,9 @@ class DataSet:
         held = [parts.get("topology")]
         if parts.get("_geometry") is not None:
             held.append(parts["_geometry"].values)
-        held.extend(field.values for field in parts.get("_fields", {}).values())
+        fields = parts.get("_fields")
+        if fields is not None:              # its entries: by name, each is a search
+            held.extend(field.values for _, field in fields._entries)
         held.extend(s.ids for s in (parts.get("_sets") or {}).values())
         held.append(parts.get("_ghosts"))
         held.append(parts.get("_global_ids"))

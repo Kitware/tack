@@ -31,8 +31,15 @@ The boxes of every rank are gathered when the hierarchy is made
 so the marks need no other communication.
 """
 
+import contextlib
+import itertools
+
 import numpy as np
 
+import tack
+from tack import arrays
+from tack.algorithms import exclusive_scan, segment_reduce
+from tack.dataset import _box_pairs
 from tack.dataset.dataset import DataSet
 from tack.dataset.ghosts import Ghosts
 from tack.dataset.partitioned import PartitionedDataSet, _one_time
@@ -93,8 +100,8 @@ class AMRDataSet:
         self._fills = None
         self.domain = self._domain(domain)
         self._check(given)
-        self.levels = tuple(PartitionedDataSet(self._marked(level, pieces), world)
-                            for level, pieces in enumerate(given))
+        self.levels = tuple(PartitionedDataSet(pieces, world)
+                            for pieces in _with_marks(self, given))
 
     @classmethod
     def _grown(cls, base, levels, extents, layers, fills):
@@ -115,36 +122,6 @@ class AMRDataSet:
             scale *= np.asarray(r, np.int64)
         lo, hi = (np.asarray(c, np.int64) for c in self.domain)
         return lo * scale, hi * scale
-
-    def _refined(self, level, lo, hi):
-        """Which cells and points of the cell-index box ``[lo, hi)`` of ``level`` a
-        finer level covers: two bool arrays shaped z, y, x (``dimension`` axes)."""
-        box = np.stack([np.asarray(lo, np.int64), np.asarray(hi, np.int64)])[None]
-        return self._refined_boxes(level, box)[0]
-
-    def _refined_boxes(self, level, boxes):
-        """``_refined`` of each cell-index box of ``boxes`` (``(n, 2, 3)``), every box
-        at once: the boxes and the finer level's that meet them are found by
-        ``_meeting``, so the work is in the pairs that meet, not in every pair (a
-        loop over all the children for each box took 129 s for AMR-Wind's 6,436
-        boxes)."""
-        d = self.dimension
-        lo, hi = boxes[:, 0, :d], boxes[:, 1, :d]
-        out = [(np.zeros(tuple(int(v) for v in (b - a)[::-1]), bool),
-                np.zeros(tuple(int(v) + 1 for v in (b - a)[::-1]), bool))
-               for a, b in zip(lo, hi)]
-        if level + 1 < self.num_levels:
-            ratio = np.asarray(self.ratios[level], np.int64)[:d]
-            children = self._boxes[level + 1][:, :, :d]
-            # A cell refined: a child, coarsened, covers it.
-            clo, chi = children[:, 0] // ratio, -(-children[:, 1] // ratio)
-            for i, a, b in _cut(lo, hi, clo, chi, closed=False):
-                out[i][0][_slices(a - lo[i], b - lo[i])] = True
-            # A point refined: its location p * ratio is one of the child's points.
-            plo, phi = -(-children[:, 0] // ratio), children[:, 1] // ratio
-            for i, a, b in _cut(lo, hi, plo, phi, closed=True):
-                out[i][1][_slices(a - lo[i], b - lo[i] + 1)] = True
-        return out
 
     # -- what it holds ---------------------------------------------------
 
@@ -249,27 +226,9 @@ class AMRDataSet:
         _one_time("an AMRDataSet's boxes", [t for part in self.world._allgather(
             sorted({(piece.time, piece.time_unit) for pieces in given for piece in pieces},
                    key=repr)) for t in part])
-        for level, boxes in enumerate(self._boxes):
-            first = _overlap(boxes)
-            if first is not None:
-                a, b = first
-                raise ValueError(f"boxes {a} and {b} of level {level} overlap: {_text(boxes[a])} "
-                                 f"and {_text(boxes[b])}")
-        for level in range(1, self.num_levels):
-            ratio = np.asarray(self.ratios[level - 1], np.int64)
-            coarse = self._boxes[level - 1]
-            fine = self._boxes[level]
-            lo, hi = fine[:, 0] // ratio, -(-fine[:, 1] // ratio)
-            i, j = _meeting(lo, hi, coarse[:, 0], coarse[:, 1], closed=False)
-            inside = (np.minimum(coarse[j, 1], hi[i]) - np.maximum(coarse[j, 0], lo[i])).prod(axis=1)
-            covered = np.bincount(i, inside, minlength=len(fine))
-            short = np.flatnonzero(covered != (hi - lo).prod(axis=1))
-            if len(short):
-                k = int(short[0])
-                raise ValueError(f"box {k} of level {level} ({_text(fine[k])}) is not within "
-                                 f"level {level - 1}'s boxes when coarsened by "
-                                 f"{tuple(ratio[:self.dimension])}: the hierarchy is not "
-                                 f"properly nested")
+        device = next((pieces[0].device for pieces in given if pieces), None)
+        with device if device is not None else contextlib.nullcontext():
+            self._check_nesting()
         for level, pieces in enumerate(given):
             lattices = self.world._allgather([_lattice(piece, self.dimension)
                                               for piece in pieces])
@@ -292,42 +251,317 @@ class AMRDataSet:
                     f"{tuple(ref_spacing)} and {tuple(ref_origin)} (VTK's model: one "
                     "spacing per level and one origin)")
 
+    def _check_nesting(self):
+        """Refuse boxes of a level that overlap, and a box that, coarsened, is not
+        within the coarser level's boxes: on the current device, from the pairs of
+        boxes that meet (`_box_pairs`); only a count comes back, and the pairs only
+        to name what is refused."""
+        d = self.dimension
+        for level, boxes in enumerate(self._boxes):
+            found = _box_pairs.pairs(boxes, boxes, d, closed=False, distinct=True)
+            if found.count:
+                i, j = found.first.numpy(), found.second.numpy()
+                lower = i < j
+                k = np.lexsort((j[lower], i[lower]))[0]
+                a, b = int(i[lower][k]), int(j[lower][k])
+                raise ValueError(f"boxes {a} and {b} of level {level} overlap: {_text(boxes[a])} "
+                                 f"and {_text(boxes[b])}")
+        for level in range(1, self.num_levels):
+            ratio = np.asarray(self.ratios[level - 1], np.int64)
+            fine = self._boxes[level]
+            coarsened = np.stack([fine[:, 0] // ratio, -(-fine[:, 1] // ratio)], 1)
+            found = _box_pairs.pairs(coarsened, self._boxes[level - 1], d, closed=False)
+            covered = tack.zeros(len(fine), tack.i64)
+            if found.count:
+                volumes = tack.empty(found.count, tack.i64)
+                _met_volumes(found.first, found.second, found.lo, found.hi, found.blo,
+                             found.bhi, volumes)
+                segment_reduce(volumes, found.offsets, out=covered)
+            short = tack.empty(len(fine), tack.i64)
+            _short_boxes(covered, found.lo, found.hi, short)
+            if exclusive_scan(short, tack.empty(len(fine), tack.i64), len(fine)):
+                k = int(np.flatnonzero(short.numpy())[0])
+                raise ValueError(f"box {k} of level {level} ({_text(fine[k])}) is not within "
+                                 f"level {level - 1}'s boxes when coarsened by "
+                                 f"{tuple(ratio[:d])}: the hierarchy is not properly nested")
+
     # -- the marks -------------------------------------------------------
 
-    def _marked(self, level, pieces):
-        """This rank's boxes of ``level``, ``pieces``, with their marks computed."""
-        d = self.dimension
-        first = self._first[level]
-        every = self._boxes[level]
-        mine = every[first:first + len(pieces)]
-        refined = self._refined_boxes(level, mine)
-        # Siblings' shared faces, edges and corners: the lower-numbered sibling owns them.
-        lo, hi = mine[:, 0, :d], mine[:, 1, :d]
-        lower = [[] for _ in pieces]
-        for k, a, b, j in _cut(lo, hi, every[:, 0, :d], every[:, 1, :d], closed=True,
-                               partners=True):
-            if j < first + k:
-                lower[k].append((a, b))
-        cleared_cells = 0xFF & ~Ghosts.REFINEDCELL
-        cleared_points = 0xFF & ~(Ghosts.REFINEDPOINT | Ghosts.DUPLICATEPOINT)
+    def _covers(self, level):
+        """What marks the boxes of ``level``: ``[(bit, kind, boxes, closed, lower)]``,
+        ``bit`` set on the cells or points (``kind``) where a box meets one of
+        ``boxes`` (host ``(n, 2, 3)``; sharing a point where ``closed``; with
+        ``lower``, only one of lower global index). ``REFINEDCELL`` where a child
+        box, coarsened, covers cells; ``REFINEDPOINT`` where a child has a point at
+        a point's location; ``DUPLICATEPOINT`` on the faces, edges and corners a
+        sibling of lower global index shares."""
         out = []
-        for k, piece in enumerate(pieces):
-            refined_cells, refined_points = refined[k]
-            cells = refined_cells.astype(np.uint8) * np.uint8(Ghosts.REFINEDCELL)
-            points = refined_points.astype(np.uint8) * np.uint8(Ghosts.REFINEDPOINT)
-            for a, b in lower[k]:
-                points[_slices(a - lo[k], b - lo[k] + 1)] |= Ghosts.DUPLICATEPOINT
-            marks = piece.ghosts
-            if marks is not None and marks.cells is not None:
-                cells |= (marks.cells.numpy() & cleared_cells).reshape(cells.shape)
-            if marks is not None and marks.points is not None:
-                points |= (marks.points.numpy() & cleared_points).reshape(points.shape)
-            with piece.device:
-                ghosts = Ghosts(cells=cells.reshape(-1), points=points.reshape(-1))
-            out.append(DataSet(piece.topology, piece.geometry, fields=dict(piece.fields),
-                               sets=dict(piece.sets), dtype=piece.dtype, ghosts=ghosts,
-                               global_ids=piece.global_ids, **piece._frame()))
+        if level + 1 < self.num_levels:
+            ratio = np.asarray(self.ratios[level], np.int64)
+            children = self._boxes[level + 1]
+            out.append((Ghosts.REFINEDCELL, "cells",
+                        np.stack([children[:, 0] // ratio, -(-children[:, 1] // ratio)], 1),
+                        False, False))
+            out.append((Ghosts.REFINEDPOINT, "points",
+                        np.stack([-(-children[:, 0] // ratio), children[:, 1] // ratio], 1),
+                        True, False))
+        out.append((Ghosts.DUPLICATEPOINT, "points", self._boxes[level], True, True))
         return out
+
+
+@tack.kernel
+def _met_volumes(first, second, lo, hi, blo, bhi, out):
+    # The cells two boxes share, three axes (a box has extent 1 on axes it lacks).
+    for p in range(first.shape[0]):
+        i = first[p]
+        j = second[p]
+        v = tack.i64(1)
+        for a in range(3):
+            v *= min(hi[i, a], bhi[j, a]) - max(lo[i, a], blo[j, a])
+        out[p] = v
+
+
+@tack.kernel
+def _short_boxes(covered, lo, hi, short):
+    for k in range(covered.shape[0]):
+        v = (hi[k, 0] - lo[k, 0]) * (hi[k, 1] - lo[k, 1]) * (hi[k, 2] - lo[k, 2])
+        short[k] = 1 if covered[k] != v else 0
+
+
+@tack.kernel
+def _kept_bits(source, mask, out):
+    for i in range(out.shape[0]):
+        out[i] = source[i] & mask
+
+
+@tack.kernel
+def _mark_rows(rows, count, offsets, table, bit, marks):
+    # One thread a row of a part: offsets[p] the first row of part p (count of
+    # them, offsets[count] == rows); table[p] its box's first mark in ``marks``,
+    # the box's row and plane strides, the part's start (x, y, z) in the box and
+    # its extent along x and y. Parts of a launch may share points (two children
+    # meeting on a face): both store the same byte, since a launch sets one bit.
+    for r in range(rows):
+        a = 0
+        b = count - 1
+        while a < b:
+            m = (a + b + 1) // 2
+            if offsets[m] <= r:
+                a = m
+            else:
+                b = m - 1
+        local = r - offsets[a]
+        y = local % table[a, 7]
+        z = local // table[a, 7]
+        at = table[a, 0] + (table[a, 5] + z) * table[a, 2] + (table[a, 4] + y) * table[a, 1] + \
+            table[a, 3]
+        for x in range(table[a, 6]):
+            marks[at + x] = marks[at + x] | bit
+
+
+@tack.func
+def _part_along(lo, hi, blo, bhi, i, j, a, d, closed):
+    """Along axis ``a``: box ``i``'s marks' extent, and the start (relative to the
+    box) and extent of where box ``j`` meets it; one mark on axes past ``d``."""
+    extent = tack.i64(1)
+    start = tack.i64(0)
+    size = tack.i64(1)
+    if a < d:
+        low = max(lo[i, a], blo[j, a])
+        extent = hi[i, a] - lo[i, a] + closed
+        start = low - lo[i, a]
+        size = max(min(hi[i, a], bhi[j, a]) - low + closed, 0)
+    return extent, start, size
+
+
+@tack.kernel
+def _part_rows(first, second, lo, hi, blo, bhi, d, closed, lower, ids, starts, table, rows):
+    # Pair p's row of the table _mark_rows reads, and its number of rows; none
+    # where ``lower`` and the other box's global index is not below this one's.
+    for p in range(first.shape[0]):
+        i = first[p]
+        j = second[p]
+        e0, x0, n0 = _part_along(lo, hi, blo, bhi, i, j, 0, d, closed)
+        e1, x1, n1 = _part_along(lo, hi, blo, bhi, i, j, 1, d, closed)
+        e2, x2, n2 = _part_along(lo, hi, blo, bhi, i, j, 2, d, closed)
+        table[p, 0] = starts[i]
+        table[p, 1] = e0
+        table[p, 2] = e0 * e1
+        table[p, 3] = x0
+        table[p, 4] = x1
+        table[p, 5] = x2
+        table[p, 6] = n0
+        table[p, 7] = n1
+        r = n1 * n2
+        if n0 == 0 or (lower != 0 and j >= ids[i]):
+            r = 0
+        rows[p] = r
+
+
+def _mark(marks, bit, found, d, closed, lower, ids, starts):
+    """Set ``bit`` in ``marks`` where the boxes of the pairs ``found`` (``Pairs``)
+    meet, relative to the first box, whose marks start at ``starts[i]``
+    (``ids[i]`` its global index for ``lower``)."""
+    count = found.count
+    if not count:
+        return
+    table = tack.empty((count, 8), tack.i64)
+    offsets = tack.empty(count + 1, tack.i64)
+    _part_rows(found.first, found.second, found.lo, found.hi, found.blo, found.bhi, d,
+               int(closed), int(lower), ids, starts, table, offsets)
+    rows = exclusive_scan(offsets, offsets, count, close=True)
+    if rows:
+        _mark_rows(rows, count, offsets, table, int(bit), marks)
+
+
+def _with_marks(amr, levels):
+    """``levels``' boxes (this rank's, per level) with their marks, made on their
+    devices: each kind of mark in one array per device for the whole hierarchy,
+    the levels in order and each box's marks a view of it. The given marks' other
+    bits are kept (one launch where they are one stretch of an array, as a
+    hierarchy's are). Where boxes meet is found on the device (`_box_pairs`), and
+    each kind of mark is set by one launch a level (`_mark_rows`), whatever the
+    number of boxes. Only the box lists are on the host."""
+    d = amr.dimension
+    every = [box for pieces in levels for box in pieces]
+    mine = [amr._boxes[level][amr._first[level]:amr._first[level] + len(pieces)]
+            for level, pieces in enumerate(levels)]
+    extents = np.concatenate(mine).reshape(-1, 2, 3)
+    ids = np.concatenate([amr._first[level] + np.arange(len(pieces), dtype=np.int64)
+                          for level, pieces in enumerate(levels)])
+    level_of = np.repeat(np.arange(len(levels)), [len(pieces) for pieces in levels])
+    cells = np.ones((len(every), 3), np.int64)
+    cells[:, :d] = extents[:, 1, :d] - extents[:, 0, :d]
+    points = cells.copy()
+    points[:, :d] += 1
+    dims = {"cells": cells, "points": points}
+    covers = [amr._covers(level) for level in range(len(levels))]
+    kept = {"cells": 0xFF & ~Ghosts.REFINEDCELL,
+            "points": 0xFF & ~(Ghosts.REFINEDPOINT | Ghosts.DUPLICATEPOINT)}
+    ghosts = [None] * len(every)
+    for device, ks in _by_device(every):
+        ks = np.asarray(ks, np.int64)
+        views = {}
+        for kind in ("cells", "points"):
+            counts = dims[kind][ks].prod(axis=1)
+            starts = np.concatenate([[0], np.cumsum(counts)]).astype(np.int64)
+            given = [getattr(every[k].ghosts, kind, None) if every[k].ghosts is not None
+                     else None for k in ks]
+            with device:
+                whole = _kept(given, counts, kept[kind])
+                for level in range(len(levels)):
+                    here = np.flatnonzero(level_of[ks] == level)
+                    if not len(here):
+                        continue
+                    level_ids = tack.array(ids[ks[here]])
+                    level_starts = tack.array(starts[here])
+                    for bit, what, boxes, closed, lower in covers[level]:
+                        if what != kind:
+                            continue
+                        found = _box_pairs.pairs(extents[ks[here]], boxes, d, closed)
+                        _mark(whole, bit, found, d, closed, lower, level_ids, level_starts)
+            views[kind] = whole._row_views(starts)
+        for i, k in enumerate(ks):
+            # Made here, a view a box of its size on its device: unchecked.
+            ghosts[k] = Ghosts._assembled(views["cells"][i], views["points"][i])
+    out, k = [], 0
+    for pieces in levels:
+        level = []
+        for piece in pieces:
+            level.append(piece._with_ghosts(ghosts[k], check=False))
+            k += 1
+        out.append(level)
+    return out
+
+
+def _kept(given, counts, mask):
+    """The marks ``given`` (each box's, or None) end to end in one new array on the
+    current device, with only the bits of ``mask``; zeros for a box without
+    (``counts`` its marks' number)."""
+    n = int(sum(counts))
+    if n and all(g is not None for g in given):
+        joined = arrays._joined_view(given)
+        if joined is not None:
+            whole = tack.empty(n, tack.u8)
+            _kept_bits(joined, mask, whole)
+            return whole
+    whole = tack.zeros(n, tack.u8)
+    start = 0
+    for g, m in zip(given, counts):
+        if g is not None and m:
+            _kept_bits(g, mask, whole[start:start + m])
+        start += int(m)
+    return whole
+
+
+def _box_device(piece):
+    """A box's device: its marks' where it has them, as every box of a hierarchy
+    does, else its topology's (a box's parts are on one device, checked when it
+    was made); ``DataSet.device`` searches the dataset's parts, about 4 us a box."""
+    from tack.runtime.dispatch import as_device
+
+    ghosts = piece.ghosts
+    marks = None if ghosts is None else (ghosts.cells if ghosts.cells is not None
+                                         else ghosts.points)
+    backend = marks._backend if marks is not None else piece.topology._device
+    return as_device(backend) if backend is not None else piece.device
+
+
+def _by_device(pieces):
+    """``[(device, [k, ...])]``: the indices of ``pieces`` on each device
+    (`_box_device`), in order."""
+    groups = []
+    for k, piece in enumerate(pieces):
+        device = _box_device(piece)
+        for d, ks in groups:
+            if d == device:
+                ks.append(k)
+                break
+        else:
+            groups.append((device, [k]))
+    return groups
+
+
+def in_device_buffers(levels):
+    """Put a hierarchy's fields in one array per device, in place: each box's values
+    become a view (``array[i:j]``) of its device's array, the levels in order and
+    each level's boxes in order, so a level's boxes (statistics) and a device's
+    boxes of any run of levels (``_Fill``'s groups: ghost cells, ``average_down``)
+    are one stretch of it, taken without a copy. One copy now; the marks
+    ``AMRDataSet`` makes are laid out the same way (`_with_marks`). A field is taken
+    where every box on the device has it, at the same place among its fields, in
+    one kind of space, as a stored array of one element type; any other is left
+    as it is. ``levels`` are lists of ``DataSet``s, as ``AMRDataSet`` takes them;
+    returned for chaining."""
+    import tack
+    from tack.dataset.dataset import _same_space
+    from tack.lang.array import Array
+
+    every = [box for pieces in levels for box in pieces]
+    for device, ks in _by_device(every):
+        boxes = [every[k] for k in ks]
+        entries = [box.fields.entries() for box in boxes]
+        for i, (name, first) in enumerate(entries[0]):
+            fields = []
+            for listed in entries:
+                if i >= len(listed):
+                    break
+                other_name, field = listed[i]
+                values = field.values
+                if (other_name != name or not _same_space(field.space, first.space)
+                        or type(values) is not Array or values.ndim != 1
+                        or values.dtype != first.values.dtype):
+                    break
+                fields.append(field)
+            if len(fields) != len(boxes):
+                continue
+            with device:
+                whole = tack.concat([f.values for f in fields])
+            views = whole._row_views(list(itertools.accumulate(
+                (f.values.shape[0] for f in fields), initial=0)))
+            for field, view in zip(fields, views):
+                field.values = view
+    return levels
 
 
 def _box(piece, dimension):
@@ -339,67 +573,6 @@ def _box(piece, dimension):
     lo[:n] = topology.offset
     hi[:n] = np.asarray(topology.offset) + np.asarray(topology.point_dims) - 1
     return lo, hi
-
-
-def _coarsened(box, ratio):
-    """The coarser level's cells a box covers: ``(lo, hi)``, three axes."""
-    ratio = np.asarray(ratio, np.int64)
-    return box[0] // ratio, -(-box[1] // ratio)
-
-
-def _overlap(boxes):
-    """The first two boxes that share a cell, or None."""
-    i, j = _meeting(boxes[:, 0], boxes[:, 1], boxes[:, 0], boxes[:, 1], closed=False)
-    keep = i < j
-    if not keep.any():
-        return None
-    i, j = i[keep], j[keep]
-    first = np.lexsort((j, i))[0]
-    return int(i[first]), int(j[first])
-
-
-def _meeting(alo, ahi, blo, bhi, closed):
-    """Every pair ``(i, j)`` of box ``i`` of ``a`` and box ``j`` of ``b`` that meet, as
-    two arrays ordered by ``i``: ``[lo, hi)`` boxes sharing a cell, or with
-    ``closed``, ``[lo, hi]`` boxes sharing a point. Arrays ``(n, axes)``. ``b`` is
-    sorted on its first axis, and each box of ``a`` tests only the boxes whose
-    start is within the widest of ``b`` of its own (a sweep), not every box."""
-    empty = np.zeros(0, np.int64)
-    if not len(alo) or not len(blo):
-        return empty, empty
-    order = np.argsort(blo[:, 0], kind="stable")
-    starts = blo[order, 0]
-    width = max(int((bhi[:, 0] - blo[:, 0]).max()), 0)
-    if closed:      # blo <= ahi and bhi >= alo, with bhi <= blo + width
-        first = np.searchsorted(starts, alo[:, 0] - width, side="left")
-        stop = np.searchsorted(starts, ahi[:, 0], side="right")
-    else:           # blo < ahi and bhi > alo
-        first = np.searchsorted(starts, alo[:, 0] - width, side="right")
-        stop = np.searchsorted(starts, ahi[:, 0], side="left")
-    counts = np.maximum(stop - first, 0)
-    i = np.repeat(np.arange(len(alo)), counts)
-    within = np.arange(int(counts.sum())) - np.repeat(np.cumsum(counts) - counts, counts)
-    j = order[np.repeat(first, counts) + within]
-    low = np.maximum(alo[i], blo[j])
-    high = np.minimum(ahi[i], bhi[j])
-    meet = (low <= high).all(axis=1) if closed else (low < high).all(axis=1)
-    return i[meet], j[meet]
-
-
-def _cut(alo, ahi, blo, bhi, closed, partners=False):
-    """For each pair ``_meeting`` finds, ``(i, low, high)``: box ``i`` of ``a`` and
-    where it meets the other box (``(i, low, high, j)`` with ``partners``)."""
-    i, j = _meeting(alo, ahi, blo, bhi, closed)
-    low = np.maximum(alo[i], blo[j])
-    high = np.minimum(ahi[i], bhi[j])
-    if partners:
-        return zip(i.tolist(), low, high, j.tolist())
-    return zip(i.tolist(), low, high)
-
-
-def _slices(a, b):
-    """Index slices of an array shaped z, y, x for ``[a, b)`` given x first."""
-    return tuple(slice(int(s), int(e)) for s, e in zip(a[::-1], b[::-1]))
 
 
 def _lattice(piece, dimension):

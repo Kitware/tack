@@ -20,6 +20,7 @@ import pytest
 import tack
 import tack.dataset as td
 from tack.dataset import Ghosts
+from tack.dataset.amr import in_device_buffers
 from tack.runtime import dispatch
 from tack.runtime.cpu import CPUBackend
 from tack.runtime.dispatch import env_flag
@@ -73,6 +74,13 @@ def image(lo, cells, spacing, origin=(0.0, 0.0, 0.0), values=None):
     return box
 
 
+def amr_of(levels, ratios=(), **kwargs):
+    """``td.AMRDataSet`` of ``levels`` with each level's fields in one array, each
+    box's values a view of it, as ``vtk_to_dataset`` and the sources give a
+    hierarchy: every algorithm here is tested on that form."""
+    return td.AMRDataSet(in_device_buffers(levels), ratios, **kwargs)
+
+
 def hierarchy(kind="image", d=2):
     """Three levels in 2D (or 3D): a root of two abutting boxes, three level-1 boxes
     (two abutting, one across the root boxes' seam), and a level-2 box; as
@@ -88,8 +96,8 @@ def hierarchy(kind="image", d=2):
     spacings = [1.0, 0.5, 0.25]
     boxes = [[image(lo, cells, h) for lo, cells in level] for level, h in zip(levels, spacings)]
     if kind == "image":
-        return td.AMRDataSet(boxes, ratios=[2, 2])
-    return td.AMRDataSet([[_as(kind, box) for box in level] for level in boxes], ratios=[2, 2])
+        return amr_of(boxes, ratios=[2, 2])
+    return amr_of([[_as(kind, box) for box in level] for level in boxes], ratios=[2, 2])
 
 
 def _as(kind, box):
@@ -216,10 +224,59 @@ def test_marks_already_given_are_recomputed_and_others_kept():
     cells[0] |= Ghosts.HIDDENCELL
     cells[1] |= Ghosts.REFINEDCELL          # stale: recomputed away
     first.ghosts = Ghosts(cells=cells, points=first.ghosts.points.numpy())
-    again = td.AMRDataSet([list(amr.levels[0]), *map(list, amr.levels[1:])], amr.ratios)
+    again = amr_of([list(amr.levels[0]), *map(list, amr.levels[1:])], amr.ratios)
     got = again.levels[0][0].ghosts.cells.numpy()
     assert got[0] & Ghosts.HIDDENCELL
     assert not got[1] & Ghosts.REFINEDCELL
+
+
+def test_marks_given_on_some_boxes_only_are_kept():
+    """Given marks not one stretch of an array (some boxes without any) are kept
+    box by box, the rest zeros before the hierarchy's own."""
+    amr = hierarchy()
+    levels = [[td.DataSet(box.topology, box.geometry, fields=dict(box.fields))
+               for box in level] for level in amr.levels]
+    first = levels[0][0]
+    cells = np.zeros(first.num_cells, np.uint8)
+    cells[0] = Ghosts.HIDDENCELL
+    first.ghosts = Ghosts(cells=cells)
+    again = td.AMRDataSet(levels, amr.ratios)
+    for (_, a), (_, b) in zip(again, amr):
+        np.testing.assert_array_equal(a.ghosts.points.numpy(), b.ghosts.points.numpy())
+    got = again.levels[0][0].ghosts.cells.numpy()
+    expected = amr.levels[0][0].ghosts.cells.numpy().copy()
+    expected[0] |= Ghosts.HIDDENCELL
+    np.testing.assert_array_equal(got, expected)
+
+
+@pytest.mark.parametrize("d", [1, 2, 3])
+@pytest.mark.parametrize("closed", [False, True])
+def test_box_pairs_are_every_pair_that_meets(d, closed):
+    from tack.dataset._box_pairs import pairs
+
+    rng = np.random.default_rng(d + 3 * closed)
+
+    def boxes(n, most):
+        lo = np.zeros((n, 3), np.int64)
+        hi = np.ones((n, 3), np.int64)
+        lo[:, :d] = rng.integers(-5, 40, (n, d))
+        hi[:, :d] = lo[:, :d] + rng.integers(1, most, (n, d))
+        return np.stack([lo, hi], 1)
+
+    def meet(a, b):
+        low, high = np.maximum(a[0, :d], b[0, :d]), np.minimum(a[1, :d], b[1, :d])
+        return bool((low <= high).all() if closed else (low < high).all())
+
+    a = boxes(120, 9)
+    for b, distinct in ((boxes(90, 20), False), (a, True)):
+        found = pairs(a, b, d, closed, distinct)
+        got = list(zip(found.first.numpy().tolist(), found.second.numpy().tolist()))
+        assert len(got) == len(set(got)) == found.count
+        assert set(got) == {(i, j) for i in range(len(a)) for j in range(len(b))
+                            if not (distinct and i == j) and meet(a[i], b[j])}
+        first = found.first.numpy()
+        np.testing.assert_array_equal(found.offsets.numpy(),
+                                      np.searchsorted(first, np.arange(len(a) + 1)))
 
 
 def test_hierarchies_that_vtks_model_cannot_hold_are_refused():
@@ -238,13 +295,13 @@ def test_hierarchies_that_vtks_model_cannot_hold_are_refused():
         td.AMRDataSet([[image((0, 0), (4, 4), 1.0)], [image((0, 0, 0), (2, 2, 2), 0.5)]], [2])
     with pytest.raises(ValueError, match="axis-aligned"):
         turned = td.uniform_grid((5, 5), direction=[[0.0, -1.0], [1.0, 0.0]])
-        td.AMRDataSet([[turned]])
+        amr_of([[turned]])
     with pytest.raises(ValueError, match="ghost cells"):
         td.AMRDataSet([list(td.split(td.uniform_grid((9, 9)), 2, ghost_layers=1))])
     with pytest.raises(TypeError, match="StructuredTopology"):
         td.AMRDataSet([[td.point_cloud(np.zeros((3, 3)))]])
     # Anisotropic ratios are Tack's: VTK's AMR takes one per level.
-    flat = td.AMRDataSet([[image((0, 0), (4, 4), 1.0)],
+    flat = amr_of([[image((0, 0), (4, 4), 1.0)],
                           [image((2, 0), (2, 4), 0.5).rebased((0.0, 0.0, 0.0))]], [(2, 1)])
     assert flat.ratios == ((2, 1, 1),)
 
@@ -267,7 +324,7 @@ def test_filters_leave_refined_cells_out():
 def test_boxes_on_two_devices():
     second = dispatch.as_device(_SecondCPU())
     amr = hierarchy()
-    moved = td.AMRDataSet([[box.to_device(second) if k % 2 else box
+    moved = amr_of([[box.to_device(second) if k % 2 else box
                             for k, box in enumerate(level)] for level in
                            (list(lv) for lv in amr.levels)], amr.ratios)
     for (_, a), (_, b) in zip(moved, amr):
@@ -349,9 +406,9 @@ def test_ghosts_nothing_holds_are_hidden(kind):
     root = [image((0, 0), (4, 4), 1.0), image((4, 0), (4, 4), 1.0),
             image((0, 4), (4, 4), 1.0)]
     fine = [image((6, 2), (2, 4), 0.5)]
-    amr = td.AMRDataSet([root, fine], [2])
+    amr = amr_of([root, fine], [2])
     if kind == "curvilinear":
-        amr = td.AMRDataSet([[_as(kind, b) for b in level] for level in
+        amr = amr_of([[_as(kind, b) for b in level] for level in
                              ([*amr.levels[0]], [*amr.levels[1]])], [2])
     grown = td.ghost_cells(amr)
     second = grown.levels[0][1]                     # grows up into the notch at x 4..8
@@ -429,7 +486,7 @@ def test_ghost_geometry_is_interpolated_in_the_coarse_cells(kind):
         out.fields["p"] = td.Field(td.H1(out), tack.array(out.positions()[:, 1]))
         return out
 
-    amr = td.AMRDataSet([[box((0, 0), (8, 8), 1)], [box((4, 4), (6, 6), 2)]], [2])
+    amr = amr_of([[box((0, 0), (8, 8), 1)], [box((4, 4), (6, 6), 2)]], [2])
     fine = td.ghost_cells(amr).levels[1][0]
     lo = np.asarray(fine.topology.offset)
     dims = fine.topology.point_dims
@@ -469,7 +526,7 @@ def _many_boxes():
               for j in range(0, 16, 4) for i in range(0, 16, 4)]
     fine = [image((i, j, k), (4, 4, 4), 0.5) for k in range(4, 12, 4)
             for j in range(8, 24, 4) for i in range(8, 24, 4)]
-    return td.AMRDataSet([coarse, fine], ratios=[2])
+    return amr_of([coarse, fine], ratios=[2])
 
 
 def test_ghost_cells_of_many_boxes_are_exact_for_linear_fields():
@@ -510,7 +567,7 @@ def across(world):
         mine.append([_unmarked(boxes[i]) for i in chosen])
         keys.append(chosen)
     # Boxes are numbered by rank, then in order: map ours back to the whole's.
-    amr = td.AMRDataSet(mine, [2, 2], world=world)
+    amr = amr_of(mine, [2, 2], world=world)
     out = {}
     for level, boxes in enumerate(amr.levels):
         for box, whole in zip(boxes, keys[level]):
@@ -530,3 +587,539 @@ def across(world):
 
 def _unmarked(box):
     return td.DataSet(box.topology, box.geometry.values, fields=dict(box.fields))
+
+
+# -- the single-array form (a level's values in one array, the boxes views) ---------
+
+def _is_view_of_one(arrays):
+    """Whether every array is a view of one root buffer, end to end in order."""
+    roots = [getattr(a._buffer, "_root", None) for a in arrays]
+    if None in roots or len({id(r) for r in roots}) != 1:
+        return False
+    starts = [a._buffer._start for a in arrays]
+    return starts == sorted(starts)
+
+
+def test_a_hierarchy_is_one_array_a_device():
+    """The marks a hierarchy makes, and the fields ``in_device_buffers`` (the VTK
+    adapter, the sources, this file's ``amr_of``) puts in, are views of one array
+    per device, levels in order: a level's boxes, and a device's boxes of any run of
+    levels, are one stretch of it, which algorithms take as it is."""
+    from tack import arrays
+
+    for amr in (hierarchy(), td.amr_gaussian_pulse()):
+        boxes = [b for _, b in amr]
+        assert _is_view_of_one([b.ghosts.cells for b in boxes])
+        assert _is_view_of_one([b.ghosts.points for b in boxes])
+        for name in [n for n, _ in boxes[0].fields.entries()]:
+            assert _is_view_of_one([b.fields[name].values for b in boxes]), name
+            for level in amr.levels:
+                assert arrays._joined_view([b.fields[name].values for b in level]) is not None
+
+
+def test_writes_to_a_box_reach_its_level_array():
+    amr = hierarchy()
+    first, second = list(amr.levels[1])[:2]
+    before = second.fields["c"].values.numpy()
+    first.fields["c"].values.fill(-1.0)
+    np.testing.assert_array_equal(second.fields["c"].values.numpy(), before)
+    view = first.fields["c"].values._buffer
+    n, start = first.fields["c"].values.shape[0], view._start
+    assert (view._root.to_numpy()[start:start + n] == -1.0).all()
+
+
+@needs_vtk
+def test_vtk_to_dataset_gives_the_single_array_form():
+    amr = td.amr_gaussian_pulse()
+    from tack.interop.vtk import dataset_to_vtk, vtk_to_dataset
+    back = vtk_to_dataset(dataset_to_vtk(amr))
+    for boxes in back.levels:
+        boxes = list(boxes)
+        assert _is_view_of_one([b.fields["Gaussian-Pulse"].values for b in boxes])
+    shared = vtk_to_dataset(dataset_to_vtk(amr), copy=False)
+    assert all(getattr(b.fields["Gaussian-Pulse"].values._buffer, "_root", None) is None
+               for _, b in shared)
+
+
+@pytest.mark.parametrize("kind", ["image", "curvilinear"])
+@pytest.mark.parametrize("name, weights", [("c", None), ("c", "volume"), ("p", None),
+                                           ("c", "c")])
+def test_statistics_a_level_at_a_time_are_the_boxes(kind, name, weights):
+    """Statistics reduce each level as one array: the level's own where the boxes
+    are its views, a copy where they are not (boxes made one by one), and box by box
+    before. All three agree (to the order of summation)."""
+    def levels():
+        return [[(image(lo, cells, h) if kind == "image" else _as(kind, image(lo, cells, h)))
+                 for lo, cells in level] for level, h in
+                zip([[((0, 0), (4, 8)), ((4, 0), (4, 8))],
+                     [((2, 2), (4, 4)), ((6, 2), (2, 4)), ((2, 10), (8, 4))],
+                     [((6, 6), (4, 4))]], [1.0, 0.5, 0.25])]
+
+    views = td.statistics(amr_of(levels(), [2, 2]), name, weights)
+    copies = td.statistics(td.AMRDataSet(levels(), [2, 2]), name, weights)
+    amr = td.AMRDataSet(levels(), [2, 2])
+    by_box = td.statistics(amr._as_pieces(), name, weights)
+    for a in (views, copies):
+        for field in ("n", "weight", "min", "max"):
+            assert getattr(a, field) == getattr(by_box, field), field
+        for field in ("sum", "mean", "m2", "m4"):
+            np.testing.assert_allclose(getattr(a, field), getattr(by_box, field),
+                                       rtol=1e-5, atol=1e-6, err_msg=field)
+        # m3 sums cubes that nearly cancel: f32 rounding of the scale m2^1.5.
+        np.testing.assert_allclose(a.m3, by_box.m3, atol=1e-6 * by_box.m2 ** 1.5)
+        assert a.unit == by_box.unit and a.weight_unit == by_box.weight_unit
+
+
+def test_statistics_of_a_level_take_ids_that_reach_the_level(monkeypatch):
+    """A level's marks are its boxes' end to end, so the owned ids taken from them
+    are as wide as the level needs, whatever one box's ids are: ``i64`` for a level
+    past ``i32``'s limit (made small here, since 2**31 entries do not fit a test)."""
+    from tack.dataset import ghosts, ids
+
+    amr = amr_of(_three_levels("image"), [2, 2])
+    seen = []
+    taking = ghosts.owned_ids
+
+    def spy(marks, skipped, id_dtype):
+        seen.append((marks.shape[0], id_dtype))
+        return taking(marks, skipped, id_dtype)
+
+    monkeypatch.setattr(ghosts, "owned_ids", spy)
+    monkeypatch.setattr(ids, "LIMIT", 8)
+    td.statistics(amr, "c")
+    assert seen and all(kind == tack.i64 for n, kind in seen if n > ids.LIMIT)
+
+
+@pytest.mark.parametrize("weights", [None, "volume", "w"])
+def test_statistics_of_a_long_f32_field_are_accurate_on_every_device(backend, weights):
+    """On a GPU, ``Array.sum()`` adds an f32 array with f32 partial sums. Over an AMR
+    level of 160M cells reduced as one array, the volume came out 3e-4 off on Metal
+    and the variance 0.7% (#314). The moments' sums are partial sums of a few hundred
+    values, added in f64 on the host (``_sum``), so a field of 4M values (one array,
+    as a level's are) agrees with NumPy's f64 moments of the same values. A
+    level's cells have one volume, which is not a power of two here: adding equal
+    f32 values in order rounds the same way every time (5880 off in that volume
+    before the chunks were added with compensation)."""
+    h = (0.3, 0.7, 0.11)
+    data = td.uniform_grid((257, 129, 129), spacing=h)
+    n = data.num_cells
+    k = np.arange(n)
+    x = (291.0 + 0.7 * np.sin(k * 1e-3)).astype(np.float32)
+    w = (1.0 + 0.5 * np.cos(k * 7e-4)).astype(np.float32)
+    data.fields["c"] = td.Field(td.Constant(data), tack.array(x))
+    data.fields["w"] = td.Field(td.Constant(data), tack.array(w))
+    got = td.statistics(data, "c", weights)
+    xs = x.astype(np.float64)
+    ws = {None: np.ones(n), "volume": np.full(n, float(np.prod(np.float32(h)))),
+          "w": w.astype(np.float64)}[weights]
+    total = ws.sum()
+    mean = (ws * xs).sum() / total
+    m2 = (ws * (xs - mean) ** 2).sum()
+    assert got.n == n
+    np.testing.assert_allclose(got.weight, total, rtol=3e-7)    # a cell's volume, in f32
+    np.testing.assert_allclose(got.mean, mean, rtol=1e-7)
+    np.testing.assert_allclose(got.m2, m2, rtol=1e-4)
+    np.testing.assert_allclose(got.population_variance, m2 / total, rtol=1e-4)
+
+
+def test_partial_sums_add_every_value_once(backend):
+    """``_partial_sums``, which a GPU's statistics add in f64: every value once,
+    the last chunk short."""
+    from tack.dataset.algorithms.statistics import _SUM_CHUNK, _partial_sums
+
+    for n in (1, _SUM_CHUNK, 1_000_003):
+        x = np.random.default_rng(n).random(n).astype(np.float32)
+        parts = tack.empty((-(-n // _SUM_CHUNK),), tack.f32)
+        _partial_sums(tack.array(x), n, _SUM_CHUNK, parts)
+        np.testing.assert_allclose(np.sum(parts.numpy(), dtype=np.float64),
+                                   np.sum(x, dtype=np.float64), rtol=1e-6)
+    # One value many times, as a level's cell volumes are: added in order without
+    # compensation, every step rounds the same way (2e-6 here).
+    n = 1_000_003
+    v = np.float32(0.3) * np.float32(0.7) * np.float32(0.11)
+    parts = tack.empty((-(-n // _SUM_CHUNK),), tack.f32)
+    _partial_sums(tack.full((n,), v, tack.f32), n, _SUM_CHUNK, parts)
+    np.testing.assert_allclose(np.sum(parts.numpy(), dtype=np.float64), n * float(v),
+                               rtol=1e-7)
+
+
+def _three_levels(kind):
+    boxes = [[image(lo, cells, h) for lo, cells in level] for level, h in
+             zip([[((0, 0), (4, 8)), ((4, 0), (4, 8))],
+                  [((2, 2), (4, 4)), ((6, 2), (2, 4)), ((2, 10), (8, 4))],
+                  [((6, 6), (4, 4))]], [1.0, 0.5, 0.25])]
+    return boxes if kind == "image" else [[_as(kind, b) for b in level] for level in boxes]
+
+
+@pytest.mark.parametrize("kind", ["image", "curvilinear"])
+def test_fills_in_place_are_the_copying_fills(kind):
+    """``ghost_cells``, ``update_ghosts`` and ``average_down`` fill a device's boxes
+    in place where they are one stretch of memory (``_Fill.run``,
+    ``_average_cells_in_place``), and through a copy where they are not (boxes made
+    one by one): the same bits either way, and the grown hierarchy is in the
+    single-array form."""
+    views = amr_of(_three_levels(kind), [2, 2])
+    copies = td.AMRDataSet(_three_levels(kind), [2, 2])
+    grown_views, grown_copies = td.ghost_cells(views), td.ghost_cells(copies)
+    boxes = [b for _, b in grown_views]
+    for name in ("c", "p"):
+        assert _is_view_of_one([b.fields[name].values for b in boxes])
+        for (_, a), (_, b) in zip(grown_views, grown_copies):
+            np.testing.assert_array_equal(a.fields[name].values.numpy(),
+                                          b.fields[name].values.numpy())
+    for amr in (grown_views, grown_copies):
+        for _, box in amr:
+            box.fields["c"].values.fill(7.0)
+        td.update_ghosts(amr, "c")
+    for (_, a), (_, b) in zip(grown_views, grown_copies):
+        np.testing.assert_array_equal(a.fields["c"].values.numpy(), b.fields["c"].values.numpy())
+    for name in ("c", "p"):
+        td.average_down(views, name)
+        td.average_down(copies, name)
+        for (_, a), (_, b) in zip(views, copies):
+            np.testing.assert_array_equal(a.fields[name].values.numpy(),
+                                          b.fields[name].values.numpy())
+
+
+@pytest.mark.parametrize("kind", ["image", "curvilinear"])
+def test_ghost_cells_and_averages_on_two_devices_are_one_devices(kind):
+    """Every other box on a simulated second device: each device's boxes a group
+    whose ghosts the other group's boxes fill, staged across by ``_Fill``'s plan
+    (its remote sources, the only rows that come to the host). The grown marks
+    and values, ``update_ghosts`` and ``average_down`` are one device's, bit for
+    bit."""
+    second = dispatch.as_device(_SecondCPU())
+    one = amr_of(_three_levels(kind), [2, 2])
+    two = amr_of([[b.to_device(second) if k % 2 else b for k, b in enumerate(level)]
+                  for level in _three_levels(kind)], [2, 2])
+    grown_one, grown_two = td.ghost_cells(one), td.ghost_cells(two)
+    assert any(box.device == second for _, box in grown_two)
+    assert all(any(group["m"] for group in grown_two._fills[what].boxes.values())
+               for what in ("cells", "points"))      # sources staged across
+
+    def same(a_amr, b_amr, names):
+        for (_, a), (_, b) in zip(a_amr, b_amr):
+            np.testing.assert_array_equal(a.ghosts.cells.numpy(), b.ghosts.cells.numpy())
+            np.testing.assert_array_equal(a.ghosts.points.numpy(), b.ghosts.points.numpy())
+            for name in names:
+                np.testing.assert_array_equal(a.fields[name].values.numpy(),
+                                              b.fields[name].values.numpy())
+
+    same(grown_one, grown_two, ("c", "p"))
+    for amr in (grown_one, grown_two):
+        for _, box in amr:
+            box.fields["c"].values.fill(7.0)
+        td.update_ghosts(amr, "c")
+    same(grown_one, grown_two, ("c",))
+    for name in ("c", "p"):
+        td.average_down(one, name)
+        td.average_down(two, name)
+    same(one, two, ("c", "p"))
+
+
+@pytest.mark.parametrize("kind", ["image", "curvilinear"])
+def test_average_down_on_two_devices_stays_in_its_arrays(kind):
+    """A group's arrays have room after its own entries for the sources the other
+    device's boxes stage. The kernels that scale and copy its own entries stop at
+    them; read past them, results are unchanged (the staged sources are written
+    after), so only bounds checks (debug mode) see it."""
+    second = dispatch.as_device(_SecondCPU())
+    two = amr_of([[b.to_device(second) if k % 2 else b for k, b in enumerate(level)]
+                  for level in _three_levels(kind)], [2, 2])
+    was = dispatch.debug_enabled()
+    tack.set_debug(True)
+    try:
+        td.average_down(two, "c")
+    finally:
+        tack.set_debug(was)
+
+
+def test_grown_boxes_on_two_devices_have_room_for_their_staged_sources():
+    """``ghost_cells`` makes each group's arrays with room after its boxes for the
+    sources the other device's boxes stage (``_with_room``), so the fills run in
+    place: a group's values are one stretch with that room, as ``_Fill.run`` asks."""
+    from tack import arrays
+
+    second = dispatch.as_device(_SecondCPU())
+    two = amr_of([[b.to_device(second) if k % 2 else b for k, b in enumerate(level)]
+                  for level in _three_levels("image")], [2, 2])
+    grown = td.ghost_cells(two)
+    boxes = [box for _, box in grown]
+    staged = 0
+    for what in ("cells", "points"):
+        fill = grown._fills[what]
+        name = "c" if what == "cells" else "p"
+        for g in fill.groups.blocks.local:
+            m = fill.boxes[g]["m"]
+            if m:
+                parts = [boxes[i].fields[name].values for i in fill.groups.members[g]]
+                assert arrays._joined_view(parts, m) is not None, (what, g)
+                staged += 1
+    assert staged
+
+
+@pytest.mark.parametrize("kind", ["image", "curvilinear"])
+@pytest.mark.parametrize("d", [2, 3])
+def test_rows_meeting_more_boxes_than_they_keep_search_entry_by_entry(kind, d, monkeypatch):
+    """``ghost_cells``' source kernels find the siblings meeting a row of a box's
+    shell once (``row_boxes``), and a row meeting more than they keep
+    (``_row_most``) searches the bins entry by entry. Keeping none, every row that
+    meets a sibling does: the same grown hierarchy, bit for bit."""
+    from tack.dataset.algorithms import amr_ghosts
+
+    kept = td.ghost_cells(hierarchy(kind, d))
+    monkeypatch.setattr(amr_ghosts, "_row_most", 0)
+    searched = td.ghost_cells(hierarchy(kind, d))
+    for (_, a), (_, b) in zip(kept, searched):
+        np.testing.assert_array_equal(a.ghosts.cells.numpy(), b.ghosts.cells.numpy())
+        np.testing.assert_array_equal(a.ghosts.points.numpy(), b.ghosts.points.numpy())
+        for name in a.fields:
+            np.testing.assert_array_equal(a.fields[name].values.numpy(),
+                                          b.fields[name].values.numpy())
+
+
+def _same_part(a, b):
+    """Whether two datasets' attribute values are alike: the same object where the
+    constructor keeps what it was given, else equal (containers by content)."""
+    from tack.dataset.dataset import Fields
+    from tack.dataset.sets import Sets
+
+    if isinstance(a, Fields):
+        return (type(b) is Fields and a._topology is b._topology
+                and [(n, f) for n, f in a._entries] == [(n, f) for n, f in b._entries])
+    if isinstance(a, Sets):
+        return type(b) is Sets and a._topology is b._topology and dict(a) == dict(b)
+    if isinstance(a, td.Field):
+        return (type(b) is td.Field and a.space is b.space and a.values is b.values
+                and a.unit == b.unit and a.gradient is b.gradient)
+    return a is b or (type(a) is type(b) and a == b)
+
+
+@pytest.mark.parametrize("parts", ["all", "none"])
+def test_assembled_datasets_are_constructed_ones(parts):
+    """``DataSet._assembled`` (what makes an AMR hierarchy's boxes by the thousand,
+    in ``ghost_cells`` and ``vtk_to_dataset``) makes, without checking, the dataset
+    ``DataSet(...)`` makes of the same parts: attribute for attribute, so a part the
+    constructor sets is not one ``_assembled`` forgets."""
+    from tack.dataset import GlobalIds
+    from tack.dataset.dataset import DataSet
+
+    box = image((2, 4), (4, 6), 0.5)
+    topology = box.topology
+    geometry = td.Field(td.H1(topology), box.geometry.values, "m")
+    p = td.Field(td.H1(topology), box.fields["p"].values, "K")
+    c = td.Field(td.Constant(topology), box.fields["c"].values)
+    shared = td.Field(td.Constant(topology), box.fields["c"].values, "s")
+    if parts == "all":
+        ghosts = Ghosts(cells=tack.zeros(topology.num_cells, tack.u8),
+                        points=tack.zeros(topology.num_points, tack.u8))
+        ids = GlobalIds(cells=tack.arange(topology.num_cells, dtype=tack.i64),
+                        points=tack.arange(topology.num_points, dtype=tack.i64))
+        frame = {"origin": (1.0, 2.0, 3.0), "time": 0.5, "time_unit": "s"}
+        entries = [("p", p), ("c", c), ("p", shared)]
+    else:
+        ghosts = ids = None
+        frame = {"origin": (0.0, 0.0, 0.0), "time": None, "time_unit": None}
+        entries = []
+    made = DataSet(topology, geometry, fields=[((n, f.space), f) for n, f in entries],
+                   ghosts=ghosts, global_ids=ids, **frame)
+    assembled = DataSet._assembled(topology, geometry, entries, ghosts, ids, **frame)
+    assert vars(assembled).keys() == vars(made).keys()
+    for key, value in vars(made).items():
+        assert _same_part(vars(assembled)[key], value), key
+    assert assembled.unit == made.unit == "m" and assembled.dtype == made.dtype
+
+
+def _same_vars(a, b, what):
+    """``a`` and ``b`` have the same attributes, in the same order, of equal values:
+    numbers, tuples, types; device arrays the same object (an image's shared
+    identity); NumPy arrays equal; domain groups by their own attributes."""
+    from tack.dataset.views import DomainGroup
+
+    assert list(vars(a)) == list(vars(b)), what
+    for key, x in vars(a).items():
+        y = vars(b)[key]
+        if isinstance(x, np.ndarray):
+            np.testing.assert_array_equal(x, y, err_msg=f"{what}.{key}")
+        elif isinstance(x, list) and x and isinstance(x[0], DomainGroup):
+            assert [vars(g) for g in x] == [vars(g) for g in y], f"{what}.{key}"
+        elif isinstance(x, tack.Array):
+            assert x is y, f"{what}.{key}"
+        elif key == "topology":                 # each its own box's (the caller's check)
+            continue
+        elif key != "_spaces":                  # weak references, per topology
+            assert type(x) is type(y) and x == y, f"{what}.{key}"
+
+
+@pytest.mark.parametrize("dims", [(3,), (3, 4), (3, 4, 5)])
+def test_assembled_parts_are_constructed_ones(dims):
+    """The parts an AMR hierarchy's boxes are made of by the thousand, assembled
+    without their constructors' checks (``StructuredTopology._assembled``,
+    ``UniformCoordinates._assembled``, ``Field._assembled``), are the ones the
+    constructors make: attribute for attribute, in order."""
+    from tack.arrays import UniformCoordinates
+    from tack.dataset import StructuredTopology, ids
+    from tack.runtime.dispatch import backend_of
+
+    offset = tuple(range(2, 2 + len(dims)))
+    made = StructuredTopology(dims, offset=offset)
+    n = max(made.num_points, 12 * made.num_cells)
+    _same_vars(StructuredTopology._assembled(dims, offset, ids.choose(None, n),
+                                             backend_of(None)), made, "topology")
+    three = dims + (1,) * (3 - len(dims))
+    for dtype in (tack.f32, tack.f64):
+        made = UniformCoordinates(dims, (0.5, -1.0, 2.0), (0.25, 0.5, 1.0), dtype=dtype)
+        _same_vars(UniformCoordinates._assembled(three, (0.5, -1.0, 2.0), (0.25, 0.5, 1.0),
+                                                 dtype, tack.get_default_device()),
+                   made, "coordinates")
+    topology = StructuredTopology(dims)
+    values = tack.zeros(topology.num_points, tack.f32)
+    made = td.Field(td.H1(topology), values, "K")
+    assembled = td.Field._assembled(td.H1(topology), values, "K")
+    assert list(vars(assembled)) == list(vars(made))
+    assert all(vars(assembled)[k] is v or vars(assembled)[k] == v for k, v in vars(made).items())
+    cells = tack.zeros(topology.num_cells, tack.u8)
+    points = tack.zeros(topology.num_points, tack.u8)
+    for given in ((cells, points), (cells, None), (None, points)):
+        made, assembled = Ghosts(*given), Ghosts._assembled(*given)
+        assert list(vars(assembled)) == list(vars(made))
+        assert all(vars(assembled)[k] is v for k, v in vars(made).items())
+
+
+@needs_vtk
+@pytest.mark.parametrize("copy", [True, False])
+@pytest.mark.parametrize("source", ["pulse", "hierarchy", "ghosts"])
+def test_staged_boxes_are_the_boxes_converted_one_by_one(source, copy, monkeypatch):
+    """``vtk_to_dataset`` of a ``vtkOverlappingAMR`` stages its boxes' values in one
+    array a field (copying; or shares blocks lying end to end, ``copy=False``) and
+    makes each image box from parts made without their checks
+    (``_ImageBoxes``, ``DataSet._assembled``). The boxes are the ones the long
+    way, ``_vtk_to_dataset`` of each block, makes: attribute for attribute, in
+    order (the topology, the coordinates, the fields and their spaces), marks,
+    global ids and frame."""
+    from tack.interop import vtk as interop
+    from tack.interop.vtk import dataset_to_vtk, vtk_to_dataset
+
+    amr = td.amr_gaussian_pulse() if source == "pulse" else hierarchy("image", 3)
+    if source == "hierarchy":
+        for _, box in amr:
+            box.fields["p"] = td.Field(box.fields["p"].space, box.fields["p"].values, "K")
+    vtk = dataset_to_vtk(amr)
+    if source == "ghosts":                      # VTK's own marks, and global ids
+        from vtkmodules.vtkCommonCore import vtkIdTypeArray
+
+        for block in _vtk_blocks(vtk):
+            ids = vtkIdTypeArray(np.arange(block.GetNumberOfCells()))
+            ids.SetName("ids")
+            block.GetCellData().SetGlobalIds(ids)
+    quick_box, made = interop._ImageBoxes.box, []
+    monkeypatch.setattr(interop._ImageBoxes, "box",
+                        lambda self, block, lo: made.append(quick_box(self, block, lo))
+                        or made[-1])
+    quick = vtk_to_dataset(vtk, copy=copy)
+    assert made and None not in made                   # every box the quick way
+    monkeypatch.setattr(interop._ImageBoxes, "box", lambda self, block, lo: None)
+    long = vtk_to_dataset(vtk, copy=copy)
+    for (_, a), (_, b) in zip(quick, long, strict=True):
+        assert vars(a).keys() == vars(b).keys()
+        _same_vars(a.topology, b.topology, "topology")
+        _same_vars(a.geometry.values, b.geometry.values, "coordinates")
+        assert type(a.geometry.space) is type(b.geometry.space)
+        assert a.geometry.unit == b.geometry.unit and a.geometry.gradient is None
+        assert [(n, type(f.space), f.unit) for n, f in a.fields.entries()] == \
+            [(n, type(f.space), f.unit) for n, f in b.fields.entries()]
+        for (_, fa), (_, fb) in zip(a.fields.entries(), b.fields.entries()):
+            assert list(vars(fa)) == list(vars(fb)) and fa.gradient is fb.gradient is None
+            assert fa.space.topology is a.topology and fb.space.topology is b.topology
+            _same_vars(fa.space, fb.space, "space")
+            np.testing.assert_array_equal(fa.values.numpy(), fb.values.numpy())
+        for kind in ("cells", "points"):
+            ma, mb = getattr(a.ghosts, kind), getattr(b.ghosts, kind)
+            assert (ma is None) == (mb is None)
+            if ma is not None:
+                np.testing.assert_array_equal(ma.numpy(), mb.numpy())
+            ia = getattr(a.global_ids, kind, None)
+            ib = getattr(b.global_ids, kind, None)
+            assert (ia is None) == (ib is None)
+            if ia is not None:
+                np.testing.assert_array_equal(ia.numpy(), ib.numpy())
+        assert (a.global_ids is None) == (source != "ghosts")
+        assert (a.origin, a.unit, a.time, a.time_unit, a.dtype) == \
+            (b.origin, b.unit, b.time, b.time_unit, b.dtype)
+
+
+def _vtk_blocks(out):
+    """A VTK export's blocks in the hierarchy's order: a ``vtkOverlappingAMR``'s, or
+    the levels' partitions of a collection."""
+    if out.class_name == "vtkOverlappingAMR":
+        return [out.GetDataSetAsCartesianGrid(level, i)
+                for level in range(out.GetNumberOfLevels())
+                for i in range(out.GetNumberOfBlocks(level))]
+    return [out.GetPartitionedDataSet(level).GetPartition(i)
+            for level in range(out.number_of_partitioned_data_sets)
+            for i in range(out.GetPartitionedDataSet(level).number_of_partitions)]
+
+
+@needs_vtk
+@pytest.mark.parametrize("kind", ["image", "curvilinear"])
+def test_a_hierarchy_given_to_vtk_without_copies_shares_its_arrays(kind):
+    """``dataset_to_vtk(amr, copy=False)`` hands VTK the boxes' own memory, as it does
+    any dataset's: each block's arrays point at the box's views, at their offsets in
+    the one array of the field, for a ``vtkOverlappingAMR`` (images) and for the
+    collection of levels a curvilinear hierarchy becomes. ``copy=True`` copies."""
+    amr = amr_of(_three_levels(kind), [2, 2])
+    boxes = [box for _, box in amr]
+    shared, copied = dataset_to_vtk(amr, copy=False), dataset_to_vtk(amr)
+    assert shared.class_name == ("vtkOverlappingAMR" if kind == "image"
+                                 else "vtkPartitionedDataSetCollection")
+    for name, data in (("c", "GetCellData"), ("p", "GetPointData")):
+        views = [box.fields[name].values for box in boxes]
+        root = views[0]._buffer._root
+        assert all(v._buffer._root is root for v in views)
+        size = views[0].dtype.numpy_dtype.itemsize
+        for block, view in zip(_vtk_blocks(shared), views):
+            at = np.asarray(getattr(block, data)().GetArray(name)).ctypes.data
+            assert at == root.address + view._buffer._start * size
+        for block, view in zip(_vtk_blocks(copied), views):
+            at = np.asarray(getattr(block, data)().GetArray(name)).ctypes.data
+            assert at != root.address + view._buffer._start * size
+
+
+@needs_vtk
+def test_blocks_lying_end_to_end_come_back_as_one_shared_array():
+    """``vtk_to_dataset(amr, copy=False)`` of a ``vtkOverlappingAMR`` whose blocks' arrays
+    lie end to end in memory (a field read into one array, each block a view of it,
+    as ``dataset_to_vtk(amr, copy=False)`` and a NumPy reader lay them out) shares
+    them as one array a field, each box's values a view of it, over the same memory;
+    it outlives the VTK and Tack objects it came from. Blocks that do not abut (a
+    copy), or values converted to another type, are taken box by box, alike."""
+    import gc
+
+    from tack.interop.vtk import dataset_to_vtk, vtk_to_dataset
+
+    amr = amr_of(_three_levels("image"), [2, 2])
+    expected = {name: [box.fields[name].values.numpy() for _, box in amr]
+                for name in ("c", "p")}
+    roots = {name: next(iter(amr))[1].fields[name].values._buffer._root for name in expected}
+    vtk = dataset_to_vtk(amr, copy=False)
+    back = vtk_to_dataset(vtk, copy=False, dtype=None)
+    for name, values in expected.items():
+        views = [box.fields[name].values for _, box in back]
+        assert _is_view_of_one(views)
+        assert views[0]._buffer._root.address == roots[name].address    # the same memory
+        for view, want in zip(views, values):
+            np.testing.assert_array_equal(view.numpy(), want)
+    del amr, vtk, roots
+    gc.collect()
+    for name, values in expected.items():
+        for (_, box), want in zip(back, values):
+            np.testing.assert_array_equal(box.fields[name].values.numpy(), want)
+
+    apart = vtk_to_dataset(dataset_to_vtk(amr_of(_three_levels("image"), [2, 2])),
+                           copy=False, dtype=None)
+    converted = vtk_to_dataset(dataset_to_vtk(amr_of(_three_levels("image"), [2, 2]),
+                                              copy=False), copy=False, dtype=tack.f64)
+    for other in (apart, converted):
+        assert not _is_view_of_one([box.fields["c"].values for _, box in other])
+        for (_, box), want in zip(other, expected["c"]):
+            np.testing.assert_array_equal(box.fields["c"].values.numpy(), want)

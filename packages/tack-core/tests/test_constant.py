@@ -4,9 +4,12 @@
 """tack.constant: named values a kernel may read from its defining scope."""
 
 import math
+import re
+import subprocess
 
 import numpy as np
 import pytest
+from compiler_tools import require_clang
 
 import tack
 from tack.codegen.cuda_gen import generate_cuda_source
@@ -113,6 +116,76 @@ def test_no_generator_writes_a_decrement(generate):
     source = generate(func)
     assert "--" not in source
     assert "(-(-3e+38f))" in source
+
+
+NAN = tack.constant(math.nan)
+INFINITE = tack.constant(math.inf)
+NEGATIVE_INFINITE = tack.constant(-math.inf)
+NAN64 = tack.constant(math.nan, tack.f64)
+INFINITE64 = tack.constant(math.inf, tack.f64)
+
+
+@tack.kernel
+def non_finite(out, n):
+    for i in range(n):
+        out[3 * i] = NAN
+        out[3 * i + 1] = INFINITE
+        out[3 * i + 2] = NEGATIVE_INFINITE
+
+
+@tack.kernel
+def non_finite_double(out, n):
+    for i in range(n):
+        out[2 * i] = NAN64
+        out[2 * i + 1] = -INFINITE64
+
+
+def test_non_finite_constants(backend):
+    """NaN and infinite constants, f32 and (where the device has it) f64. The C
+    generators wrote them ``nanf`` and ``inff``, names no dialect declares."""
+    out = tack.zeros((6,))
+    non_finite(out, 2)
+    v = out.numpy()
+    assert np.isnan(v[0::3]).all()
+    assert (v[1::3] == np.inf).all() and (v[2::3] == -np.inf).all()
+    if tack.runtime.dispatch.get_backend().supports_f64:
+        wide = tack.zeros((4,), tack.f64)
+        non_finite_double(wide, 2)
+        w = wide.numpy()
+        assert np.isnan(w[0::2]).all() and (w[1::2] == -np.inf).all()
+
+
+def _non_finite_sources(generate, double):
+    tack.set_default_device("cpu")
+    kernel, out = (non_finite_double, tack.zeros((4,), tack.f64)) if double else \
+        (non_finite, tack.zeros((6,)))
+    func, _ = _prepare_ir(kernel, (out, 2))
+    annotate_types(func)
+    return generate(func)
+
+
+@pytest.mark.parametrize("generate, double", [
+    (generate_cuda_source, False), (generate_cuda_source, True),
+    (generate_hip_source, False), (generate_hip_source, True),
+    (generate_opencl_source, False), (generate_opencl_source, True),
+    (generate_msl_source, False)],
+    ids=["cuda", "cuda-f64", "hip", "hip-f64", "opencl", "opencl-f64", "metal"])
+@pytest.mark.usefixtures("no_debug")
+def test_no_generator_names_nan_or_inf(generate, double):
+    source = _non_finite_sources(generate, double)
+    assert not re.search(r"(?<![\w.])(nan|inf)f?(?![\w(])", source), source
+
+
+@pytest.mark.usefixtures("no_debug")
+def test_opencl_non_finite_constants_compile(tmp_path):
+    clang = require_clang()
+    for double in (False, True):
+        path = tmp_path / f"non_finite_{int(double)}.cl"
+        path.write_text(_non_finite_sources(generate_opencl_source, double))
+        result = subprocess.run(
+            [clang, "-target", "x86_64-unknown-linux-gnu", "-x", "cl", "-cl-std=CL2.0",
+             "-fsyntax-only", str(path)], capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
 
 
 def test_constants_read_as_their_values(backend):

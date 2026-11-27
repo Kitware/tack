@@ -13,6 +13,8 @@ qualifiers, built-ins, kernel signatures, atomics) and sets up, in its own
 `_local_vars`, the scope stack, ...).
 """
 
+import math
+
 from tack.lang import ir
 from tack.lang.types import f64
 
@@ -168,8 +170,11 @@ class CFamilyCodeGen:
 
     def _expr_constant(self, node: ir.IRConstant) -> str:
         if isinstance(node.value, float):
+            double = self._HAS_F64 and getattr(node, 'dtype', None) is f64
+            if not math.isfinite(node.value):
+                return self._non_finite(node.value, double)
             # repr round-trips, so an unsuffixed double literal is exact.
-            if self._HAS_F64 and getattr(node, 'dtype', None) is f64:
+            if double:
                 return repr(node.value)
             return f"{node.value!r}f"
         if isinstance(node.value, bool):
@@ -182,6 +187,19 @@ class CFamilyCodeGen:
             literal = f'(-{-(node.value + 1)}LL - 1LL)' if node.value < 0 else f'{node.value}ULL'
             return f'(({ctype})({literal}))'
         return str(node.value)
+
+    def _non_finite(self, value: float, double: bool) -> str:
+        """NaN or an infinity, which have no literal (``repr`` gives ``nan`` and
+        ``inf``, names no dialect declares): its bits, reinterpreted as the
+        dialect spells it (`_FLOAT_BITS`). NaN is the quiet one; its payload and
+        sign are outside the floating-point baseline."""
+        if math.isnan(value):
+            bits = 0x7FF8000000000000 if double else 0x7FC00000
+        else:
+            bits = 0x7FF0000000000000 if double else 0x7F800000
+            if value < 0:
+                bits |= (1 << 63) if double else (1 << 31)
+        return self._FLOAT_BITS[double].format(bits=f"{bits:#x}")
 
     def _expr_ifexp(self, node: ir.IRIfExp) -> str:
         cond = self._ifexp_condition(node.condition)

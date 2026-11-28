@@ -588,6 +588,123 @@ def test_a_dropped_array_goes_back_to_the_pool_before_its_launches_complete():
         del again
 
 
+def _slow_launch(n=1 << 18, rounds=100_000):
+    """A launch that runs a while (a few hundred ms), queued: its output."""
+    src = tack.array(np.arange(n, dtype=np.int32))
+    out = tack.empty((n,), tack.i32)
+    _churn(src, out, 1)                       # compiled before it is timed
+    tack.sync()
+    _churn(src, out, rounds)
+    return out
+
+
+def test_a_host_access_waits_only_for_the_launches_using_its_buffer():
+    """A host access waits for the queued launches that use its buffer, not for
+    every launch queued: a new array uploaded, read back and filled while a long
+    launch on other arrays runs does not wait for it (another thread's long launch
+    held a renderer's small uploads until it was done); the launch's output waits."""
+    import time
+
+    out = _slow_launch()
+    t = time.perf_counter()
+    other = tack.array(np.arange(1000, dtype=np.int32))
+    np.testing.assert_array_equal(other.numpy(), np.arange(1000))
+    other.fill(7)
+    np.testing.assert_array_equal(other.numpy(), np.full(1000, 7))
+    quick = time.perf_counter() - t
+    out.numpy()                               # waits for the launch
+    whole = time.perf_counter() - t
+    assert whole > 0.05, f"the launch took {whole * 1e3:.0f} ms: too short to tell"
+    assert quick < whole / 4, f"{quick * 1e3:.0f} ms of the launch's {whole * 1e3:.0f}"
+
+
+def test_another_threads_arrays_do_not_wait_for_this_ones_launch():
+    """As a rendering thread uploads and reads its own arrays while a pipeline
+    thread's long launch is queued: the second thread's host accesses go at once."""
+    import threading
+    import time
+
+    out = _slow_launch()
+    took = {}
+
+    def other_thread():
+        t = time.perf_counter()
+        a = tack.array(np.full(4096, 3.0, np.float32))
+        b = tack.empty((4096,), tack.f32)
+        _copy_kernel(a, b)                    # a launch of its own, and its read
+        took["own"] = time.perf_counter() - t, b.numpy()
+
+    thread = threading.Thread(target=other_thread)
+    t = time.perf_counter()
+    thread.start()
+    thread.join()
+    out.numpy()
+    whole = time.perf_counter() - t
+    own, values = took["own"]
+    np.testing.assert_array_equal(values, np.full(4096, 3.0, np.float32))
+    assert own < whole / 3, f"{own * 1e3:.0f} ms against {whole * 1e3:.0f} ms"
+
+
+def test_a_launch_on_another_thread_waits_for_the_launches_writing_its_input():
+    """Each thread launches on a queue of its own, and two queues are not ordered:
+    a launch on one thread that reads what a long launch queued on another wrote
+    waits for it first (a pipeline thread's output, drawn by a rendering thread)."""
+    import threading
+
+    out = _slow_launch()                          # queued on this thread's queue
+    got = {}
+
+    def reader():
+        copy = tack.empty(out.shape, tack.i32)
+        _copy_kernel(out, copy)                   # on the other thread's queue
+        got["copy"] = copy.numpy()
+
+    thread = threading.Thread(target=reader)
+    thread.start()
+    thread.join()
+    np.testing.assert_array_equal(got["copy"], out.numpy())
+
+
+def test_sync_waits_for_every_threads_launches():
+    """``tack.sync()`` waits for the launches every thread queued, not only its own."""
+    import threading
+
+    made = {}
+
+    def launcher():
+        made["out"] = _slow_launch()              # queued, not waited for
+
+    thread = threading.Thread(target=launcher)
+    thread.start()
+    thread.join()
+    tack.sync()
+    from tack.runtime.dispatch import get_backend
+
+    backend = get_backend()
+    assert all(q.open is None and not q.committed for q in backend._queues)
+    expected = made["out"].numpy()
+    assert expected.any()
+
+
+@tack.kernel
+def _copy_kernel(a, b):
+    for i in range(a.shape[0]):
+        b[i] = a[i]
+
+
+def test_a_view_and_its_root_wait_for_each_others_launches():
+    """A view's binding is its root's MTLBuffer: a launch writing through a view is
+    waited for by a read of the root, and one writing the root by a read of a view."""
+    whole = tack.zeros((1 << 16,), tack.i32)
+    part = whole[100:200]
+    _overwrite(part)
+    expected = np.zeros(1 << 16, np.int32)
+    expected[100:200] = -1
+    np.testing.assert_array_equal(whole.numpy(), expected)
+    _overwrite(whole)
+    np.testing.assert_array_equal(whole[5000:5010].numpy(), np.full(10, -1))
+
+
 def test_which_buffers_a_queued_launch_lets_go():
     """A queued launch keeps only the MTLBuffer of an array from its own backend's
     pool, not handed outside Tack; anything else it keeps whole: another

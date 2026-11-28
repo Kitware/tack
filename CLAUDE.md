@@ -289,7 +289,11 @@ textures retain their separate binding namespace. Each cached dispatch refreshes
 the buffer references and declares indirect-resource residency with
 `useResource`. Launches are queued, not waited for (`MetalBackend`
 `_open_batch`/`_launched`/`synchronize`): each encodes a compute pass into
-the open command buffer, committed every 64 launches with at most 4 in
+the open command buffer of its thread's own queue (`_Queue`, made on a
+thread's first launch: one thread's launches run beside another's rather
+than in line behind them; a launch using a buffer another queue's launches
+use waits for those first, `_encode`; `tack.sync()` waits for every
+queue), committed every 64 launches with at most 4 in
 flight, and owns what it reads -- a fresh argument buffer, its packed
 scalars as `_Uniforms`, references to its arrays' MTLBuffers until it
 completes (for an array of the backend's pool, not shared, the MTLBuffer
@@ -305,11 +309,22 @@ recommended working set or 8 GiB, never memory handed outside Tack) and are
 reused without clearing (`starts_zeroed` false on that buffer, so `zeros`
 fills it): a new buffer's pages are mapped and cleared on first touch at
 about 13 GB/s, which made large filters' temporaries cost more than their
-kernels (`test_zeros_are_zero_on_reused_buffers`). Bindings
+kernels (`test_zeros_are_zero_on_reused_buffers`); the pool gives a thread a
+buffer another thread's queued launches still use only when it has no other
+(`_BufferPool.take`, `_in_use`). Bindings
 are resolved before an encoder opens, since committing an open encoder aborts. A
-buffer's host access waits for every live Metal backend (`_backends`,
-`_synchronize_all`), not the one it was made on, in case more than one
-exists (a backend constructed directly, as tests do). Memory
+`MetalBuffer`'s host access waits only for the queued launches that use its
+MTLBuffer (`_wait_for`): each launch notes, by MTLBuffer, the command buffer it
+went into, the latest per queue (`_used`, `_uses`; one queue runs its command
+buffers in commit order, but two queues -- two threads', two backends' -- are
+not ordered), an open one is committed first, and an
+entry goes once its command buffer is waited for (`_waited`). By MTLBuffer, so a
+view waits for its root's launches and a pooled buffer's next array for the last
+one's (#483); a buffer no launch used waits for nothing, so one thread's small
+uploads no longer wait for another's long launches
+(`test_another_threads_arrays_do_not_wait_for_this_ones_launch`). A launch's error
+surfaces at a host access of a buffer it used, or at `tack.sync()`. Wrapped
+buffers and texture uploads still wait for every backend (`_synchronize_all`). Memory
 handed outside Tack (DLPack, `export_memory`, `wrap_ptr`) is `_shared`: a
 launch using it completes before returning. Shared buffers are remembered by address (`_handed_out`), and `wrap_ptr` also takes a NumPy array of host memory (`_wrap_host`): a buffer Tack handed out comes back as itself, memory on whole pages through `newBufferWithBytesNoCopy`, anything else is refused for the caller to copy. The VTK interop's `copy=False` shares Metal arrays this way, with any VTK (`test_vtk_shared_metal.py`). Waiting after every launch cost
 about 0.3 ms each. `test_metal.py` covers order across batches, per-launch

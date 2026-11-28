@@ -493,10 +493,13 @@ a hundred small launches went from 8.7 to 2.6 ms.
   in the order they were made. On CUDA, HIP and Level Zero `from_numpy`
   and `fill` are queued with the launches; Metal's `MetalBuffer` methods
   wait for the queued launches that use their MTLBuffer (`_wait_for`: each
-  launch notes the command buffer it went into, by MTLBuffer and backend)
+  launch notes the command buffer it went into, by MTLBuffer and queue)
   before touching the shared memory, so one thread's host access does not
   wait for another thread's launches on other arrays; wrapped buffers and
   texture uploads wait for every live Metal backend's (`_synchronize_all`).
+  Each thread launches on a Metal command queue of its own, so its launches
+  run beside another thread's; a launch that uses a buffer another queue's
+  launches use waits for them first.
 - **Waits.** The host waits where it reads an array (`to_numpy`,
   `read_range` and so host indexing, reductions), where memory leaves
   Tack (`share()`, below), after each launch in debug mode (its check

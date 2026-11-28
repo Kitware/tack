@@ -645,6 +645,47 @@ def test_another_threads_arrays_do_not_wait_for_this_ones_launch():
     assert own < whole / 3, f"{own * 1e3:.0f} ms against {whole * 1e3:.0f} ms"
 
 
+def test_a_launch_on_another_thread_waits_for_the_launches_writing_its_input():
+    """Each thread launches on a queue of its own, and two queues are not ordered:
+    a launch on one thread that reads what a long launch queued on another wrote
+    waits for it first (a pipeline thread's output, drawn by a rendering thread)."""
+    import threading
+
+    out = _slow_launch()                          # queued on this thread's queue
+    got = {}
+
+    def reader():
+        copy = tack.empty(out.shape, tack.i32)
+        _copy_kernel(out, copy)                   # on the other thread's queue
+        got["copy"] = copy.numpy()
+
+    thread = threading.Thread(target=reader)
+    thread.start()
+    thread.join()
+    np.testing.assert_array_equal(got["copy"], out.numpy())
+
+
+def test_sync_waits_for_every_threads_launches():
+    """``tack.sync()`` waits for the launches every thread queued, not only its own."""
+    import threading
+
+    made = {}
+
+    def launcher():
+        made["out"] = _slow_launch()              # queued, not waited for
+
+    thread = threading.Thread(target=launcher)
+    thread.start()
+    thread.join()
+    tack.sync()
+    from tack.runtime.dispatch import get_backend
+
+    backend = get_backend()
+    assert all(q.open is None and not q.committed for q in backend._queues)
+    expected = made["out"].numpy()
+    assert expected.any()
+
+
 @tack.kernel
 def _copy_kernel(a, b):
     for i in range(a.shape[0]):

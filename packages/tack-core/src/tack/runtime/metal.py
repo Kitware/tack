@@ -123,10 +123,10 @@ atexit.register(_synchronize_all)
 
 
 # The command buffers whose launches use each MTLBuffer: by the buffer's id, the
-# latest one on each backend that encoded a launch using it (open or committed;
-# one queue runs its command buffers in the order they were committed, so the
-# latest covers the earlier ones, but two backends' queues are not ordered with
-# each other). A host access of a buffer waits for those alone (`_wait_for`), not
+# latest one on each queue (`_Queue`: a thread's on a backend) that encoded a
+# launch using it (open or committed; one queue runs its command buffers in the
+# order they were committed, so the latest covers the earlier ones, but two queues
+# are not ordered with each other). A host access of a buffer waits for those alone (`_wait_for`), not
 # for every launch queued (`_synchronize_all`): a thread's small upload no longer
 # waits for another thread's long launches, and a buffer no launch has used waits
 # for nothing. Kept by MTLBuffer, not by `MetalBuffer`: a view's binding is its
@@ -134,25 +134,28 @@ atexit.register(_synchronize_all)
 # queued for the array that had it (#483), which a host access of the next array
 # given it must wait for. ``_uses_of`` (command buffer id -> buffer ids) lets an
 # entry go once its command buffer is waited for.
-_uses = {}           # id(MTLBuffer) -> {backend: command buffer}
+_uses = {}           # id(MTLBuffer) -> {queue: command buffer}
+_users = {}          # id(MTLBuffer) -> the thread (ident) that encoded its latest launch
 _uses_of = {}        # id(command buffer) -> ids of the MTLBuffers it is the latest for
 _uses_lock = threading.Lock()
 
 
-def _used(metal_buffer, backend, command_buffer):
-    """Note that a launch encoded into ``command_buffer`` uses ``metal_buffer``."""
+def _used(metal_buffer, queue, command_buffer):
+    """Note that a launch encoded into ``command_buffer`` (of ``queue``) uses
+    ``metal_buffer``."""
     key = id(metal_buffer)
     with _uses_lock:
         entry = _uses.setdefault(key, {})
-        previous = entry.get(backend)
+        previous = entry.get(queue)
         if previous is command_buffer:
             return
         if previous is not None:
             marked = _uses_of.get(id(previous))
             if marked is not None:
                 marked.discard(key)
-        entry[backend] = command_buffer
+        entry[queue] = command_buffer
         _uses_of.setdefault(id(command_buffer), set()).add(key)
+        _users[key] = threading.get_ident()
 
 
 def _waited(command_buffer):
@@ -162,29 +165,63 @@ def _waited(command_buffer):
             entry = _uses.get(key)
             if entry is None:
                 continue
-            for backend, latest in list(entry.items()):
+            for queue, latest in list(entry.items()):
                 if latest is command_buffer:
-                    del entry[backend]
+                    del entry[queue]
             if not entry:
                 del _uses[key]
+                _users.pop(key, None)
 
 
-def _wait_for(metal_buffer):
+def _in_use(metal_buffer):
+    """Whether a queued launch that has not completed uses ``metal_buffer``: None
+    if none does, else the thread (ident) that encoded the latest."""
+    key = id(metal_buffer)
+    with _uses_lock:
+        entry = list(_uses.get(key, {}).values())
+        user = _users.get(key)
+    # MTLCommandBufferStatusCompleted (4), MTLCommandBufferStatusError (5)
+    return user if any(command_buffer.status() < 4 for command_buffer in entry) else None
+
+
+def _wait_for(metal_buffer, but=None):
     """Wait for the launches queued that use ``metal_buffer`` (committing an open
-    batch that holds one), and raise a launch's error among them."""
+    batch that holds one), but those of queue ``but``, and raise a launch's error
+    among them."""
     with _uses_lock:
         entry = dict(_uses.get(id(metal_buffer), ()))
     error = None
-    for backend, command_buffer in entry.items():
-        with backend._batch_lock:
-            if backend._open is not None and backend._open[0] is command_buffer:
-                backend._commit_open()
+    for queue, command_buffer in entry.items():
+        if queue is but:
+            continue
+        with queue.backend._batch_lock:
+            if queue.open is not None and queue.open[0] is command_buffer:
+                queue.backend._commit_open(queue)
         command_buffer.waitUntilCompleted()
         if error is None:
             error = command_buffer.error()
         _waited(command_buffer)
     if error is not None:
         raise RuntimeError(f"Metal compute error: {error}")
+
+
+class _Queue:
+    """A thread's command queue on a backend, and its batches: the open command
+    buffer and what its launches read (kept alive until it completes; MTLBuffers,
+    `_reusable_while_queued`), and the committed ones not yet waited for, oldest
+    first. Each thread that launches has its own, so one thread's launches run
+    beside another's rather than in a line behind them (a renderer's march waited
+    seconds behind a pipeline thread's kernels in one queue); a launch that uses a
+    buffer another queue's launches use first waits for them (`_encode`)."""
+
+    __slots__ = ("__weakref__", "backend", "command_queue", "committed", "open", "thread")
+
+    def __init__(self, backend, command_queue, thread):
+        self.backend = backend
+        self.command_queue = command_queue
+        self.thread = weakref.ref(thread)
+        self.open = None               # [command buffer, keep list, launches]
+        self.committed = deque()       # (command buffer, keep list)
 
 
 class _BufferPool:
@@ -217,11 +254,23 @@ class _BufferPool:
         return -(-nbytes // step) * step
 
     def take(self, capacity):
+        """The latest kept buffer of ``capacity`` that no other thread's queued
+        launches use (this thread's may: the queue keeps their order, #483);
+        None if there is none. One another thread's queued launches use is left:
+        the array given it would wait for them, which may be long, at its first
+        host access and in the queue (a frame's temporaries waited seconds behind
+        a pipeline thread's that way)."""
+        me = threading.get_ident()
         with self._lock:
             tokens = self._by_capacity.get(capacity)
             if not tokens:
                 return None
-            _, buffer = self._entries.pop(tokens.pop())
+            for at in range(len(tokens) - 1, -1, -1):
+                if _in_use(self._entries[tokens[at]][1]) in (None, me):
+                    break
+            else:
+                return None
+            _, buffer = self._entries.pop(tokens.pop(at))
             self.held -= capacity
             return buffer
 
@@ -281,12 +330,14 @@ def _reusable_while_queued(buffer, backend):
     MTLBuffer go back to the pool before the launch completes (#483).
 
     Safe as a stream-ordered pool is: a later array given the MTLBuffer is used
-    by launches encoded after this one on the same queue, which Metal runs
-    after it (a compute pass each, hazards tracked), and by the host only
+    by launches encoded after this one, on the same queue, which Metal runs
+    after it (a compute pass each, hazards tracked), or on another thread's,
+    which waits for it first (`_encode`; the pool gives a thread a buffer
+    another thread's queued launches use only when it has no other,
+    `_BufferPool.take`), and by the host only
     through `MetalBuffer` methods, which wait first for every queued launch
     that uses the MTLBuffer (`_wait_for`, which keeps track by MTLBuffer).
-    So only a buffer of ``backend``'s own pool (another backend's queue is not
-    ordered with this one), not handed outside Tack (``_shared``: read with no
+    So only a buffer of ``backend``'s own pool, not handed outside Tack (``_shared``: read with no
     Tack call between, and its launches complete before returning anyway).
     Wrapped memory and buffers under the pool's ``MIN`` have no pool, and keep
     their owner as before: a wrapped MTLBuffer's memory lives only as long as
@@ -571,6 +622,12 @@ class CompiledMetalKernel:
             group_size = Metal.MTLSizeMake(threads_per_group, 1, 1)
 
         backend = self._backend
+        queue = backend._queue()
+        # A buffer another queue's launches use (another thread's, or another
+        # backend's) is waited for first: two queues are not ordered.
+        for kind, _, value in bindings:
+            if kind == "array":
+                _wait_for(value, but=queue)
         command_buffer, keep = backend._open_batch()
         argument_buffer = None
         if self._argument_encoder is not None:
@@ -604,7 +661,7 @@ class CompiledMetalKernel:
                     encoder.useResource_usage_(
                         value, Metal.MTLResourceUsageRead | Metal.MTLResourceUsageWrite)
                     keep.append(value if _reusable_while_queued(owner, backend) else owner)
-                    _used(value, backend, command_buffer)
+                    _used(value, queue, command_buffer)
                 else:
                     # Scalar: copied into the command buffer with the launch
                     encoder.setBytes_length_atIndex_(value, len(value), buf_idx)
@@ -680,21 +737,21 @@ _REDUCE_MSL_MAX = array_reduction_source('metal', 'max')
 
 
 class _CommandBufferMarker:
-    """Waits for one committed command buffer, from any thread
-    (`Backend.async_marker`); the backend's queue still drops it, and the
-    arguments it keeps alive, at its next synchronize."""
+    """Waits for committed command buffers (each queue's last), from any thread
+    (`Backend.async_marker`); the backend's queues still drop them, and the
+    arguments they keep alive, at its next synchronize."""
 
-    __slots__ = ("_command_buffer",)
+    __slots__ = ("_command_buffers",)
 
-    def __init__(self, command_buffer):
-        self._command_buffer = command_buffer
+    def __init__(self, command_buffers):
+        self._command_buffers = list(command_buffers)
 
     def wait(self):
-        command_buffer = self._command_buffer
-        if command_buffer is None:
-            return
-        command_buffer.waitUntilCompleted()
-        error = command_buffer.error()
+        error = None
+        for command_buffer in self._command_buffers:
+            command_buffer.waitUntilCompleted()
+            if error is None:
+                error = command_buffer.error()
         if error is not None:
             raise RuntimeError(f"Metal compute error: {error}")
 
@@ -751,41 +808,65 @@ class MetalBackend(GPUBackend):
                                      8 << 30))
         self._cache = new_kernel_cache()  # Kernel -> {variant_key: CompiledMetalKernel}
         self._reduce_pipelines: dict[str, object] = {}
-        # Queued launches: the open command buffer and what its launches read
-        # (kept alive until it completes; MTLBuffers, `_reusable_while_queued`),
-        # and the committed ones not yet waited for, oldest first. One lock:
-        # launches from several threads encode one at a time, as they launched
-        # one at a time before.
+        # Queued launches: a queue of its own for each thread that launches
+        # (`_Queue`). One lock: launches from several threads encode one at a
+        # time, as they launched one at a time before; their command buffers then
+        # run on their own queues.
         self._batch_lock = threading.RLock()
-        self._open = None              # [command buffer, keep list, launches]
-        self._committed = deque()      # (command buffer, keep list)
+        self._queues = []              # every thread's `_Queue`
+        self._local = threading.local()
         _backends.add(self)
 
     _BATCH = 64          # launches per command buffer before it is committed
     _IN_FLIGHT = 4       # committed command buffers before the oldest is waited for
 
+    def _queue(self):
+        """This thread's queue (made on its first launch)."""
+        queue = getattr(self._local, "queue", None)
+        if queue is None:
+            queue = _Queue(self, self._device.newCommandQueue(), threading.current_thread())
+            with self._batch_lock:
+                # A thread that has ended and left nothing queued is let go.
+                self._queues = [q for q in self._queues if q.thread() is not None
+                                or q.open is not None or q.committed] + [queue]
+            self._local.queue = queue
+        return queue
+
+    # This thread's batches, as one queue's were the backend's.
+    @property
+    def _open(self):
+        return self._queue().open
+
+    @property
+    def _committed(self):
+        return self._queue().committed
+
     def _open_batch(self):
-        """The open command buffer and its keep list (under ``_batch_lock``)."""
-        if self._open is None:
-            self._open = [self._command_queue.commandBuffer(), [], 0]
-        return self._open[0], self._open[1]
+        """This thread's open command buffer and its keep list (under
+        ``_batch_lock``)."""
+        queue = self._queue()
+        if queue.open is None:
+            queue.open = [queue.command_queue.commandBuffer(), [], 0]
+        return queue.open[0], queue.open[1]
 
     def _launched(self):
         """Count a launch; commit the batch when full, and bound what is in flight."""
-        self._open[2] += 1
-        if self._open[2] >= self._BATCH:
-            self._commit_open()
-            while len(self._committed) > self._IN_FLIGHT:
-                self._wait_oldest()
+        queue = self._queue()
+        queue.open[2] += 1
+        if queue.open[2] >= self._BATCH:
+            self._commit_open(queue)
+            while len(queue.committed) > self._IN_FLIGHT:
+                self._wait_oldest(queue)
 
-    def _commit_open(self):
-        command_buffer, keep, _ = self._open
-        self._open = None
+    def _commit_open(self, queue=None):
+        queue = queue or self._queue()
+        command_buffer, keep, _ = queue.open
+        queue.open = None
         command_buffer.commit()
-        self._committed.append((command_buffer, keep))
+        queue.committed.append((command_buffer, keep))
 
-    def _wait_oldest(self):
-        command_buffer, _keep = self._committed.popleft()
+    def _wait_oldest(self, queue):
+        command_buffer, _keep = queue.committed.popleft()
         command_buffer.waitUntilCompleted()
         _waited(command_buffer)
         error = command_buffer.error()
@@ -793,8 +874,9 @@ class MetalBackend(GPUBackend):
             raise RuntimeError(f"Metal compute error: {error}")
 
     def synchronize(self):
-        """Commit the open batch and wait for every queued launch. A launch's
-        error surfaces here, at the next host access, rather than at its call.
+        """Commit the open batches and wait for every queued launch, every
+        thread's. A launch's error surfaces here (or at a host access of a buffer
+        it used), rather than at its call.
 
         The wait itself is outside ``_batch_lock``, so other threads keep
         launching while one waits: `Array.numpy_async` reads in a worker
@@ -805,31 +887,38 @@ class MetalBackend(GPUBackend):
         has already waited for, when they are dropped.
         """
         with self._batch_lock:
-            if self._open is not None:
-                self._commit_open()
-            pending = [command_buffer for command_buffer, _keep in self._committed]
+            queues = list(self._queues)
+            pending = []
+            for queue in queues:
+                if queue.open is not None:
+                    self._commit_open(queue)
+                pending += [command_buffer for command_buffer, _keep in queue.committed]
         for command_buffer in pending:
             command_buffer.waitUntilCompleted()
             _waited(command_buffer)
         waited = {id(command_buffer) for command_buffer in pending}
         error = None
         with self._batch_lock:
-            while self._committed and id(self._committed[0][0]) in waited:
-                command_buffer, _keep = self._committed.popleft()
-                if error is None:
-                    error = command_buffer.error()
+            for queue in queues:
+                while queue.committed and id(queue.committed[0][0]) in waited:
+                    command_buffer, _keep = queue.committed.popleft()
+                    if error is None:
+                        error = command_buffer.error()
         if error is not None:
             raise RuntimeError(f"Metal compute error: {error}")
 
     def async_marker(self):
-        """The last command buffer committed, after committing the open batch,
-        for `tack.sync_async` to wait on in a worker thread: one queue runs
-        its command buffers in the order they were committed."""
+        """Each queue's last command buffer committed, after committing the open
+        batches, for `tack.sync_async` to wait on in a worker thread: one queue
+        runs its command buffers in the order they were committed."""
         with self._batch_lock:
-            if self._open is not None:
-                self._commit_open()
-            last = self._committed[-1][0] if self._committed else None
-        return _CommandBufferMarker(last)
+            lasts = []
+            for queue in self._queues:
+                if queue.open is not None:
+                    self._commit_open(queue)
+                if queue.committed:
+                    lasts.append(queue.committed[-1][0])
+        return _CommandBufferMarker(lasts)
 
     def allocate_array(self, dtype: ScalarType, shape: tuple[int, ...],
                         exportable: bool = False) -> MetalBuffer:

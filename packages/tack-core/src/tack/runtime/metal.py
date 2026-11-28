@@ -122,6 +122,71 @@ def _synchronize_all():
 atexit.register(_synchronize_all)
 
 
+# The command buffers whose launches use each MTLBuffer: by the buffer's id, the
+# latest one on each backend that encoded a launch using it (open or committed;
+# one queue runs its command buffers in the order they were committed, so the
+# latest covers the earlier ones, but two backends' queues are not ordered with
+# each other). A host access of a buffer waits for those alone (`_wait_for`), not
+# for every launch queued (`_synchronize_all`): a thread's small upload no longer
+# waits for another thread's long launches, and a buffer no launch has used waits
+# for nothing. Kept by MTLBuffer, not by `MetalBuffer`: a view's binding is its
+# root's buffer, and a buffer back in the pool may still be used by launches
+# queued for the array that had it (#483), which a host access of the next array
+# given it must wait for. ``_uses_of`` (command buffer id -> buffer ids) lets an
+# entry go once its command buffer is waited for.
+_uses = {}           # id(MTLBuffer) -> {backend: command buffer}
+_uses_of = {}        # id(command buffer) -> ids of the MTLBuffers it is the latest for
+_uses_lock = threading.Lock()
+
+
+def _used(metal_buffer, backend, command_buffer):
+    """Note that a launch encoded into ``command_buffer`` uses ``metal_buffer``."""
+    key = id(metal_buffer)
+    with _uses_lock:
+        entry = _uses.setdefault(key, {})
+        previous = entry.get(backend)
+        if previous is command_buffer:
+            return
+        if previous is not None:
+            marked = _uses_of.get(id(previous))
+            if marked is not None:
+                marked.discard(key)
+        entry[backend] = command_buffer
+        _uses_of.setdefault(id(command_buffer), set()).add(key)
+
+
+def _waited(command_buffer):
+    """``command_buffer`` has completed: what it was the latest use of is free."""
+    with _uses_lock:
+        for key in _uses_of.pop(id(command_buffer), ()):
+            entry = _uses.get(key)
+            if entry is None:
+                continue
+            for backend, latest in list(entry.items()):
+                if latest is command_buffer:
+                    del entry[backend]
+            if not entry:
+                del _uses[key]
+
+
+def _wait_for(metal_buffer):
+    """Wait for the launches queued that use ``metal_buffer`` (committing an open
+    batch that holds one), and raise a launch's error among them."""
+    with _uses_lock:
+        entry = dict(_uses.get(id(metal_buffer), ()))
+    error = None
+    for backend, command_buffer in entry.items():
+        with backend._batch_lock:
+            if backend._open is not None and backend._open[0] is command_buffer:
+                backend._commit_open()
+        command_buffer.waitUntilCompleted()
+        if error is None:
+            error = command_buffer.error()
+        _waited(command_buffer)
+    if error is not None:
+        raise RuntimeError(f"Metal compute error: {error}")
+
+
 class _BufferPool:
     """MTLBuffers of arrays that have died, by capacity, for the next arrays of
     that capacity. A new buffer's pages are mapped for the GPU and cleared on
@@ -218,7 +283,8 @@ def _reusable_while_queued(buffer, backend):
     Safe as a stream-ordered pool is: a later array given the MTLBuffer is used
     by launches encoded after this one on the same queue, which Metal runs
     after it (a compute pass each, hazards tracked), and by the host only
-    through `MetalBuffer` methods, which wait for every queued launch first.
+    through `MetalBuffer` methods, which wait first for every queued launch
+    that uses the MTLBuffer (`_wait_for`, which keeps track by MTLBuffer).
     So only a buffer of ``backend``'s own pool (another backend's queue is not
     ordered with this one), not handed outside Tack (``_shared``: read with no
     Tack call between, and its launches complete before returning anyway).
@@ -241,14 +307,17 @@ class MetalBuffer(DeviceBuffer):
 
     backend_name = "metal"
 
-    _sync = staticmethod(_synchronize_all)    # waits for every Metal backend's launches
+    def _sync(self):
+        """Wait for the queued launches that use this memory (`_wait_for`)."""
+        _wait_for(self._metal_buffer)
+
     # Memory handed outside Tack -- exported (DLPack, export_memory) or wrapped
     # from another library's MTLBuffer -- may be read with no Tack call between:
     # a launch that uses it completes before returning, as every launch once did.
     _shared = False
     # Metal clears new buffers (see __init__), so `tack.zeros` takes one as it
-    # is. A fill would wait for every queued launch first, though none can use
-    # a buffer this new: about 0.26 ms each, ten times a launch.
+    # is, without a fill's pass over its memory (a fill once also waited for every
+    # queued launch, about 0.26 ms each, ten times a launch).
     starts_zeroed = True
 
     _pool = None             # where the MTLBuffer goes back when the array dies
@@ -294,7 +363,7 @@ class MetalBuffer(DeviceBuffer):
             self._sync = sync
 
     def synchronize(self):
-        """Wait for queued kernels: they may be reading or writing this memory."""
+        """Wait for the queued kernels that may be reading or writing this memory."""
         self._sync()
 
     def __del__(self):
@@ -305,8 +374,9 @@ class MetalBuffer(DeviceBuffer):
             except Exception:       # interpreter shutdown
                 pass
 
-    # Reading waits for queued command buffers, so `Array.numpy_async`
-    # reads in a worker thread. Metal needs no per-thread binding.
+    # Reading waits for the queued command buffers that use the memory, so
+    # `Array.numpy_async` reads in a worker thread. Metal needs no per-thread
+    # binding.
     waits_off_thread = True
 
     def share(self):
@@ -534,6 +604,7 @@ class CompiledMetalKernel:
                     encoder.useResource_usage_(
                         value, Metal.MTLResourceUsageRead | Metal.MTLResourceUsageWrite)
                     keep.append(value if _reusable_while_queued(owner, backend) else owner)
+                    _used(value, backend, command_buffer)
                 else:
                     # Scalar: copied into the command buffer with the launch
                     encoder.setBytes_length_atIndex_(value, len(value), buf_idx)
@@ -716,6 +787,7 @@ class MetalBackend(GPUBackend):
     def _wait_oldest(self):
         command_buffer, _keep = self._committed.popleft()
         command_buffer.waitUntilCompleted()
+        _waited(command_buffer)
         error = command_buffer.error()
         if error is not None:
             raise RuntimeError(f"Metal compute error: {error}")
@@ -738,6 +810,7 @@ class MetalBackend(GPUBackend):
             pending = [command_buffer for command_buffer, _keep in self._committed]
         for command_buffer in pending:
             command_buffer.waitUntilCompleted()
+            _waited(command_buffer)
         waited = {id(command_buffer) for command_buffer in pending}
         error = None
         with self._batch_lock:
@@ -760,8 +833,7 @@ class MetalBackend(GPUBackend):
 
     def allocate_array(self, dtype: ScalarType, shape: tuple[int, ...],
                         exportable: bool = False) -> MetalBuffer:
-        return MetalBuffer(self._device, dtype.numpy_dtype, shape, sync=_synchronize_all,
-                           pool=self._pool)
+        return MetalBuffer(self._device, dtype.numpy_dtype, shape, pool=self._pool)
 
     def release_memory(self):
         """Let Metal free the buffers the pool keeps."""

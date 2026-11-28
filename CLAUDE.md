@@ -307,9 +307,18 @@ fills it): a new buffer's pages are mapped and cleared on first touch at
 about 13 GB/s, which made large filters' temporaries cost more than their
 kernels (`test_zeros_are_zero_on_reused_buffers`). Bindings
 are resolved before an encoder opens, since committing an open encoder aborts. A
-buffer's host access waits for every live Metal backend (`_backends`,
-`_synchronize_all`), not the one it was made on, in case more than one
-exists (a backend constructed directly, as tests do). Memory
+`MetalBuffer`'s host access waits only for the queued launches that use its
+MTLBuffer (`_wait_for`): each launch notes, by MTLBuffer, the command buffer it
+went into, the latest per backend (`_used`, `_uses`; one queue runs its command
+buffers in commit order, but two backends' queues are not ordered, and a backend
+can be constructed directly, as tests do), an open one is committed first, and an
+entry goes once its command buffer is waited for (`_waited`). By MTLBuffer, so a
+view waits for its root's launches and a pooled buffer's next array for the last
+one's (#483); a buffer no launch used waits for nothing, so one thread's small
+uploads no longer wait for another's long launches
+(`test_another_threads_arrays_do_not_wait_for_this_ones_launch`). A launch's error
+surfaces at a host access of a buffer it used, or at `tack.sync()`. Wrapped
+buffers and texture uploads still wait for every backend (`_synchronize_all`). Memory
 handed outside Tack (DLPack, `export_memory`, `wrap_ptr`) is `_shared`: a
 launch using it completes before returning. Shared buffers are remembered by address (`_handed_out`), and `wrap_ptr` also takes a NumPy array of host memory (`_wrap_host`): a buffer Tack handed out comes back as itself, memory on whole pages through `newBufferWithBytesNoCopy`, anything else is refused for the caller to copy. The VTK interop's `copy=False` shares Metal arrays this way, with any VTK (`test_vtk_shared_metal.py`). Waiting after every launch cost
 about 0.3 ms each. `test_metal.py` covers order across batches, per-launch
